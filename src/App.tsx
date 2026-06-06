@@ -1,39 +1,45 @@
-import { useEffect, useState } from 'react';
-import { supabase } from './lib/supabase';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { AuthProvider, useAuth } from './lib/auth';
+import Shell from './components/Shell';
+import Login from './pages/Login';
+import Onboarding from './pages/Onboarding';
+import Dashboard from './pages/Dashboard';
+import SearchBids from './pages/SearchBids';
+import MyBids from './pages/MyBids';
+import Projects from './pages/Projects';
+import Profile from './pages/Profile';
+
+function Gate({ children }: { children: JSX.Element }) {
+  const { session, company, loading } = useAuth();
+  if (loading) return <div className="center"><div className="note">Loading…</div></div>;
+  if (!session) return <Navigate to="/login" replace />;
+  if (!company) return <Navigate to="/onboarding" replace />;
+  return <Shell>{children}</Shell>;
+}
+
+function Routed() {
+  const { session, company, loading } = useAuth();
+  if (loading) return <div className="center"><div className="note">Loading…</div></div>;
+  return (
+    <Routes>
+      <Route path="/login" element={session ? <Navigate to="/" replace /> : <Login />} />
+      <Route path="/onboarding" element={!session ? <Navigate to="/login" replace /> : company ? <Navigate to="/" replace /> : <Onboarding />} />
+      <Route path="/" element={<Gate><Dashboard /></Gate>} />
+      <Route path="/projects" element={<Gate><Projects /></Gate>} />
+      <Route path="/search" element={<Gate><SearchBids /></Gate>} />
+      <Route path="/bids" element={<Gate><MyBids /></Gate>} />
+      <Route path="/profile" element={<Gate><Profile /></Gate>} />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
+}
 
 export default function App() {
-  const [status, setStatus] = useState('Connecting to Supabase…');
-  const [counts, setCounts] = useState<Record<string, number | string>>({});
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const tables = ['companies', 'buildings', 'packages', 'bids'];
-        const out: Record<string, number | string> = {};
-        for (const t of tables) {
-          const { count, error } = await supabase.from(t).select('*', { count: 'exact', head: true });
-          out[t] = error ? 'n/a' : (count ?? 0);
-        }
-        setCounts(out);
-        setStatus('Connected to Supabase ✓');
-      } catch (e: any) {
-        setStatus('Could not reach Supabase — check your .env values.');
-      }
-    })();
-  }, []);
-
   return (
-    <div style={{ fontFamily: 'Inter, system-ui, sans-serif', padding: 24, color: '#123c2e', maxWidth: 640, margin: '0 auto' }}>
-      <h1 style={{ fontFamily: 'Georgia, serif' }}>Divini Procure</h1>
-      <p style={{ color: '#6b6256' }}>{status}</p>
-      <p style={{ fontSize: 13, color: '#6b6256' }}>
-        Starter app. The full UI ports from the prototype in the repo root. Tables wired:
-      </p>
-      <ul>
-        {Object.entries(counts).map(([t, c]) => (
-          <li key={t}><strong>{t}</strong>: {String(c)} rows</li>
-        ))}
-      </ul>
-    </div>
+    <AuthProvider>
+      <BrowserRouter>
+        <Routed />
+      </BrowserRouter>
+    </AuthProvider>
   );
 }
