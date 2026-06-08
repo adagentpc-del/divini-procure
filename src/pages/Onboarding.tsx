@@ -30,7 +30,7 @@ export default function Onboarding() {
         phone, city, region: 'US', services: kind === 'vendor' ? services : undefined,
       });
       await refreshCompany();
-      nav('/');
+      nav('/app');
     } catch (e: any) {
       setErr(e.message ?? 'Could not create your company.');
     } finally {

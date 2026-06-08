@@ -5,12 +5,12 @@ import { useFeatures } from '../lib/features';
 
 const NAV: Record<string, [string, string, string][]> = {
   buyer: [
-    ['/', 'Dashboard', '▦'],
+    ['/app', 'Dashboard', '▦'],
     ['/projects', 'Projects', '▣'],
     ['/profile', 'Company', '⚙'],
   ],
   vendor: [
-    ['/', 'Dashboard', '▦'],
+    ['/app', 'Dashboard', '▦'],
     ['/search', 'Search Bids', '⌕'],
     ['/bids', 'My Bids', '◧'],
     ['/profile', 'Profile', '☺'],

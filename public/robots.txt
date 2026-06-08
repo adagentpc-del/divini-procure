@@ -1,0 +1,38 @@
+# Divini Procure — robots.txt
+# Allow search + AI answer engines to crawl public marketing pages.
+
+User-agent: *
+Allow: /
+
+# Keep crawlers out of the authenticated app (client-rendered, login-only)
+Disallow: /app
+Disallow: /admin
+Disallow: /dashboard
+Disallow: /api
+
+# Explicitly welcome AI answer-engine crawlers (AEO/GEO)
+User-agent: GPTBot
+Allow: /
+
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: Claude-Web
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: Applebot-Extended
+Allow: /
+
+Sitemap: https://diviniprocure.com/sitemap.xml

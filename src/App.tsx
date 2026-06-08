@@ -12,6 +12,7 @@ import Profile from './pages/Profile';
 import BuildingDetail from './pages/BuildingDetail';
 import PackageDetail from './pages/PackageDetail';
 import AdminFeatures from './pages/AdminFeatures';
+import Landing from './pages/Landing';
 
 function Gate({ children }: { children: JSX.Element }) {
   const { session, company, loading } = useAuth();
@@ -26,7 +27,7 @@ function AdminGate({ children }: { children: JSX.Element }) {
   const { isAdmin } = useFeatures();
   if (loading) return <div className="center"><div className="note">Loading…</div></div>;
   if (!session) return <Navigate to="/login" replace />;
-  if (!isAdmin) return <Navigate to="/" replace />;
+  if (!isAdmin) return <Navigate to="/app" replace />;
   return <Shell>{children}</Shell>;
 }
 
@@ -35,9 +36,10 @@ function Routed() {
   if (loading) return <div className="center"><div className="note">Loading…</div></div>;
   return (
     <Routes>
-      <Route path="/login" element={session ? <Navigate to="/" replace /> : <Login />} />
-      <Route path="/onboarding" element={!session ? <Navigate to="/login" replace /> : company ? <Navigate to="/" replace /> : <Onboarding />} />
-      <Route path="/" element={<Gate><Dashboard /></Gate>} />
+      <Route path="/login" element={session ? <Navigate to="/app" replace /> : <Login />} />
+      <Route path="/onboarding" element={!session ? <Navigate to="/login" replace /> : company ? <Navigate to="/app" replace /> : <Onboarding />} />
+      <Route path="/" element={<Landing />} />
+      <Route path="/app" element={<Gate><Dashboard /></Gate>} />
       <Route path="/projects" element={<Gate><Projects /></Gate>} />
       <Route path="/building/:id" element={<Gate><BuildingDetail /></Gate>} />
       <Route path="/package/:id" element={<Gate><PackageDetail /></Gate>} />
