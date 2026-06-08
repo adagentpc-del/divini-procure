@@ -13,6 +13,8 @@ export default function Landing() {
         .lp header{position:sticky;top:0;z-index:20;background:rgba(243,239,230,.88);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
         .lp .bar{display:flex;align-items:center;justify-content:space-between;height:64px}
         .lp .logo{display:flex;align-items:center;gap:10px}
+        
+        .lp .logo .mkimg{height:42px;width:auto;display:block}
         .lp .logo .mk{width:34px;height:34px;border-radius:8px;background:var(--emerald-deep);color:var(--champagne);display:grid;place-items:center;font-family:'Cormorant Garamond',serif;font-weight:700;font-size:17px}
         .lp .logo .nm{font-family:'Cormorant Garamond',serif;font-size:20px;font-weight:700;color:var(--emerald-deep);line-height:1}
         .lp .logo .tg{font-size:10px;letter-spacing:.6px;text-transform:uppercase;color:var(--muted)}
@@ -75,7 +77,7 @@ export default function Landing() {
       <header>
         <div className="wrap bar">
           <div className="logo">
-            <div className="mk">DG</div>
+            <img className="mkimg" src="/brand/mark-emerald.png" alt="Divini Procure" />
             <div>
               <div className="nm">Divini Procure</div>
               <div className="tg">Procurement Marketplace</div>
@@ -205,7 +207,7 @@ export default function Landing() {
       </section>
 
       <footer>
-        <div className="wrap">Divini Procure — procurement bidding for real estate development &amp; construction.</div>
+        <div className="wrap"><img src="/brand/logo-emerald.png" alt="Divini Group" style={{height:54,width:'auto',display:'block',margin:'0 auto 14px',opacity:.92}} />Divini Procure — procurement bidding for real estate development &amp; construction.</div>
       </footer>
     </div>
   );

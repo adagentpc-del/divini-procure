@@ -32,7 +32,7 @@ export default function Login() {
     <div className="center">
       <div className="auth-card">
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18 }}>
-          <div style={{ width: 38, height: 38, borderRadius: 9, background: 'var(--emerald-deep)', color: 'var(--champagne)', display: 'grid', placeItems: 'center', fontFamily: "'Cormorant Garamond',serif", fontWeight: 700 }}>DG</div>
+          <img src="/brand/mark-emerald.png" alt="Divini Procure" style={{ width: 46, height: 46, objectFit: 'contain' }} />
           <div>
             <h1 style={{ fontSize: 24 }}>Divini Procure</h1>
             <div className="note">Procurement marketplace</div>

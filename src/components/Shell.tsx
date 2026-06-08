@@ -30,7 +30,7 @@ export default function Shell({ children }: { children: ReactNode }) {
     <div className="app">
       <aside className="sidebar">
         <div className="brand">
-          <div className="mk">DG</div>
+          <img src="/brand/mark-ivory.png" alt="Divini Procure" style={{ width: 34, height: 34, objectFit: 'contain' }} />
           <div>
             <div className="nm">Divini Procure</div>
             <div className="tg">Procurement</div>
