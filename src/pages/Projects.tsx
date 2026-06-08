@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import { supabase } from '../lib/supabase';
 import { getBuildings } from '../lib/db';
 
 export default function Projects() {
   const { company } = useAuth();
+  const nav = useNavigate();
   const [rows, setRows] = useState<any[]>([]);
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
@@ -55,7 +57,7 @@ export default function Projects() {
             {rows.length === 0
               ? <tr><td colSpan={3} className="note">No projects yet — create your first one.</td></tr>
               : rows.map(b => (
-                <tr key={b.id} className="row-click">
+                <tr key={b.id} className="row-click" onClick={() => nav('/building/' + b.id)}>
                   <td><strong>{b.name}</strong></td>
                   <td>{b.location ?? '—'}</td>
                   <td>{b.progress ?? 0}%</td>

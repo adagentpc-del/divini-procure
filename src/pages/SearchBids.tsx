@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import { getOpenPackages, getVendorProfile } from '../lib/db';
 
 export default function SearchBids() {
   const { company } = useAuth();
+  const nav = useNavigate();
   const [rows, setRows] = useState<any[]>([]);
   const [services, setServices] = useState<string[]>([]);
   const [active, setActive] = useState<string[]>([]);
@@ -48,7 +50,7 @@ export default function SearchBids() {
             {loading ? <tr><td colSpan={5} className="note">Loading…</td></tr>
               : filtered.length === 0 ? <tr><td colSpan={5} className="note">No open bids match yet. Buyers post projects here.</td></tr>
               : filtered.map(r => (
-                <tr key={r.id} className="row-click">
+                <tr key={r.id} className="row-click" onClick={() => nav('/package/' + r.id)}>
                   <td><strong>{r.building?.name}</strong></td>
                   <td>{r.category}</td>
                   <td>{r.building?.developer ?? '—'}</td>
