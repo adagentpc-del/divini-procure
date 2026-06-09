@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase';
 import { getVendorProfile } from '../lib/db';
 
 export default function Profile() {
-  const { company, refreshCompany } = useAuth();
+  const { company, refreshCompany, signOut } = useAuth();
   const [name, setName] = useState('');
   const [contact, setContact] = useState('');
   const [phone, setPhone] = useState('');
@@ -12,6 +12,8 @@ export default function Profile() {
   const [vprofile, setVprofile] = useState<any>(null);
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
+  const [dbusy, setDbusy] = useState(false);
+  const [derr, setDerr] = useState('');
 
   useEffect(() => {
     if (!company) return;
@@ -29,6 +31,24 @@ export default function Profile() {
     }).eq('id', company.id);
     await refreshCompany();
     setMsg('Saved.'); setBusy(false);
+  }
+
+  async function removeAccount() {
+    setDerr('');
+    const sure = window.confirm(
+      'Permanently delete your account? If your company has no other members, its data ' +
+      '(projects, packages, bids, files) is deleted too. This cannot be undone.'
+    );
+    if (!sure) return;
+    setDbusy(true);
+    try {
+      const { error } = await supabase.rpc('delete_my_account');
+      if (error) throw error;
+      await signOut();
+    } catch (e: any) {
+      setDerr(e.message ?? 'Could not delete account. Please contact support.');
+      setDbusy(false);
+    }
   }
 
   if (!company) return null;
@@ -80,6 +100,19 @@ export default function Profile() {
           <div className="card">
             <h3 style={{ fontSize: 18, marginBottom: 10 }}>Team &amp; seats</h3>
             <div className="note">1 of 1 seat used · beta is limited to 1 user. Up to 5 included at launch.</div>
+          </div>
+
+          <div className="card" style={{ borderColor: '#e1b4b4' }}>
+            <h3 style={{ fontSize: 18, marginBottom: 10 }}>Delete account</h3>
+            <div className="note" style={{ lineHeight: 1.7 }}>
+              Permanently delete your account. If your company has no other members, its data
+              (projects, packages, bids, files) is removed too. This cannot be undone.
+            </div>
+            {derr && <div className="err" style={{ marginTop: 10 }}>{derr}</div>}
+            <button type="button" className="btn" style={{ marginTop: 12, background: '#a33', borderColor: '#a33', color: '#fff' }}
+              onClick={removeAccount} disabled={dbusy}>
+              {dbusy ? 'Deleting…' : 'Delete my account'}
+            </button>
           </div>
         </div>
       </div>
