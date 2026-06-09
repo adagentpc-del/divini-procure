@@ -28,6 +28,23 @@ export default function Login() {
     }
   }
 
+  async function sendReset() {
+    setErr(''); setOk('');
+    if (!email) { setErr('Enter your email above first, then tap “Forgot password?”.'); return; }
+    setBusy(true);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/reset`,
+      });
+      if (error) throw error;
+      setOk('If an account exists for that email, a password reset link is on its way. Check your inbox.');
+    } catch (e: any) {
+      setErr(e.message ?? 'Could not send reset email.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="center">
       <div className="auth-card">
@@ -49,6 +66,13 @@ export default function Login() {
             {busy ? 'Please wait…' : mode === 'in' ? 'Sign in' : 'Create account'}
           </button>
         </form>
+        {mode === 'in' && (
+          <div style={{ textAlign: 'center', marginTop: 12 }}>
+            <a className="note" style={{ cursor: 'pointer' }} onClick={() => { if (!busy) sendReset(); }}>
+              Forgot password?
+            </a>
+          </div>
+        )}
         <div style={{ textAlign: 'center', marginTop: 14 }}>
           <a className="note" style={{ cursor: 'pointer' }}
             onClick={() => { setMode(mode === 'in' ? 'up' : 'in'); setErr(''); setOk(''); }}>
