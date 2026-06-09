@@ -4,6 +4,7 @@ import { FeaturesProvider, useFeatures } from './lib/features';
 import Shell from './components/Shell';
 import Login from './pages/Login';
 import ResetPassword from './pages/ResetPassword';
+import Privacy from './pages/Privacy';
 import Onboarding from './pages/Onboarding';
 import Dashboard from './pages/Dashboard';
 import SearchBids from './pages/SearchBids';
@@ -39,6 +40,7 @@ function Routed() {
     <Routes>
       <Route path="/login" element={session ? <Navigate to="/app" replace /> : <Login />} />
       <Route path="/reset" element={<ResetPassword />} />
+      <Route path="/privacy" element={<Privacy />} />
       <Route path="/onboarding" element={!session ? <Navigate to="/login" replace /> : company ? <Navigate to="/app" replace /> : <Onboarding />} />
       <Route path="/" element={<Landing />} />
       <Route path="/app" element={<Gate><Dashboard /></Gate>} />
