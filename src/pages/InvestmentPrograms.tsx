@@ -201,6 +201,7 @@ function ProgramDetail({ programId, onChanged }: { programId: string; onChanged:
 
   const [matches, setMatches] = useState<InvestorMatch[]>([]);
   const [pipeline, setPipeline] = useState<Pipeline | null>(null);
+  const [views, setViews] = useState<{ views: number; uniqueViewers: number; unlocked: boolean; recent?: { viewed_at: string }[] } | null>(null);
 
   async function loadProgram() {
     try {
@@ -221,7 +222,13 @@ function ProgramDetail({ programId, onChanged }: { programId: string; onChanged:
     catch (e: any) { setErr(e.message ?? 'Could not load pipeline.'); }
   }
 
-  useEffect(() => { void loadProgram(); /* eslint-disable-next-line */ }, [programId]);
+  useEffect(() => { void loadProgram(); void loadViews(); /* eslint-disable-next-line */ }, [programId]);
+  async function loadViews() {
+    try {
+      const r = await apiGet<{ views: number; uniqueViewers: number; unlocked: boolean; recent?: { viewed_at: string }[] }>(`/investment/programs/${programId}/views`);
+      setViews(r);
+    } catch { /* optional */ }
+  }
   useEffect(() => {
     if (tab === 'documents') void loadDocs();
     if (tab === 'matches') void loadMatches();
@@ -279,6 +286,27 @@ function ProgramDetail({ programId, onChanged }: { programId: string; onChanged:
           </button>
         ))}
       </div>
+
+      {views && (
+        <div className="card" style={{ marginBottom: 14, background: 'var(--ivory)' }}>
+          <div className="note" style={{ fontWeight: 700, marginBottom: 4 }}>Who viewed this raise</div>
+          <div style={{ display: 'flex', gap: 24, alignItems: 'baseline', flexWrap: 'wrap' }}>
+            <div><span style={{ fontSize: 26, fontWeight: 800, color: 'var(--emerald)' }}>{views.uniqueViewers}</span> <span className="note">investors viewed</span></div>
+            <div><span style={{ fontSize: 18, fontWeight: 700 }}>{views.views}</span> <span className="note">total views</span></div>
+          </div>
+          {views.unlocked ? (
+            <div className="note" style={{ marginTop: 6 }}>
+              {(views.recent?.length ?? 0) > 0
+                ? `Most recent view: ${new Date(views.recent![0].viewed_at).toLocaleString()}.`
+                : 'No views yet.'} Investor identities stay private — you see interest, not names, and reach them through an approved introduction.
+            </div>
+          ) : (
+            <div className="note" style={{ marginTop: 6 }}>
+              Upgrade to <strong>Developer Pro</strong> to see the view trend and recent activity. Investor identities always stay private.
+            </div>
+          )}
+        </div>
+      )}
 
       {err && <div className="err">{err}</div>}
       {ok && <div className="ok">{ok}</div>}

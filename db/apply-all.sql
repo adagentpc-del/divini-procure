@@ -3276,3 +3276,127 @@ values
   ('verified_plus',  'Divini Verified+', 'vendor', 4900, 2, false),
   ('vendor_featured','Featured Vendor', 'vendor', 9900, 2, false)
 on conflict (key) do nothing;
+
+
+-- ===== incentives (intro credits + trust + founding) =====
+-- ===========================================================================
+-- Divini Procure - INCENTIVE ENGINE (Intro Credits + Trust Score + Founding)
+-- ===========================================================================
+-- Additive. Safe to run multiple times (IF NOT EXISTS / ADD COLUMN IF NOT
+-- EXISTS). Nothing here changes existing behavior until the PROCURE_INTRO_CREDITS
+-- flag is turned on; the tables simply accrue a truthful ledger from day one.
+--
+-- actor_kind = 'investor' -> actor_id holds the auth user_id (text)
+-- actor_kind = 'company'  -> actor_id holds the company id (uuid, stored as text)
+-- ===========================================================================
+
+-- ---- Intro Credits ledger (earn +delta / spend -delta) --------------------
+create table if not exists intro_credit_ledger (
+  id uuid primary key default gen_random_uuid(),
+  actor_kind text not null check (actor_kind in ('investor','company')),
+  actor_id   text not null,
+  delta      integer not null,
+  reason     text not null,          -- monthly_grant | founding_bonus | profile_complete | referral | responsiveness | positive_rating | intro_request | admin_adjust
+  period_key text,                   -- 'YYYY-MM' for monthly_grant idempotency
+  ref_id     text,                   -- optional related entity (program id, intro id, ...)
+  created_at timestamptz not null default now()
+);
+create index if not exists intro_credit_ledger_actor_idx on intro_credit_ledger(actor_kind, actor_id);
+create index if not exists intro_credit_ledger_reason_idx on intro_credit_ledger(actor_kind, actor_id, reason);
+
+-- ---- Developer trust profile (the reputation surface LPs vet) --------------
+create table if not exists developer_trust_profiles (
+  company_id uuid primary key references companies(id) on delete cascade,
+  years_operating          integer,
+  projects_completed       integer,
+  total_value_cents        bigint,
+  team_size                integer,
+  markets                  text[],
+  full_cycle_track_record  boolean default false,   -- shares deals taken start->finish (only ~38% do)
+  full_cycle_detail        text,
+  co_invests               boolean,                  -- GP puts own capital in (alignment)
+  uses_rate_caps           boolean,                  -- floating-rate debt is capped
+  preferred_return_structure text,                   -- e.g. 'true pref, no GP catch-up'
+  identity_verified        boolean default false,
+  entity_verified          boolean default false,
+  updated_at               timestamptz not null default now()
+);
+
+-- ---- Founding members (scarcity + status) ---------------------------------
+create table if not exists founding_members (
+  actor_kind text not null check (actor_kind in ('investor','company')),
+  actor_id   text not null,
+  cohort     text not null,               -- e.g. 'investor-2026', 'developer-2026'
+  joined_at  timestamptz not null default now(),
+  primary key (actor_kind, actor_id)
+);
+
+-- ---- Double opt-in + privacy (additive columns) ---------------------------
+alter table investor_introduction_requests
+  add column if not exists investor_confirmed  boolean default true,   -- investor initiates => their opt-in
+  add column if not exists developer_confirmed  boolean default false, -- set true when the developer approves
+  add column if not exists contacts_exchanged_at timestamptz;          -- set when both sides have opted in
+
+alter table investor_profiles
+  add column if not exists visibility text default 'private',          -- 'private' (invisible until they raise a hand) | 'discoverable'
+  add column if not exists quiet_mode boolean default false;           -- family-office mode: digest only, no browse
+
+
+-- ===== paid tiers + paywall gates (v2) =====
+-- ===========================================================================
+-- Divini Procure - PAID TIERS + PAYWALL GATES (v2 monetization)
+-- ===========================================================================
+-- Additive + idempotent. The developer_pro / investor_qualified tiers already
+-- exist; this adds the Family-Office Concierge tier, an investor plan column,
+-- and the "who viewed my raise" tracking table. Gating stays inert until a paid
+-- tier is assigned (developer via subscription_entitlements, investor via plan).
+-- ===========================================================================
+
+-- Family-Office Concierge: white-glove, private, curated (an investor tier).
+insert into subscription_tiers
+  (key, name, audience, price_cents,
+   active_project_limit, bid_package_limit, vendor_invite_limit,
+   investment_program_limit, investor_match_limit, seat_limit,
+   ai_features, reporting_access, white_glove, sort)
+values
+  ('family_office_concierge', 'Family Office Concierge', 'investor', 99900,
+     0, 0, 0, 0, null, 5, true, true, true, 80)
+on conflict (key) do nothing;
+
+-- Investor plan assignment (investors are user-keyed, not company-keyed).
+alter table investor_profiles
+  add column if not exists plan text default 'free';   -- 'free' | 'premium' (investor_qualified) | 'concierge' (family_office_concierge)
+
+-- "Who viewed my raise" - a Developer Pro analytics surface.
+create table if not exists program_views (
+  id uuid primary key default gen_random_uuid(),
+  program_id uuid references investment_programs(id) on delete cascade,
+  viewer_user_id text,
+  viewed_at timestamptz not null default now()
+);
+create index if not exists program_views_program_idx on program_views(program_id);
+create index if not exists program_views_dedup_idx on program_views(program_id, viewer_user_id, viewed_at);
+
+
+-- ===== recurring billing (paypal subscriptions) =====
+-- ===========================================================================
+-- Divini Procure - RECURRING BILLING (PayPal Subscriptions)
+-- ===========================================================================
+-- Additive + idempotent. Adds the PayPal plan mapping on tiers, the active
+-- subscription id on entitlements, and a tiny config row for the PayPal product.
+-- Inert until PayPal keys + plans are provisioned.
+-- ===========================================================================
+
+alter table subscription_tiers
+  add column if not exists paypal_plan_id text;              -- one billing plan per paid tier
+
+alter table subscription_entitlements
+  add column if not exists paypal_subscription_id text,      -- the active PayPal subscription
+  add column if not exists subscription_status text;         -- 'active' | 'cancelled' | 'expired' | null
+
+-- Small key/value store for provisioning state (e.g. the PayPal product id).
+create table if not exists app_config (
+  k text primary key,
+  v text,
+  updated_at timestamptz not null default now()
+);

@@ -1,9 +1,13 @@
 /**
- * Investor onboarding. A multi-section form (basic, investment preferences,
- * qualification, deal preferences) that posts to /investor/onboard. After
- * submission we show the qualification / access status returned by the backend,
- * plus an education-track note for non-accredited investors. Money is shown in
- * dollars, sent as integer cents.
+ * Investor onboarding — progressive. To JOIN we ask for the few fields matching
+ * actually needs (name, asset classes, check-size range); everything else is an
+ * optional "complete your profile" section that raises a completeness meter and,
+ * later, unlocks warm intros / earns intro credits. Sensitive qualification data
+ * (accreditation, KYC, proof of funds) is optional here and is really collected
+ * at the moment an investor requests an intro to a specific deal.
+ *
+ * The POST payload is unchanged: every field still posts if filled; empties post
+ * as undefined. Money shown in dollars, sent as integer cents.
  */
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -25,6 +29,8 @@ export default function InvestorOnboarding() {
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<Result | null>(null);
+  const [showMore, setShowMore] = useState(false);
+  const [quietMode, setQuietMode] = useState(false);
 
   // basic
   const [fullName, setFullName] = useState('');
@@ -67,8 +73,24 @@ export default function InvestorOnboarding() {
   const [jurisdiction, setJurisdiction] = useState('');
   const [suitabilityNotes, setSuitabilityNotes] = useState('');
 
+  // Profile-completeness signal (drives the meter + the "unlock warm intros" nudge).
+  const checks = [
+    !!fullName.trim(), !!email.trim(), !!location.trim(),
+    !!assetClasses.trim(), !!markets.trim(), !!minInv || !!maxInv,
+    !!targetReturn.trim(), !!preferredHold.trim(), !!dealTypes.trim(),
+    !!preferredStructure.trim(), accreditationStatus !== 'unverified',
+    accredited || nonAccredited || qualifiedPurchaser || familyOffice,
+    proofOfFunds, kycCompleted, ndaWilling, !!investmentExperience.trim(),
+  ];
+  const completion = Math.round((checks.filter(Boolean).length / checks.length) * 100);
+
   async function submit() {
-    setBusy(true); setErr('');
+    setErr('');
+    // Only the essentials matching actually needs are required to join.
+    if (!fullName.trim()) { setErr('Please add your name so sponsors know who they are meeting.'); return; }
+    if (!assetClasses.trim()) { setErr('Add at least one asset class so we can match you.'); return; }
+    if (!minInv && !maxInv) { setErr('Add a check-size range (a minimum or a maximum) so we match your deals.'); return; }
+    setBusy(true);
     try {
       const r = await apiSend<Result>('POST', '/investor/onboard', {
         full_name: fullName,
@@ -81,6 +103,8 @@ export default function InvestorOnboarding() {
         entity_type: entityType,
         website,
         preferred_contact: preferredContact,
+        quiet_mode: quietMode,
+        visibility: quietMode ? 'private' : 'discoverable',
         preferences: {
           asset_classes: csv(assetClasses),
           markets: csv(markets),
@@ -121,8 +145,8 @@ export default function InvestorOnboarding() {
     return (
       <>
         <div className="page-head"><div>
-          <h1>Investor profile submitted</h1>
-          <div className="sub">Your profile is in. Qualification and access are determined by the platform and verified by sponsors.</div>
+          <h1>You're in</h1>
+          <div className="sub">Your profile is live and we're matching you now. Qualification and access are determined by the platform and verified by sponsors.</div>
         </div></div>
         <div className="card" style={{ marginBottom: 14 }}>
           <div className="note" style={{ fontWeight: 700, marginBottom: 8 }}>Qualification status</div>
@@ -132,6 +156,11 @@ export default function InvestorOnboarding() {
             {accredited && <span className="badge b-green">Accredited (self-reported)</span>}
             {isNonAccredited && <span className="badge b-neutral">Non-accredited</span>}
           </div>
+          {completion < 100 && (
+            <div className="note" style={{ marginTop: 12 }}>
+              Your profile is <strong>{completion}% complete</strong>. Completing it unlocks warmer introductions and better matches — you can finish it any time from your dashboard.
+            </div>
+          )}
           {isNonAccredited && (
             <div className="note" style={{ marginTop: 12 }}>
               As a non-accredited investor you may initially be limited to educational content and publicly available
@@ -148,93 +177,125 @@ export default function InvestorOnboarding() {
   return (
     <>
       <div className="page-head"><div>
-        <h1>Investor onboarding</h1>
-        <div className="sub">Tell us about yourself, your investment preferences, and your qualification so we can match you with suitable opportunities.</div>
+        <h1>Join as an investor</h1>
+        <div className="sub">Takes about 30 seconds. Tell us what you invest in and your check size — that's all we need to start matching you. You can complete your profile any time.</div>
       </div></div>
 
       {err && <div className="err">{err}</div>}
 
+      {/* Completeness meter */}
       <div className="card" style={{ marginBottom: 14 }}>
-        <div className="note" style={{ fontWeight: 700, marginBottom: 10 }}>Basic information</div>
-        <div className="two">
-          <div className="field"><label>Full name</label><input value={fullName} onChange={(e) => setFullName(e.target.value)} /></div>
-          <div className="field"><label>Entity name (optional)</label><input value={entityName} onChange={(e) => setEntityName(e.target.value)} /></div>
-          <div className="field"><label>Email</label><input value={email} onChange={(e) => setEmail(e.target.value)} /></div>
-          <div className="field"><label>Phone</label><input value={phone} onChange={(e) => setPhone(e.target.value)} /></div>
-          <div className="field"><label>Location</label><input value={location} onChange={(e) => setLocation(e.target.value)} /></div>
-          <div className="field"><label>Investor type</label>
-            <select value={investorType} onChange={(e) => setInvestorType(e.target.value)}>
-              <option value="individual">Individual</option>
-              <option value="entity">Entity</option>
-              <option value="family_office">Family office</option>
-              <option value="institutional">Institutional</option>
-            </select>
-          </div>
-          <div className="field"><label>Accreditation status</label>
-            <select value={accreditationStatus} onChange={(e) => setAccreditationStatus(e.target.value)}>
-              <option value="unverified">Unverified</option>
-              <option value="self_reported_accredited">Self-reported accredited</option>
-              <option value="verified_accredited">Verified accredited</option>
-              <option value="non_accredited">Non-accredited</option>
-            </select>
-          </div>
-          <div className="field"><label>Entity type</label><input value={entityType} onChange={(e) => setEntityType(e.target.value)} placeholder="LLC, trust, fund…" /></div>
-          <div className="field"><label>Website</label><input value={website} onChange={(e) => setWebsite(e.target.value)} /></div>
-          <div className="field"><label>Preferred contact</label>
-            <select value={preferredContact} onChange={(e) => setPreferredContact(e.target.value)}>
-              <option value="email">Email</option>
-              <option value="phone">Phone</option>
-            </select>
-          </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
+          <div className="note" style={{ fontWeight: 700 }}>Profile completeness</div>
+          <div className="note" style={{ fontWeight: 700, color: 'var(--emerald)' }}>{completion}%</div>
+        </div>
+        <div style={{ height: 8, borderRadius: 6, background: 'var(--line)', overflow: 'hidden' }}
+          role="progressbar" aria-valuenow={completion} aria-valuemin={0} aria-valuemax={100} aria-label="Profile completeness">
+          <div style={{ width: `${completion}%`, height: '100%', background: 'var(--emerald)', transition: 'width .2s ease' }} />
+        </div>
+        <div className="note" style={{ marginTop: 8 }}>
+          A complete profile unlocks warmer introductions, better-matched deals, and intro credits. You only need the essentials below to join.
         </div>
       </div>
 
+      {/* Essentials — all that's required to join */}
       <div className="card" style={{ marginBottom: 14 }}>
-        <div className="note" style={{ fontWeight: 700, marginBottom: 10 }}>Investment preferences</div>
+        <div className="note" style={{ fontWeight: 700, marginBottom: 10 }}>Essentials</div>
         <div className="two">
-          <div className="field"><label>Asset classes (comma-separated)</label><input value={assetClasses} onChange={(e) => setAssetClasses(e.target.value)} /></div>
-          <div className="field"><label>Markets (comma-separated)</label><input value={markets} onChange={(e) => setMarkets(e.target.value)} /></div>
-          <div className="field"><label>Minimum investment ($)</label><input type="number" value={minInv} onChange={(e) => setMinInv(e.target.value)} /></div>
-          <div className="field"><label>Maximum investment ($)</label><input type="number" value={maxInv} onChange={(e) => setMaxInv(e.target.value)} /></div>
-          <div className="field"><label>Total allocation ($)</label><input type="number" value={totalAllocation} onChange={(e) => setTotalAllocation(e.target.value)} /></div>
-          <div className="field"><label>Preferred deal size ($)</label><input type="number" value={preferredDealSize} onChange={(e) => setPreferredDealSize(e.target.value)} /></div>
-          <div className="field"><label>Preferred hold period</label><input value={preferredHold} onChange={(e) => setPreferredHold(e.target.value)} /></div>
-          <div className="field"><label>Target return</label><input value={targetReturn} onChange={(e) => setTargetReturn(e.target.value)} /></div>
-          <div className="field"><label>Risk tolerance</label>
-            <select value={riskTolerance} onChange={(e) => setRiskTolerance(e.target.value)}>
-              <option value="conservative">Conservative</option>
-              <option value="moderate">Moderate</option>
-              <option value="aggressive">Aggressive</option>
-            </select>
+          <div className="field"><label>Full name</label><input value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Jane Investor" /></div>
+          <div className="field"><label>Email</label><input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@fund.com" /></div>
+          <div className="field"><label>Asset classes you invest in (comma-separated)</label><input value={assetClasses} onChange={(e) => setAssetClasses(e.target.value)} placeholder="multifamily, industrial, retail" /></div>
+          <div className="field"><label>Markets (comma-separated, optional)</label><input value={markets} onChange={(e) => setMarkets(e.target.value)} placeholder="Southeast, Texas" /></div>
+          <div className="field"><label>Minimum check ($)</label><input type="number" value={minInv} onChange={(e) => setMinInv(e.target.value)} placeholder="50000" /></div>
+          <div className="field"><label>Maximum check ($)</label><input type="number" value={maxInv} onChange={(e) => setMaxInv(e.target.value)} placeholder="1000000" /></div>
+        </div>
+        <label className="note" style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginTop: 6 }}>
+          <input type="checkbox" style={{ width: 'auto', marginTop: 3 }} checked={quietMode} onChange={(e) => setQuietMode(e.target.checked)} />
+          <span>Keep me private (family-office mode). Stay invisible and receive matches as a periodic digest instead of being listed. You can change this any time.</span>
+        </label>
+      </div>
+
+      <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 14 }}>
+        <button className="btn primary" disabled={busy} onClick={submit}>{busy ? 'Joining…' : 'Join & see matches'}</button>
+        <button type="button" className="btn" onClick={() => setShowMore((v) => !v)} aria-expanded={showMore}>
+          {showMore ? 'Hide profile details' : 'Complete your profile (unlock warm intros)'}
+        </button>
+      </div>
+
+      {showMore && (
+        <>
+          <div className="card" style={{ marginBottom: 14 }}>
+            <div className="note" style={{ fontWeight: 700, marginBottom: 10 }}>About you</div>
+            <div className="two">
+              <div className="field"><label>Entity name (optional)</label><input value={entityName} onChange={(e) => setEntityName(e.target.value)} /></div>
+              <div className="field"><label>Phone</label><input value={phone} onChange={(e) => setPhone(e.target.value)} /></div>
+              <div className="field"><label>Location</label><input value={location} onChange={(e) => setLocation(e.target.value)} /></div>
+              <div className="field"><label>Investor type</label>
+                <select value={investorType} onChange={(e) => setInvestorType(e.target.value)}>
+                  <option value="individual">Individual</option>
+                  <option value="entity">Entity</option>
+                  <option value="family_office">Family office</option>
+                  <option value="institutional">Institutional</option>
+                </select>
+              </div>
+              <div className="field"><label>Entity type</label><input value={entityType} onChange={(e) => setEntityType(e.target.value)} placeholder="LLC, trust, fund…" /></div>
+              <div className="field"><label>Website</label><input value={website} onChange={(e) => setWebsite(e.target.value)} /></div>
+              <div className="field"><label>Preferred contact</label>
+                <select value={preferredContact} onChange={(e) => setPreferredContact(e.target.value)}>
+                  <option value="email">Email</option>
+                  <option value="phone">Phone</option>
+                </select>
+              </div>
+            </div>
           </div>
-          <div className="field"><label>Income vs growth</label><input value={incomeVsGrowth} onChange={(e) => setIncomeVsGrowth(e.target.value)} placeholder="income, growth, balanced" /></div>
-          <div className="field"><label>Liquidity preference</label><input value={liquidityPreference} onChange={(e) => setLiquidityPreference(e.target.value)} /></div>
-          <div className="field"><label>Preferred structure</label><input value={preferredStructure} onChange={(e) => setPreferredStructure(e.target.value)} placeholder="equity, debt, preferred…" /></div>
-          <div className="field"><label>Deal types (comma-separated)</label><input value={dealTypes} onChange={(e) => setDealTypes(e.target.value)} /></div>
-        </div>
-      </div>
 
-      <div className="card" style={{ marginBottom: 14 }}>
-        <div className="note" style={{ fontWeight: 700, marginBottom: 10 }}>Qualification</div>
-        <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', marginBottom: 10 }}>
-          <label className="note"><input type="checkbox" checked={accredited} onChange={(e) => setAccredited(e.target.checked)} /> Accredited</label>
-          <label className="note"><input type="checkbox" checked={nonAccredited} onChange={(e) => setNonAccredited(e.target.checked)} /> Non-accredited</label>
-          <label className="note"><input type="checkbox" checked={qualifiedPurchaser} onChange={(e) => setQualifiedPurchaser(e.target.checked)} /> Qualified purchaser</label>
-          <label className="note"><input type="checkbox" checked={familyOffice} onChange={(e) => setFamilyOffice(e.target.checked)} /> Family office</label>
-          <label className="note"><input type="checkbox" checked={proofOfFunds} onChange={(e) => setProofOfFunds(e.target.checked)} /> Proof of funds available</label>
-          <label className="note"><input type="checkbox" checked={kycCompleted} onChange={(e) => setKycCompleted(e.target.checked)} /> KYC completed</label>
-          <label className="note"><input type="checkbox" checked={ndaWilling} onChange={(e) => setNdaWilling(e.target.checked)} /> Willing to sign NDA</label>
-          <label className="note"><input type="checkbox" checked={canReviewPrivate} onChange={(e) => setCanReviewPrivate(e.target.checked)} /> Can review private offerings</label>
-          <label className="note"><input type="checkbox" checked={educationInterest} onChange={(e) => setEducationInterest(e.target.checked)} /> Interested in education track</label>
-        </div>
-        <div className="two">
-          <div className="field"><label>Investment experience</label><input value={investmentExperience} onChange={(e) => setInvestmentExperience(e.target.value)} /></div>
-          <div className="field"><label>Jurisdiction</label><input value={jurisdiction} onChange={(e) => setJurisdiction(e.target.value)} /></div>
-        </div>
-        <div className="field"><label>Suitability notes</label><textarea rows={2} value={suitabilityNotes} onChange={(e) => setSuitabilityNotes(e.target.value)} /></div>
-      </div>
+          <div className="card" style={{ marginBottom: 14 }}>
+            <div className="note" style={{ fontWeight: 700, marginBottom: 10 }}>Investment preferences</div>
+            <div className="two">
+              <div className="field"><label>Total allocation ($)</label><input type="number" value={totalAllocation} onChange={(e) => setTotalAllocation(e.target.value)} /></div>
+              <div className="field"><label>Preferred deal size ($)</label><input type="number" value={preferredDealSize} onChange={(e) => setPreferredDealSize(e.target.value)} /></div>
+              <div className="field"><label>Preferred hold period</label><input value={preferredHold} onChange={(e) => setPreferredHold(e.target.value)} /></div>
+              <div className="field"><label>Target return</label><input value={targetReturn} onChange={(e) => setTargetReturn(e.target.value)} /></div>
+              <div className="field"><label>Risk tolerance</label>
+                <select value={riskTolerance} onChange={(e) => setRiskTolerance(e.target.value)}>
+                  <option value="conservative">Conservative</option>
+                  <option value="moderate">Moderate</option>
+                  <option value="aggressive">Aggressive</option>
+                </select>
+              </div>
+              <div className="field"><label>Income vs growth</label><input value={incomeVsGrowth} onChange={(e) => setIncomeVsGrowth(e.target.value)} placeholder="income, growth, balanced" /></div>
+              <div className="field"><label>Liquidity preference</label><input value={liquidityPreference} onChange={(e) => setLiquidityPreference(e.target.value)} /></div>
+              <div className="field"><label>Preferred structure</label><input value={preferredStructure} onChange={(e) => setPreferredStructure(e.target.value)} placeholder="equity, debt, preferred…" /></div>
+              <div className="field"><label>Deal types (comma-separated)</label><input value={dealTypes} onChange={(e) => setDealTypes(e.target.value)} /></div>
+            </div>
+          </div>
 
-      <button className="btn primary" disabled={busy} onClick={submit}>Submit profile</button>
+          <div className="card" style={{ marginBottom: 14 }}>
+            <div className="note" style={{ fontWeight: 700, marginBottom: 4 }}>Qualification</div>
+            <div className="note" style={{ marginBottom: 10 }}>
+              Optional now — you'll confirm these when you request an introduction to a specific deal.
+            </div>
+            <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', marginBottom: 10 }}>
+              <label className="note"><input type="checkbox" checked={accredited} onChange={(e) => setAccredited(e.target.checked)} /> Accredited</label>
+              <label className="note"><input type="checkbox" checked={nonAccredited} onChange={(e) => setNonAccredited(e.target.checked)} /> Non-accredited</label>
+              <label className="note"><input type="checkbox" checked={qualifiedPurchaser} onChange={(e) => setQualifiedPurchaser(e.target.checked)} /> Qualified purchaser</label>
+              <label className="note"><input type="checkbox" checked={familyOffice} onChange={(e) => setFamilyOffice(e.target.checked)} /> Family office</label>
+              <label className="note"><input type="checkbox" checked={proofOfFunds} onChange={(e) => setProofOfFunds(e.target.checked)} /> Proof of funds available</label>
+              <label className="note"><input type="checkbox" checked={kycCompleted} onChange={(e) => setKycCompleted(e.target.checked)} /> KYC completed</label>
+              <label className="note"><input type="checkbox" checked={ndaWilling} onChange={(e) => setNdaWilling(e.target.checked)} /> Willing to sign NDA</label>
+              <label className="note"><input type="checkbox" checked={canReviewPrivate} onChange={(e) => setCanReviewPrivate(e.target.checked)} /> Can review private offerings</label>
+              <label className="note"><input type="checkbox" checked={educationInterest} onChange={(e) => setEducationInterest(e.target.checked)} /> Interested in education track</label>
+            </div>
+            <div className="two">
+              <div className="field"><label>Investment experience</label><input value={investmentExperience} onChange={(e) => setInvestmentExperience(e.target.value)} /></div>
+              <div className="field"><label>Jurisdiction</label><input value={jurisdiction} onChange={(e) => setJurisdiction(e.target.value)} /></div>
+            </div>
+            <div className="field"><label>Suitability notes</label><textarea rows={2} value={suitabilityNotes} onChange={(e) => setSuitabilityNotes(e.target.value)} /></div>
+          </div>
+
+          <button className="btn primary" disabled={busy} onClick={submit}>{busy ? 'Joining…' : 'Join & see matches'}</button>
+        </>
+      )}
 
       <ComplianceDisclaimer />
     </>

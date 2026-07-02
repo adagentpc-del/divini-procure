@@ -48,7 +48,7 @@ export default function Terms() {
       <h2 style={h2}>2. Payments are processed by third parties</h2>
       <p>
         Payments made through the Platform are processed by independent third-party payment
-        processors (for example, Stripe and PayPal). Your use of those services is governed by the
+        processors. Your use of those services is governed by the
         applicable processor's own terms and privacy policies. Divini Procure does not take custody
         of, hold, or control transaction funds as principal, and does not provide banking, escrow,
         or money-transmission services.

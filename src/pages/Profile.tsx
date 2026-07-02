@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../lib/auth';
-import { getVendorProfile, updateCompany, deleteMyAccount, transferOwnership } from '../lib/db';
+import { getVendorProfile, updateCompany, deleteMyAccount, exportMyData, transferOwnership } from '../lib/db';
 
 export default function Profile() {
   const { company, refreshCompany, signOut } = useAuth();
@@ -13,6 +13,8 @@ export default function Profile() {
   const [busy, setBusy] = useState(false);
   const [dbusy, setDbusy] = useState(false);
   const [derr, setDerr] = useState('');
+  const [xbusy, setXbusy] = useState(false);
+  const [xerr, setXerr] = useState('');
   // Owner-email transfer.
   const [newOwnerEmail, setNewOwnerEmail] = useState('');
   const [tbusy, setTbusy] = useState(false);
@@ -56,6 +58,18 @@ export default function Profile() {
       setTerr(e?.message ?? 'Could not transfer ownership.');
     } finally {
       setTbusy(false);
+    }
+  }
+
+  async function downloadData() {
+    setXerr('');
+    setXbusy(true);
+    try {
+      await exportMyData();
+    } catch (e: any) {
+      setXerr(e?.message ?? 'Could not export your data. Please try again.');
+    } finally {
+      setXbusy(false);
     }
   }
 
@@ -153,6 +167,19 @@ export default function Profile() {
                 {tbusy ? 'Transferring…' : 'Transfer ownership'}
               </button>
             </form>
+          </div>
+
+          <div className="card">
+            <h3 style={{ fontSize: 18, marginBottom: 10 }}>Your data</h3>
+            <div className="note" style={{ lineHeight: 1.7 }}>
+              Download a copy of your account data — your profile, companies, and the records tied
+              to your account — as a JSON file.
+            </div>
+            {xerr && <div className="err" style={{ marginTop: 10 }}>{xerr}</div>}
+            <button type="button" className="btn" style={{ marginTop: 12 }}
+              onClick={downloadData} disabled={xbusy}>
+              {xbusy ? 'Preparing…' : 'Download my data'}
+            </button>
           </div>
 
           <div className="card" style={{ borderColor: '#e1b4b4' }}>

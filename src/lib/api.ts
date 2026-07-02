@@ -71,6 +71,19 @@ export async function apiSend<T>(
   return handle<T>(res);
 }
 
+export async function apiBlob(path: string): Promise<Blob> {
+  const res = await fetch(`${BASE}/api${path}`, {
+    credentials: 'include',
+    headers: { ...authHeader() },
+  });
+  if (!res.ok) {
+    let detail = '';
+    try { const b = await res.json(); detail = b?.error || JSON.stringify(b); } catch { detail = res.statusText; }
+    throw new Error(detail || `Request failed (${res.status})`);
+  }
+  return res.blob();
+}
+
 export async function apiUpload<T>(path: string, form: FormData): Promise<T> {
   const res = await fetch(`${BASE}/api${path}`, {
     method: 'POST',

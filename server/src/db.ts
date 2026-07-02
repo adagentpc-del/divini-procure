@@ -519,6 +519,87 @@ export async function deleteMyAccount(userId: string): Promise<void> {
 }
 
 // ===========================================================================
+// DATA RIGHTS (GDPR/CPRA portability) - export everything tied to this user
+// ===========================================================================
+
+const SECRET_COL = /(password|secret|token|hash|otp|mfa|private_key)/i;
+
+/** Drop obviously-sensitive columns (password hashes, tokens) from exported rows. */
+function redactRows(rows: Record<string, unknown>[]): Record<string, unknown>[] {
+  return rows.map((r) => {
+    const out: Record<string, unknown> = {};
+    for (const k of Object.keys(r)) if (!SECRET_COL.test(k)) out[k] = r[k];
+    return out;
+  });
+}
+
+/** Public tables that have a given column, validated against an identifier allowlist. */
+async function publicTablesWithColumn(col: string): Promise<string[]> {
+  const rows = await q<{ table_name: string }>(
+    `select table_name from information_schema.columns
+      where table_schema = 'public' and column_name = $1`,
+    [col],
+  );
+  return rows
+    .map((r) => r.table_name)
+    .filter((t) => /^[a-z_][a-z0-9_]*$/.test(t));
+}
+
+/**
+ * Assemble a full JSON export of the caller's data: their user row, the
+ * companies they belong to, and every public-table row scoped to their user id
+ * or to one of their companies. Sensitive columns are redacted.
+ */
+export async function exportMyData(userId: string): Promise<Record<string, unknown>> {
+  const out: Record<string, unknown> = {
+    exported_at: new Date().toISOString(),
+    user_id: userId,
+  };
+
+  const userRows = await q(
+    `select id, email, email_verified, created_at from users where id = $1`,
+    [userId],
+  );
+  out.user = userRows[0] ?? null;
+
+  const companyIds = await userCompanyIds(userId);
+  out.companies =
+    companyIds.length > 0
+      ? await q(`select * from companies where id = any($1)`, [companyIds])
+      : [];
+
+  // Rows keyed to the user directly.
+  const byUser: Record<string, unknown> = {};
+  for (const t of await publicTablesWithColumn('user_id')) {
+    try {
+      const r = await q<Record<string, unknown>>(
+        `select * from ${t} where user_id = $1 limit 5000`,
+        [userId],
+      );
+      if (r.length) byUser[t] = redactRows(r);
+    } catch { /* skip tables that fail (view/perm/type) */ }
+  }
+  out.records_by_user = byUser;
+
+  // Rows keyed to a company the user belongs to.
+  const byCompany: Record<string, unknown> = {};
+  if (companyIds.length > 0) {
+    for (const t of await publicTablesWithColumn('company_id')) {
+      try {
+        const r = await q<Record<string, unknown>>(
+          `select * from ${t} where company_id = any($1) limit 5000`,
+          [companyIds],
+        );
+        if (r.length) byCompany[t] = redactRows(r);
+      } catch { /* skip */ }
+    }
+  }
+  out.records_by_company = byCompany;
+
+  return out;
+}
+
+// ===========================================================================
 // BUILDINGS / PROJECTS
 // ===========================================================================
 

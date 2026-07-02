@@ -39,6 +39,7 @@ const SECTIONS: Record<string, Section[]> = {
     { label: 'Investment', items: [
       ['/investment-profile', 'Investment Profile', '◇'],
       ['/investment-programs', 'Programs', '◉'],
+      ['/trust-profile', 'Trust Profile', '✦'],
       ['/investor', 'Investor', '⬡'],
       ['/teasers', 'Teasers', '◷'],
       ['/public-profile', 'Public Profile', '◍'],

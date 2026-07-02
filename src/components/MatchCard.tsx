@@ -59,6 +59,24 @@ function list(arr?: string[] | null): string {
   return arr.map((x) => x.replace(/_/g, ' ')).join(', ');
 }
 
+/**
+ * Explainable-match line. Prefers backend-supplied `reasons`; otherwise builds a
+ * concise "matched on" summary from the salient fields so the card is never an
+ * opaque score. Explainable matches convert; bare lists get ignored.
+ */
+function WhyLine({ reasons, fallback }: { reasons?: string[] | null; fallback: (string | null | undefined)[] }) {
+  const parts = (reasons && reasons.length > 0
+    ? reasons
+    : fallback.filter((x): x is string => !!x && x !== '-')
+  ).map((x) => String(x).replace(/_/g, ' '));
+  if (parts.length === 0) return null;
+  return (
+    <div className="note" style={{ marginTop: 8 }}>
+      <strong>Why this match:</strong> {parts.join(' · ')}
+    </div>
+  );
+}
+
 // ---- shared types (loose; backend may add fields) --------------------------
 
 export type Investor = {
@@ -85,6 +103,7 @@ export type InvestorMatch = {
   proofOfFundsStatus?: string;
   recommendedNextStep?: string;
   introductionRequestId?: string;
+  reasons?: string[];
 };
 
 export type Program = {
@@ -112,7 +131,17 @@ export type OpportunityMatch = {
   canView?: boolean;
   accessStatus?: string;
   ndaSigned?: boolean;
+  reasons?: string[];
+  trustScore?: number;
+  trustBand?: 'new' | 'building' | 'established' | 'trusted';
 };
+
+function TrustBadge({ score, band }: { score?: number; band?: string }) {
+  if (score == null) return null;
+  const cls = band === 'trusted' ? 'b-green' : band === 'established' ? 'b-amber' : 'b-neutral';
+  const label = band ? band.charAt(0).toUpperCase() + band.slice(1) : 'Trust';
+  return <span className={`badge ${cls}`} title="Divini Trust Score — a reputational score for the sponsor, not a rating of any investment.">Trust: {label} ({Math.round(score)})</span>;
+}
 
 // ---- InvestorMatchCard (developer-facing) ----------------------------------
 
@@ -144,6 +173,8 @@ export function InvestorMatchCard({
         </div>
         <ScoreBadge score={match.score} label={match.label} />
       </div>
+
+      <WhyLine reasons={match.reasons} fallback={[list(inv.asset_classes), list(inv.markets), range(inv.min_investment_cents, inv.max_investment_cents)]} />
 
       <div className="two" style={{ marginTop: 12 }}>
         <div><span className="note">Investor type</span><div>{pretty(inv.investor_type)}</div></div>
@@ -213,6 +244,8 @@ export function OpportunityMatchCard({
         <ScoreBadge score={match.score} label={match.label} />
       </div>
 
+      <WhyLine reasons={match.reasons} fallback={[pretty(p.asset_class), p.location, range(p.min_investment_cents, p.max_investment_cents), p.projected_return ? `targets ${p.projected_return}` : null]} />
+
       <div className="two" style={{ marginTop: 12 }}>
         <div><span className="note">Asset class</span><div>{pretty(p.asset_class)}</div></div>
         <div><span className="note">Market</span><div>{p.location || '-'}</div></div>
@@ -225,6 +258,7 @@ export function OpportunityMatchCard({
       </div>
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
+        <TrustBadge score={match.trustScore} band={match.trustBand} />
         {p.nda_required && <span className="badge b-amber">NDA required</span>}
         <span className={`badge ${match.canView ? 'b-green' : 'b-neutral'}`}>
           {match.accessStatus ? pretty(match.accessStatus) : match.canView ? 'Access granted' : 'Access required'}

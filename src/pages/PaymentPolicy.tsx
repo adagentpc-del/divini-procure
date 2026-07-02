@@ -16,8 +16,7 @@ export default function PaymentPolicy() {
 
       <h2 style={h2}>Third-party processing</h2>
       <p>
-        Payments are processed by independent third-party payment processors (for example, Stripe
-        and PayPal). Your payments are subject to those processors' terms and privacy policies.
+        Payments are processed by one or more independent third-party payment processors. Your payments are subject to those processors' terms and privacy policies.
         Divini Procure does not take custody of transaction funds as principal and does not control
         settlement, holds, or payout timing imposed by a processor or financial institution.
       </p>

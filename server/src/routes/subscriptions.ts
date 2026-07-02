@@ -27,6 +27,7 @@ import { getAuth, requireUser, requireAdmin } from "../auth.js";
 import { ForbiddenError } from "../db.js";
 import { q, q1 } from "../pool.js";
 import { PROCURE_MONETIZATION_V2 } from "../config.js";
+import * as paypal from "../lib/paypal.js";
 import {
   listTiers,
   getEntitlement,
@@ -369,6 +370,298 @@ router.post(
 
     const row = await assignTierToCompany(companyId, tier);
     res.json({ ok: true, entitlement: row, effective: await getEntitlement(companyId) });
+  }),
+);
+
+// ---------------------------------------------------------------------------
+// PayPal checkout for access-based subscriptions. Record-only fallback when
+// PayPal is not configured, so nothing breaks before keys are set. Charges the
+// first period; assign the tier on a COMPLETED capture. (Recurring billing plans
+// are a later step - see the apply doc.)
+// ---------------------------------------------------------------------------
+async function callerIsMember(userId: string, companyId: string): Promise<boolean> {
+  const row = await q1(`select 1 from company_members where user_id = $1 and company_id = $2`, [userId, companyId]);
+  return !!row;
+}
+
+// POST /subscriptions/checkout { companyId, tierKey, returnUrl, cancelUrl }
+router.post(
+  "/subscriptions/checkout",
+  requireUser,
+  h(async (req, res) => {
+    if (!PROCURE_MONETIZATION_V2) return res.status(403).json({ error: "monetization not enabled" });
+    const auth = getAuth(req);
+    const b = (req.body ?? {}) as Record<string, any>;
+    const companyId = String(b.companyId ?? "").trim();
+    const tierKey = String(b.tierKey ?? "").trim();
+    if (!companyId || !tierKey) return res.status(400).json({ error: "companyId and tierKey required" });
+    if (!auth.isAdmin && !(await callerIsMember(auth.userId!, companyId))) {
+      return res.status(403).json({ error: "not a member of this company" });
+    }
+    const tier = await q1<Tier>("select * from subscription_tiers where key = $1", [tierKey]);
+    if (!tier) return res.status(404).json({ error: "tier not found" });
+
+    // Free tier or PayPal not configured -> record-only assignment (payment-ready).
+    if (Number(tier.price_cents) <= 0 || !paypal.isConfigured()) {
+      const row = await assignTierToCompany(companyId, tier);
+      return res.json({
+        recordOnly: true,
+        entitlement: row,
+        note: paypal.isConfigured() ? "free tier" : "PayPal not configured; tier assigned record-only",
+      });
+    }
+    try {
+      const order = await paypal.createOrder({
+        amountCents: Number(tier.price_cents),
+        description: `Divini Procure ${tier.name} (first period)`,
+        referenceId: `${companyId}:${tierKey}`,
+        returnUrl: String(b.returnUrl || ""),
+        cancelUrl: String(b.cancelUrl || ""),
+      });
+      res.json({ recordOnly: false, orderId: order.orderId, approveUrl: order.approveUrl });
+    } catch (e: any) {
+      if (e instanceof paypal.PaypalNotConfigured) {
+        const row = await assignTierToCompany(companyId, tier);
+        return res.json({ recordOnly: true, entitlement: row, note: "PayPal not configured; tier assigned record-only" });
+      }
+      return res.status(502).json({ error: e?.message || "PayPal checkout failed" });
+    }
+  }),
+);
+
+// POST /subscriptions/capture { companyId, tierKey, orderId } -> capture + assign tier.
+router.post(
+  "/subscriptions/capture",
+  requireUser,
+  h(async (req, res) => {
+    if (!PROCURE_MONETIZATION_V2) return res.status(403).json({ error: "monetization not enabled" });
+    const auth = getAuth(req);
+    const b = (req.body ?? {}) as Record<string, any>;
+    const companyId = String(b.companyId ?? "").trim();
+    const tierKey = String(b.tierKey ?? "").trim();
+    const orderId = String(b.orderId ?? "").trim();
+    if (!companyId || !tierKey || !orderId) {
+      return res.status(400).json({ error: "companyId, tierKey and orderId required" });
+    }
+    if (!auth.isAdmin && !(await callerIsMember(auth.userId!, companyId))) {
+      return res.status(403).json({ error: "not a member of this company" });
+    }
+    try {
+      const cap = await paypal.captureOrder(orderId);
+      if (!cap.ok) return res.status(402).json({ error: "payment not completed", status: cap.status });
+    } catch (e: any) {
+      return res.status(502).json({ error: e?.message || "PayPal capture failed" });
+    }
+    const tier = await q1<Tier>("select * from subscription_tiers where key = $1", [tierKey]);
+    if (!tier) return res.status(404).json({ error: "tier not found" });
+    const row = await assignTierToCompany(companyId, tier);
+    res.json({ ok: true, entitlement: row, effective: await getEntitlement(companyId) });
+  }),
+);
+
+// ---------------------------------------------------------------------------
+// Admin: investor plan assignment (investors are user-keyed, not company-keyed).
+// ---------------------------------------------------------------------------
+const INVESTOR_PLANS = new Set(["free", "premium", "concierge"]);
+
+router.get(
+  "/admin/investors",
+  requireAdmin,
+  h(async (req, res) => {
+    const qStr = String(req.query.q ?? "").trim().toLowerCase();
+    const investors = qStr
+      ? await q(
+          `select id, user_id, email, full_name, plan from investor_profiles
+            where lower(coalesce(email,'')) like $1 or lower(coalesce(full_name,'')) like $1
+            order by created_at desc limit 100`,
+          [`%${qStr}%`],
+        )
+      : await q(
+          `select id, user_id, email, full_name, plan from investor_profiles order by created_at desc limit 100`,
+        );
+    res.json({ investors });
+  }),
+);
+
+router.patch(
+  "/admin/investors/plan",
+  requireAdmin,
+  h(async (req, res) => {
+    const b = (req.body ?? {}) as Record<string, any>;
+    const userId = String(b.userId ?? "").trim();
+    const plan = String(b.plan ?? "").trim().toLowerCase();
+    if (!userId) return res.status(400).json({ error: "userId required" });
+    if (!INVESTOR_PLANS.has(plan)) return res.status(400).json({ error: "plan must be free, premium or concierge" });
+    const row = await q1(
+      `update investor_profiles set plan = $2, updated_at = now() where user_id = $1
+       returning id, user_id, email, full_name, plan`,
+      [userId, plan],
+    );
+    if (!row) return res.status(404).json({ error: "investor not found" });
+    res.json({ investor: row });
+  }),
+);
+
+// ===========================================================================
+// RECURRING BILLING (PayPal Subscriptions / auto-renewal)
+// ===========================================================================
+
+/** Ensure a single PayPal catalog product exists; cache its id in app_config. */
+async function ensurePaypalProduct(): Promise<string> {
+  const row = await q1<{ v: string | null }>(`select v from app_config where k = 'paypal_product_id'`);
+  if (row?.v) return row.v;
+  const id = await paypal.createProduct("Divini Procure Access");
+  await q(
+    `insert into app_config (k, v) values ('paypal_product_id', $1)
+     on conflict (k) do update set v = excluded.v, updated_at = now()`,
+    [id],
+  );
+  return id;
+}
+
+/** Downgrade a company to the free tier of its audience and clear its subscription. */
+async function assignFreeTier(companyId: string): Promise<void> {
+  const ent = await q1<{ audience: string | null }>(`select audience from subscription_entitlements where company_id = $1`, [companyId]);
+  const audience = ent?.audience || "developer";
+  const freeKey = audience === "vendor" ? "vendor_free" : "developer_free";
+  const tier = await q1<Tier>(`select * from subscription_tiers where key = $1`, [freeKey]);
+  if (tier) await assignTierToCompany(companyId, tier);
+  await q(
+    `update subscription_entitlements set paypal_subscription_id = null, subscription_status = 'cancelled', updated_at = now() where company_id = $1`,
+    [companyId],
+  );
+}
+
+// POST /admin/paypal/sync-plans -> create a billing plan for each paid tier (admin).
+router.post(
+  "/admin/paypal/sync-plans",
+  requireAdmin,
+  h(async (req, res) => {
+    if (!paypal.isConfigured()) return res.status(400).json({ error: "PayPal not configured" });
+    const productId = await ensurePaypalProduct();
+    const paid = await q<Tier & { paypal_plan_id: string | null }>(
+      `select * from subscription_tiers where price_cents > 0 order by price_cents asc`,
+    );
+    const plans: { key: string; planId: string; created: boolean }[] = [];
+    for (const t of paid) {
+      if (t.paypal_plan_id) { plans.push({ key: t.key, planId: t.paypal_plan_id, created: false }); continue; }
+      const planId = await paypal.createMonthlyPlan({ productId, name: `Divini ${t.name}`, amountCents: Number(t.price_cents) });
+      await q(`update subscription_tiers set paypal_plan_id = $2 where key = $1`, [t.key, planId]);
+      plans.push({ key: t.key, planId, created: true });
+    }
+    res.json({ productId, plans });
+  }),
+);
+
+// POST /subscriptions/checkout-recurring { companyId, tierKey, returnUrl, cancelUrl }
+router.post(
+  "/subscriptions/checkout-recurring",
+  requireUser,
+  h(async (req, res) => {
+    if (!PROCURE_MONETIZATION_V2) return res.status(403).json({ error: "monetization not enabled" });
+    const auth = getAuth(req);
+    const b = (req.body ?? {}) as Record<string, any>;
+    const companyId = String(b.companyId ?? "").trim();
+    const tierKey = String(b.tierKey ?? "").trim();
+    if (!companyId || !tierKey) return res.status(400).json({ error: "companyId and tierKey required" });
+    if (!auth.isAdmin && !(await callerIsMember(auth.userId!, companyId))) {
+      return res.status(403).json({ error: "not a member of this company" });
+    }
+    const tier = await q1<Tier & { paypal_plan_id: string | null }>("select * from subscription_tiers where key = $1", [tierKey]);
+    if (!tier) return res.status(404).json({ error: "tier not found" });
+    if (!tier.paypal_plan_id) {
+      return res.status(400).json({ error: "No billing plan for this tier yet. Run plan sync first.", needsSync: true });
+    }
+    try {
+      const sub = await paypal.createSubscription({
+        planId: tier.paypal_plan_id,
+        customId: `${companyId}:${tierKey}`,
+        returnUrl: String(b.returnUrl || ""),
+        cancelUrl: String(b.cancelUrl || ""),
+      });
+      res.json({ subscriptionId: sub.subscriptionId, approveUrl: sub.approveUrl });
+    } catch (e: any) {
+      return res.status(502).json({ error: e?.message || "PayPal subscription failed" });
+    }
+  }),
+);
+
+// POST /subscriptions/activate { companyId, tierKey, subscriptionId } -> verify + assign.
+router.post(
+  "/subscriptions/activate",
+  requireUser,
+  h(async (req, res) => {
+    if (!PROCURE_MONETIZATION_V2) return res.status(403).json({ error: "monetization not enabled" });
+    const auth = getAuth(req);
+    const b = (req.body ?? {}) as Record<string, any>;
+    const companyId = String(b.companyId ?? "").trim();
+    const tierKey = String(b.tierKey ?? "").trim();
+    const subscriptionId = String(b.subscriptionId ?? "").trim();
+    if (!companyId || !tierKey || !subscriptionId) return res.status(400).json({ error: "companyId, tierKey and subscriptionId required" });
+    if (!auth.isAdmin && !(await callerIsMember(auth.userId!, companyId))) {
+      return res.status(403).json({ error: "not a member of this company" });
+    }
+    const sub = await paypal.getSubscription(subscriptionId).catch(() => null);
+    if (!sub || !["ACTIVE", "APPROVED"].includes(sub.status)) {
+      return res.status(402).json({ error: "subscription not active", status: sub?.status });
+    }
+    const tier = await q1<Tier>("select * from subscription_tiers where key = $1", [tierKey]);
+    if (!tier) return res.status(404).json({ error: "tier not found" });
+    await assignTierToCompany(companyId, tier);
+    await q(
+      `update subscription_entitlements set paypal_subscription_id = $2, subscription_status = 'active', updated_at = now() where company_id = $1`,
+      [companyId, subscriptionId],
+    );
+    res.json({ ok: true, effective: await getEntitlement(companyId) });
+  }),
+);
+
+// POST /subscriptions/cancel-recurring { companyId } -> cancel at PayPal + downgrade.
+router.post(
+  "/subscriptions/cancel-recurring",
+  requireUser,
+  h(async (req, res) => {
+    if (!PROCURE_MONETIZATION_V2) return res.status(403).json({ error: "monetization not enabled" });
+    const auth = getAuth(req);
+    const b = (req.body ?? {}) as Record<string, any>;
+    const companyId = String(b.companyId ?? "").trim();
+    if (!companyId) return res.status(400).json({ error: "companyId required" });
+    if (!auth.isAdmin && !(await callerIsMember(auth.userId!, companyId))) {
+      return res.status(403).json({ error: "not a member of this company" });
+    }
+    const ent = await q1<{ paypal_subscription_id: string | null }>(
+      `select paypal_subscription_id from subscription_entitlements where company_id = $1`,
+      [companyId],
+    );
+    if (ent?.paypal_subscription_id) {
+      try { await paypal.cancelSubscription(ent.paypal_subscription_id); } catch { /* already cancelled / gone */ }
+    }
+    await assignFreeTier(companyId);
+    res.json({ ok: true, effective: await getEntitlement(companyId) });
+  }),
+);
+
+// POST /webhooks/paypal -> lifecycle events. Public but signature-verified.
+router.post(
+  "/webhooks/paypal",
+  h(async (req, res) => {
+    const event = req.body as any;
+    const verified = await paypal.verifyWebhook(req.headers as Record<string, string | undefined>, event).catch(() => false);
+    // Always 200 so PayPal does not hammer retries; act only on verified events.
+    if (!verified) return res.status(200).json({ received: true, verified: false });
+    const type = String(event?.event_type || "");
+    const subId = event?.resource?.id as string | undefined;
+    if (
+      subId &&
+      ["BILLING.SUBSCRIPTION.CANCELLED", "BILLING.SUBSCRIPTION.EXPIRED", "BILLING.SUBSCRIPTION.SUSPENDED"].includes(type)
+    ) {
+      const ent = await q1<{ company_id: string }>(
+        `select company_id from subscription_entitlements where paypal_subscription_id = $1`,
+        [subId],
+      );
+      if (ent?.company_id) await assignFreeTier(ent.company_id);
+    }
+    res.json({ received: true });
   }),
 );
 

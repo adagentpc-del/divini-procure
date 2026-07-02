@@ -31,6 +31,8 @@ import { ForbiddenError, NotFoundError } from "../db.js";
 import { q, q1 } from "../pool.js";
 import { sendEmail } from "../lib/email.js";
 import { scoreMatch, canViewProgram } from "../lib/investor-match.js";
+import { spend, earn, EARN } from "../lib/introCredits.js";
+import { getTrustScore } from "../lib/trustScore.js";
 
 const h =
   (fn: (req: Request, res: Response) => Promise<unknown>) =>
@@ -509,6 +511,10 @@ router.get(
       return res.json({ program, full: true });
     }
 
+    // Record a prospective-investor view (non-member). Powers the Developer Pro
+    // "who viewed my raise" analytic. Fire-and-forget; never blocks the response.
+    await q(`insert into program_views (program_id, viewer_user_id) values ($1,$2)`, [program.id, auth.userId]).catch(() => null);
+
     // Otherwise treat the caller as an investor: teaser only, gated by canView.
     const investor = await myInvestor(auth.userId!);
     const signed = investor ? await hasSignedNda(program.id, investor.id) : false;
@@ -524,6 +530,38 @@ router.get(
       throw new ForbiddenError("not eligible to view this program");
     }
     res.json({ program: programTeaser(program), full: false, canView: true });
+  }),
+);
+
+// "Who viewed my raise" - Developer Pro analytic. Aggregate only (never reveals
+// investor identities; investors are private by default). Free tier sees the
+// headline counts as an upsell; the recent-activity timeline is gated on the
+// company's reporting_access entitlement (Developer Pro+).
+router.get(
+  "/investment/programs/:id/views",
+  requireUser,
+  h(async (req, res) => {
+    const auth = getAuth(req);
+    const program = await q1<any>(`select id, company_id from investment_programs where id = $1`, [req.params.id]);
+    if (!program) throw new NotFoundError("program not found");
+    if (!auth.isAdmin) await assertMember(auth.userId!, program.company_id);
+    const totals = await q1<{ views: string | number; unique_viewers: string | number }>(
+      `select count(*) as views, count(distinct viewer_user_id) as unique_viewers from program_views where program_id = $1`,
+      [program.id],
+    );
+    const ent = (await getEntitlement(program.company_id)) as { reporting_access?: boolean } | null;
+    const unlocked = auth.isAdmin || ent?.reporting_access === true;
+    const base = {
+      views: Number(totals?.views ?? 0),
+      uniqueViewers: Number(totals?.unique_viewers ?? 0),
+      unlocked,
+    };
+    if (!unlocked) return res.json(base);
+    const recent = await q<{ viewed_at: string }>(
+      `select viewed_at from program_views where program_id = $1 order by viewed_at desc limit 25`,
+      [program.id],
+    );
+    res.json({ ...base, recent });
   }),
 );
 
@@ -790,6 +828,8 @@ router.post(
       "entity_type",
       "website",
       "preferred_contact",
+      "visibility",
+      "quiet_mode",
     ];
     const camel = (c: string) => c.replace(/_([a-z])/g, (_m, ch) => ch.toUpperCase());
     const pVals: Record<string, unknown> = {};
@@ -822,6 +862,9 @@ router.post(
         );
       }
     }
+
+    // Completing an investor profile is a marketplace-healthy behavior -> earn intro credits once.
+    await earn("investor", auth.userId!, EARN.profile_complete, "profile_complete", { oncePerReason: true });
 
     // --- upsert preferences ---
     const prefIn = (b.preferences ?? b.prefs ?? {}) as Record<string, unknown>;
@@ -1017,6 +1060,20 @@ router.get(
     const auth = getAuth(req);
     const investor = await myInvestor(auth.userId!);
     if (!investor) return res.json({ matches: [] });
+    if (investor.quiet_mode) {
+      // Family-office quiet mode: return a digest count, not a browsable list.
+      const prefsQ = await investorPrefs(investor.id);
+      const qualQ = await investorQual(investor.id);
+      const progsQ = await q<any>(
+        `select * from investment_programs where status in ('approved','active')`,
+      );
+      let fit = 0;
+      for (const p of progsQ) {
+        const { score } = scoreMatch(p, investor, prefsQ, qualQ);
+        if (score >= 55) fit += 1;
+      }
+      return res.json({ quiet: true, digestCount: fit, matches: [] });
+    }
     const prefs = await investorPrefs(investor.id);
     const qual = await investorQual(investor.id);
     const programs = await q<any>(
@@ -1027,7 +1084,12 @@ router.get(
       const signed = await hasSignedNda(p.id, investor.id);
       const canView = canViewProgram(p, investor, { hasSignedNda: signed });
       const { score, label, eligibility } = scoreMatch(p, investor, prefs, qual);
-      matches.push({ program: programTeaser(p), score, label, eligibility, canView });
+      const reasons = Array.isArray(eligibility) ? eligibility.slice(0, 4) : undefined;
+      const t = await getTrustScore(p.company_id);
+      matches.push({
+        program: programTeaser(p), score, label, eligibility, reasons, canView,
+        trustScore: t.score, trustBand: t.band,
+      });
     }
     matches.sort((a, b) => b.score - a.score);
     res.json({ matches });
@@ -1075,6 +1137,28 @@ router.get(
   }),
 );
 
+// Investor privacy / family-office quiet mode.
+router.patch(
+  "/investor/privacy",
+  requireUser,
+  h(async (req, res) => {
+    const auth = getAuth(req);
+    const profile = await myInvestor(auth.userId!);
+    if (!profile) throw new NotFoundError("create an investor profile first");
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    const quiet = b.quiet_mode === true || b.quietMode === true;
+    // Quiet mode implies private visibility; otherwise honor an explicit choice.
+    const visibility =
+      typeof b.visibility === "string" ? String(b.visibility) : quiet ? "private" : "discoverable";
+    const row = await q1<any>(
+      `update investor_profiles set quiet_mode = $2, visibility = $3, updated_at = now()
+       where user_id = $1 returning quiet_mode, visibility`,
+      [auth.userId, quiet, visibility],
+    );
+    res.json({ privacy: row });
+  }),
+);
+
 router.post(
   "/investor/introductions",
   requireUser,
@@ -1090,6 +1174,23 @@ router.post(
     const signed = await hasSignedNda(program.id, profile.id);
     if (!canViewProgram(program, profile, { hasSignedNda: signed })) {
       throw new ForbiddenError("not eligible to request an introduction to this program");
+    }
+    // An introduction is the scarce, valued action: spend one Intro Credit.
+    // No-op / always-allowed until PROCURE_INTRO_CREDITS metering is enabled, and
+    // never charges twice for the same program (already-requested is idempotent).
+    const alreadyRequested = await q1<{ id: string }>(
+      `select id from investor_introduction_requests where program_id = $1 and investor_id = $2`,
+      [program.id, profile.id],
+    );
+    if (!alreadyRequested) {
+      const paid = await spend("investor", auth.userId!, 1, "intro_request", program.id);
+      if (!paid.ok) {
+        return res.status(402).json({
+          error: "You are out of intro credits for now. Complete your profile or refer a peer to earn more, or they refresh next month.",
+          reason: paid.reason,
+          balance: paid.balance,
+        });
+      }
     }
     const row = await q1<any>(
       `insert into investor_introduction_requests (program_id, investor_id, status, pipeline_status)
@@ -1155,6 +1256,19 @@ router.patch(
        where id = $1 returning *`,
       [intro.id, m.status, m.pipeline, notes ? String(notes) : intro[notesCol]],
     );
+    // Double opt-in: the investor opted in by requesting; when the developer
+    // approves, both sides have consented -> mark the mutual confirmation and the
+    // moment contacts are exchanged. Divini's role ends here (introducer only).
+    if (m.status === "approved") {
+      await q(
+        `update investor_introduction_requests
+           set developer_confirmed = true, contacts_exchanged_at = coalesce(contacts_exchanged_at, now())
+         where id = $1`,
+        [intro.id],
+      );
+      // Responding to an intro is a marketplace-healthy behavior -> developer earns.
+      await earn("company", program.company_id, EARN.responsiveness, "responsiveness", { refId: intro.id });
+    }
     await audit({
       userId: auth.userId,
       email: auth.email,

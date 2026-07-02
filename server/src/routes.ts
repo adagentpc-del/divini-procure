@@ -81,6 +81,7 @@ import projectTemplatesRouter from "./routes/project-templates.js";
 import onboardingSamplesRouter from "./routes/onboarding-samples.js";
 import investmentGovernanceRouter from "./routes/investment-governance.js";
 import teasersProfilesRouter from "./routes/teasers-profiles.js";
+import incentivesRouter from "./routes/incentives.js";
 import profileCollateralRouter from "./routes/profile-collateral.js";
 import crmRouter from "./routes/crm.js";
 import adminTasksRouter from "./routes/admin-tasks.js";
@@ -166,6 +167,7 @@ router.use(projectTemplatesRouter);
 router.use(onboardingSamplesRouter);
 router.use(investmentGovernanceRouter);
 router.use(teasersProfilesRouter);
+router.use("/incentives", incentivesRouter);
 router.use(profileCollateralRouter);
 // ---- Wave D: CRM, admin tasks+audit, reports, analytics+messaging, csv import
 router.use(crmRouter);
@@ -229,6 +231,21 @@ router.post(
     const auth = getAuth(req);
     await db.deleteMyAccount(auth.userId!);
     res.json({ ok: true });
+  }),
+);
+
+// GDPR/CPRA data portability: download everything tied to this account.
+router.get(
+  "/account/export",
+  requireUser,
+  h(async (req, res) => {
+    const auth = getAuth(req);
+    const data = await db.exportMyData(auth.userId!);
+    const date = new Date().toISOString().slice(0, 10);
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="divini-procure-data-${date}.json"`);
+    res.setHeader("Cache-Control", "no-store");
+    res.send(JSON.stringify(data, null, 2));
   }),
 );
 

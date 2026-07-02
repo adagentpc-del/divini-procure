@@ -6,7 +6,7 @@
  */
 import { useEffect, useState } from 'react';
 import { useAuth } from '../lib/auth';
-import { apiGet } from '../lib/api';
+import { apiGet, apiSend } from '../lib/api';
 
 type Tier = {
   key: string;
@@ -54,6 +54,13 @@ export default function Subscription() {
   const [mine, setMine] = useState<Mine | null>(null);
   const [tiers, setTiers] = useState<Tier[]>([]);
   const [err, setErr] = useState('');
+  const [msg, setMsg] = useState('');
+  const [busyKey, setBusyKey] = useState<string | null>(null);
+
+  function reloadMine() {
+    if (!company) return;
+    apiGet<Mine>(`/subscriptions/mine?companyId=${company.id}`).then(setMine).catch(() => {});
+  }
 
   useEffect(() => {
     if (!company) return;
@@ -64,6 +71,70 @@ export default function Subscription() {
       .then((d) => setTiers(d.tiers ?? []))
       .catch(() => {});
   }, [company]);
+
+  // Capture-on-return from PayPal approval: return_url carries ?tierKey & ?token (order id).
+  useEffect(() => {
+    if (!company) return;
+    const p = new URLSearchParams(window.location.search);
+    const tierKey = p.get('tierKey');
+    const subscriptionId = p.get('subscription_id'); // recurring approval
+    const orderId = p.get('token');                  // one-time order approval
+    if (!tierKey || (!subscriptionId && !orderId)) return;
+    (async () => {
+      setBusyKey(tierKey);
+      try {
+        if (subscriptionId) {
+          await apiSend('POST', '/subscriptions/activate', { companyId: company.id, tierKey, subscriptionId });
+          setMsg('Subscription active. Your plan renews automatically each month.');
+        } else {
+          await apiSend('POST', '/subscriptions/capture', { companyId: company.id, tierKey, orderId });
+          setMsg('Payment complete. Your plan is now active.');
+        }
+        reloadMine();
+      } catch (e: any) { setErr(e?.message ?? 'Could not confirm payment.'); }
+      finally {
+        setBusyKey(null);
+        window.history.replaceState({}, '', window.location.pathname);
+      }
+    })();
+    // eslint-disable-next-line
+  }, [company]);
+
+  async function upgrade(t: Tier) {
+    if (!company) return;
+    setErr(''); setMsg(''); setBusyKey(t.key);
+    const ret = `${window.location.origin}/subscription?tierKey=${encodeURIComponent(t.key)}`;
+    try {
+      // Prefer a recurring subscription (auto-renews); fall back to one-time checkout.
+      try {
+        const r = await apiSend<{ approveUrl?: string | null }>(
+          'POST', '/subscriptions/checkout-recurring',
+          { companyId: company.id, tierKey: t.key, returnUrl: ret, cancelUrl: ret },
+        );
+        if (r.approveUrl) { window.location.href = r.approveUrl; return; }
+      } catch { /* no plan / not configured -> fall back to one-time */ }
+      const r2 = await apiSend<{ recordOnly?: boolean; approveUrl?: string | null; note?: string }>(
+        'POST', '/subscriptions/checkout',
+        { companyId: company.id, tierKey: t.key, returnUrl: ret, cancelUrl: ret },
+      );
+      if (r2.approveUrl) { window.location.href = r2.approveUrl; return; }
+      setMsg(r2.note ? `Plan assigned (${r2.note}).` : 'Plan assigned.');
+      reloadMine();
+    } catch (e: any) { setErr(e?.message ?? 'Could not start checkout.'); }
+    finally { setBusyKey(null); }
+  }
+
+  async function cancelPlan() {
+    if (!company) return;
+    if (!window.confirm('Cancel your subscription and return to the free plan?')) return;
+    setErr(''); setMsg(''); setBusyKey('__cancel__');
+    try {
+      await apiSend('POST', '/subscriptions/cancel-recurring', { companyId: company.id });
+      setMsg('Subscription cancelled. You are back on the free plan.');
+      reloadMine();
+    } catch (e: any) { setErr(e?.message ?? 'Could not cancel.'); }
+    finally { setBusyKey(null); }
+  }
 
   if (!company) return <div className="note">Loading…</div>;
 
@@ -86,6 +157,7 @@ export default function Subscription() {
       </div>
 
       {err && <div className="err">{err}</div>}
+      {msg && <div className="ok">{msg}</div>}
 
       {ent && (
         <div className="card">
@@ -144,7 +216,7 @@ export default function Subscription() {
       <div className="page-head" style={{ marginTop: 22 }}>
         <div>
           <h1 style={{ fontSize: 18 }}>Available plans</h1>
-          <div className="sub">Compare tiers. To upgrade, contact your Divini account manager.</div>
+          <div className="sub">Compare tiers and upgrade. Paid plans check out securely through PayPal; your plan activates on payment.</div>
         </div>
       </div>
 
@@ -174,6 +246,16 @@ export default function Subscription() {
                   {t.reporting_access && <span className="badge b-neutral">Reporting</span>}
                   {t.white_glove && <span className="badge b-neutral">White glove</span>}
                 </div>
+                {!current && (
+                  <button className="btn primary" style={{ marginTop: 12, width: '100%' }} disabled={busyKey === t.key} onClick={() => upgrade(t)}>
+                    {busyKey === t.key ? 'Working…' : t.price_cents > 0 ? `Upgrade — ${money(t.price_cents)}` : 'Switch to this plan'}
+                  </button>
+                )}
+                {current && t.price_cents > 0 && (
+                  <button className="btn" style={{ marginTop: 12, width: '100%' }} disabled={busyKey === '__cancel__'} onClick={cancelPlan}>
+                    {busyKey === '__cancel__' ? 'Cancelling…' : 'Cancel plan'}
+                  </button>
+                )}
               </div>
             );
           })
@@ -181,7 +263,7 @@ export default function Subscription() {
       </div>
 
       <div className="note" style={{ marginTop: 16 }}>
-        Plan changes are applied by a Divini administrator. This page does not take payment.
+        Payments are handled by PayPal. Divini charges for platform access only and is not a party to any transaction between users.
       </div>
     </>
   );

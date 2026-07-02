@@ -38,7 +38,7 @@ export default function Privacy() {
       <p>
         Your data is stored with our infrastructure providers, who process it on our behalf:
         <strong> Supabase</strong> (database, authentication, and file storage), <strong>Vercel</strong> (web hosting),
-        and <strong>PayPal</strong> (vendor subscription payments - we do not store full card details). We do not sell your
+        and <strong>an independent third-party payment processor</strong> (subscription and platform payments - we do not store full card details). We do not sell your
         personal information, and we do not share it with third parties for their own marketing.
       </p>
 

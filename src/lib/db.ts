@@ -3,7 +3,7 @@
  * backend (src/lib/api.ts) instead of Supabase PostgREST/Storage. Function
  * signatures are unchanged so the pages need no rewrites for data access.
  */
-import { apiGet, apiSend, apiUpload } from './api';
+import { apiGet, apiSend, apiUpload, apiBlob } from './api';
 
 export type CompanyPayload = {
   kind: 'buyer' | 'vendor' | 'investor'; name: string; contact_name?: string; contact_title?: string;
@@ -167,6 +167,55 @@ export async function updateCompany(id: string, patch: { name?: string; contact_
 }
 export async function deleteMyAccount() {
   await apiSend('POST', '/account/delete');
+}
+export async function exportMyData() {
+  const blob = await apiBlob('/account/export');
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `divini-procure-data-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  // Defer cleanup: revoking synchronously after click cancels the download in
+  // Firefox/Safari. A macrotask tick lets the browser start the download first.
+  setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 0);
+}
+
+// ---- incentive engine: intro credits, trust, founding ----
+export type CreditState = {
+  balance: number;
+  monthlyGrant: number;
+  metered: boolean;
+  ledger: { delta: number; reason: string; created_at: string }[];
+};
+export async function getMyCredits(scope?: 'investor' | 'company') {
+  return apiGet<{ scope: string; actorId: string; credits: CreditState }>(
+    `/incentives/credits${scope ? `?scope=${scope}` : ''}`,
+  );
+}
+export async function getFoundingStatus() {
+  return apiGet<{ investorFounder: boolean; companyFounder: boolean }>('/incentives/founding');
+}
+export type TrustResult = {
+  score: number;
+  band: 'new' | 'building' | 'established' | 'trusted';
+  factors: { label: string; points: number; max: number }[];
+  profile: Record<string, any> | null;
+};
+export async function getMyTrust() {
+  return apiGet<{ companyId?: string; trust: TrustResult | null }>('/incentives/trust');
+}
+export async function saveTrust(patch: Record<string, unknown>) {
+  return apiSend<{ profile: Record<string, any>; trust: TrustResult }>('POST', '/incentives/trust', patch);
+}
+export async function getMyReferral() {
+  return apiGet<{ code: string; count: number; creditsEarned: number }>('/incentives/referral');
+}
+export async function attributeReferral(code: string) {
+  return apiSend<{ attributed: boolean; reason?: string }>('POST', '/incentives/referral/attribute', { code });
+}
+export async function setInvestorPrivacy(patch: { quiet_mode?: boolean; visibility?: string }) {
+  return apiSend<{ privacy: { quiet_mode: boolean; visibility: string } }>('PATCH', '/investor/privacy', patch);
 }
 
 // ---- owner-email transfer ----

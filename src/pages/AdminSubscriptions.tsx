@@ -294,6 +294,113 @@ export default function AdminSubscriptions() {
           </tbody>
         </table>
       </div>
+
+      <PaypalPlanSync />
+      <InvestorPlansAdmin />
+    </>
+  );
+}
+
+// ---- PayPal recurring plan provisioning (admin) ----------------------------
+function PaypalPlanSync() {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [err, setErr] = useState('');
+
+  async function sync() {
+    setBusy(true); setErr(''); setMsg('');
+    try {
+      const r = await apiSend<{ productId: string; plans: { key: string; planId: string; created: boolean }[] }>('POST', '/admin/paypal/sync-plans');
+      const created = r.plans.filter((p) => p.created).length;
+      setMsg(`PayPal plans ready (${r.plans.length} paid tiers, ${created} newly created). Recurring checkout is now available.`);
+    } catch (e: any) { setErr(e?.message ?? 'Could not sync plans. Set PAYPAL_CLIENT_ID / PAYPAL_SECRET first.'); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <>
+      <div className="page-head" style={{ marginTop: 24 }}><div>
+        <h1 style={{ fontSize: 18 }}>Recurring billing (PayPal)</h1>
+        <div className="sub">Create a PayPal billing plan for each paid tier so members can subscribe with auto-renewal. Run once, and again after adding or repricing a paid tier.</div>
+      </div></div>
+      {err && <div className="err">{err}</div>}
+      {msg && <div className="ok">{msg}</div>}
+      <div className="card" style={{ marginBottom: 12 }}>
+        <button className="btn primary" disabled={busy} onClick={sync}>{busy ? 'Syncing…' : 'Sync PayPal plans'}</button>
+        <div className="note" style={{ marginTop: 8 }}>Requires PayPal keys and <code>PROCURE_MONETIZATION_V2</code>. Set the webhook to <code>/api/webhooks/paypal</code> to auto-downgrade on cancellation.</div>
+      </div>
+    </>
+  );
+}
+
+// ---- Investor plan assignment (investors are user-keyed) --------------------
+type InvestorRow = { id: string; user_id: string; email: string | null; full_name: string | null; plan: string | null };
+
+function InvestorPlansAdmin() {
+  const [q, setQ] = useState('');
+  const [rows, setRows] = useState<InvestorRow[]>([]);
+  const [msg, setMsg] = useState('');
+  const [err, setErr] = useState('');
+
+  async function load(query = '') {
+    setErr('');
+    try {
+      const r = await apiGet<{ investors: InvestorRow[] }>(`/admin/investors${query ? `?q=${encodeURIComponent(query)}` : ''}`);
+      setRows(r.investors ?? []);
+    } catch (e: any) { setErr(e?.message ?? 'Could not load investors.'); }
+  }
+  useEffect(() => { void load(); }, []);
+
+  async function setPlan(userId: string, plan: string) {
+    setErr(''); setMsg('');
+    try {
+      await apiSend('PATCH', '/admin/investors/plan', { userId, plan });
+      setMsg('Plan updated.');
+      setRows((rs) => rs.map((r) => (r.user_id === userId ? { ...r, plan } : r)));
+    } catch (e: any) { setErr(e?.message ?? 'Could not update plan.'); }
+  }
+
+  return (
+    <>
+      <div className="page-head" style={{ marginTop: 24 }}><div>
+        <h1 style={{ fontSize: 18 }}>Investor plans</h1>
+        <div className="sub">Grant investors Premium (Investor Qualified) or Family Office Concierge. Investors are user-keyed, so plans live on the investor profile.</div>
+      </div></div>
+
+      {err && <div className="err">{err}</div>}
+      {msg && <div className="ok">{msg}</div>}
+
+      <div className="card" style={{ marginBottom: 12, display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <div className="field" style={{ marginBottom: 0, flex: 1, minWidth: 220 }}>
+          <label>Search by name or email</label>
+          <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void load(q); }} placeholder="jane@fund.com" />
+        </div>
+        <button className="btn" onClick={() => void load(q)}>Search</button>
+      </div>
+
+      <div className="card" style={{ padding: 0 }}>
+        <table>
+          <thead><tr><th>Investor</th><th>Email</th><th>Plan</th><th>Set plan</th></tr></thead>
+          <tbody>
+            {rows.length === 0 ? (
+              <tr><td colSpan={4} className="note" style={{ padding: 14 }}>No investors found.</td></tr>
+            ) : rows.map((r) => (
+              <tr key={r.user_id}>
+                <td><strong>{r.full_name ?? '-'}</strong></td>
+                <td className="note">{r.email ?? '-'}</td>
+                <td><span className="badge b-neutral">{r.plan ?? 'free'}</span></td>
+                <td>
+                  <select value={r.plan ?? 'free'} onChange={(e) => void setPlan(r.user_id, e.target.value)}>
+                    <option value="free">Free</option>
+                    <option value="premium">Premium (Qualified)</option>
+                    <option value="concierge">Family Office Concierge</option>
+                  </select>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </>
   );
 }

@@ -22,6 +22,7 @@ export default function Register() {
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
   const [resent, setResent] = useState(false);
+  const [agreed, setAgreed] = useState(false);
 
   useEffect(() => {
     const e = readInviteEmail();
@@ -33,6 +34,7 @@ export default function Register() {
     setErr('');
     if (password !== confirm) { setErr('Passwords do not match.'); return; }
     if (password.length < 8) { setErr('Password must be at least 8 characters.'); return; }
+    if (!agreed) { setErr('Please agree to the Terms, Privacy, Payment, and Non-Circumvention policies to continue.'); return; }
     setBusy(true);
     try {
       await createAccount(email.trim(), password, confirm);
@@ -94,16 +96,25 @@ export default function Register() {
             <label>Confirm password</label>
             <input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} required placeholder="Re-enter your password" autoComplete="new-password" />
           </div>
-          <div className="note" style={{ marginTop: 4, marginBottom: 12, fontSize: 13, lineHeight: 1.5 }}>
-            By creating an account you agree to the{' '}
-            <Link to="/terms" style={{ color: 'var(--emerald)', fontWeight: 600 }}>Terms of Service</Link>,{' '}
-            <Link to="/privacy" style={{ color: 'var(--emerald)', fontWeight: 600 }}>Privacy Policy</Link>,{' '}
-            <Link to="/payment-policy" style={{ color: 'var(--emerald)', fontWeight: 600 }}>Payment Policy</Link>, and{' '}
-            <Link to="/non-circumvention" style={{ color: 'var(--emerald)', fontWeight: 600 }}>Non-Circumvention Policy</Link>. Divini Procure
-            is a lead-generation and networking platform, is not a party to transactions between users, and payments are
-            handled by third-party processors.
-          </div>
-          <button className="btn primary block lg" disabled={busy}>{busy ? 'Creating...' : 'Create account'}</button>
+          <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginTop: 4, marginBottom: 12, fontSize: 13, lineHeight: 1.5, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={agreed}
+              onChange={(e) => setAgreed(e.target.checked)}
+              style={{ width: 'auto', marginTop: 3, flexShrink: 0 }}
+              aria-label="Agree to the Terms of Service, Privacy Policy, Payment Policy, and Non-Circumvention Policy"
+            />
+            <span className="note" style={{ fontSize: 13, lineHeight: 1.5 }}>
+              I agree to the{' '}
+              <Link to="/terms" style={{ color: 'var(--emerald)', fontWeight: 600 }}>Terms of Service</Link>,{' '}
+              <Link to="/privacy" style={{ color: 'var(--emerald)', fontWeight: 600 }}>Privacy Policy</Link>,{' '}
+              <Link to="/payment-policy" style={{ color: 'var(--emerald)', fontWeight: 600 }}>Payment Policy</Link>, and{' '}
+              <Link to="/non-circumvention" style={{ color: 'var(--emerald)', fontWeight: 600 }}>Non-Circumvention Policy</Link>. Divini Procure
+              is a lead-generation and networking platform, is not a party to transactions between users, and payments are
+              handled by independent third-party processors.
+            </span>
+          </label>
+          <button className="btn primary block lg" disabled={busy || !agreed}>{busy ? 'Creating...' : 'Create account'}</button>
         </form>
 
         <div className="note" style={{ marginTop: 16 }}>

@@ -13,6 +13,11 @@ import Terms from './pages/Terms';
 import Pricing from './pages/Pricing';
 import PaymentPolicy from './pages/PaymentPolicy';
 import NonCircumvention from './pages/NonCircumvention';
+import Cookies from './pages/Cookies';
+import Accessibility from './pages/Accessibility';
+import CookieBanner from './components/CookieBanner';
+import TrustProfile from './pages/TrustProfile';
+import RefLanding from './pages/RefLanding';
 import Onboarding from './pages/Onboarding';
 import Dashboard from './pages/Dashboard';
 import SearchBids from './pages/SearchBids';
@@ -117,10 +122,13 @@ function Routed() {
       <Route path="/pricing" element={<Pricing />} />
       <Route path="/payment-policy" element={<PaymentPolicy />} />
       <Route path="/non-circumvention" element={<NonCircumvention />} />
+      <Route path="/cookies" element={<Cookies />} />
+      <Route path="/accessibility" element={<Accessibility />} />
       <Route path="/onboarding" element={!session ? <Navigate to="/login" replace /> : company ? <Navigate to="/app" replace /> : isAdmin ? <Navigate to="/admin" replace /> : <Onboarding />} />
       <Route path="/" element={<Landing />} />
       <Route path="/join/:code" element={<JoinInvite />} />
       <Route path="/r/:code" element={<ReferralLanding />} />
+      <Route path="/ref/:code" element={<RefLanding />} />
       <Route path="/admin" element={<SuperAdminGate><AdminConsole /></SuperAdminGate>} />
       <Route path="/app" element={<Gate><Dashboard /></Gate>} />
       <Route path="/projects" element={<Gate><Projects /></Gate>} />
@@ -141,6 +149,7 @@ function Routed() {
       <Route path="/investment-profile" element={<Gate><InvestmentProfile /></Gate>} />
       <Route path="/investment-programs" element={<Gate><InvestmentPrograms /></Gate>} />
       <Route path="/investor-onboarding" element={<Gate><InvestorOnboarding /></Gate>} />
+      <Route path="/trust-profile" element={<Gate><TrustProfile /></Gate>} />
       <Route path="/investor" element={<Gate><InvestorDashboard /></Gate>} />
       <Route path="/subscription" element={<Gate><Subscription /></Gate>} />
       <Route path="/vendor-pricing" element={<Gate><VendorPricing /></Gate>} />
@@ -189,12 +198,29 @@ function Routed() {
   );
 }
 
+function SkipToContent() {
+  return (
+    <a
+      className="skip-link"
+      href="#main"
+      onClick={(e) => {
+        const m = document.querySelector('main');
+        if (m) { e.preventDefault(); (m as HTMLElement).setAttribute('tabindex', '-1'); (m as HTMLElement).focus(); }
+      }}
+    >
+      Skip to content
+    </a>
+  );
+}
+
 export default function App() {
   return (
     <AuthProvider>
       <FeaturesProvider>
         <BrowserRouter>
+          <SkipToContent />
           <Routed />
+          <CookieBanner />
         </BrowserRouter>
       </FeaturesProvider>
     </AuthProvider>
