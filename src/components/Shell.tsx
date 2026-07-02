@@ -3,17 +3,109 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import { useFeatures } from '../lib/features';
 
-const NAV: Record<string, [string, string, string][]> = {
+type Item = [string, string, string]; // [path, label, icon]
+type Section = { label: string; items: Item[] };
+
+// Grouped navigation. Each role gets labeled sections so the (large) feature
+// set stays scannable instead of one long flat list.
+const SECTIONS: Record<string, Section[]> = {
   buyer: [
-    ['/app', 'Dashboard', '▦'],
-    ['/projects', 'Projects', '▣'],
-    ['/profile', 'Company', '⚙'],
+    { label: 'Workspace', items: [
+      ['/app', 'Dashboard', '▦'],
+      ['/projects', 'Projects', '▣'],
+      ['/reports', 'Reports', '▥'],
+    ]},
+    { label: 'Intelligence', items: [
+      ['/coo', 'AI COO', '✦'],
+      ['/intel', 'Intelligence', '✶'],
+      ['/divini-scores', 'Divini Score', '◈'],
+      ['/war-room', 'War Room', '⚑'],
+      ['/relationship-graph', 'Relationship Graph', '⊚'],
+    ]},
+    { label: 'Procurement', items: [
+      ['/project-templates', 'Project Templates', '▤'],
+      ['/award', 'Award & POs', '◰'],
+      ['/change-orders', 'Change Orders', '⇄'],
+      ['/products', 'Products', '◳'],
+      ['/vendor-pricing', 'Vendor Pricing', '$'],
+      ['/relationships', 'Vendor Relationships', '⚖'],
+      ['/vendor-import', 'Import Vendors', '⇪'],
+      ['/samples', 'Samples', '◌'],
+    ]},
+    { label: 'Project Roles', items: [
+      ['/designer', 'Designer', '✑'],
+      ['/gc', 'GC', '⛏'],
+    ]},
+    { label: 'Investment', items: [
+      ['/investment-profile', 'Investment Profile', '◇'],
+      ['/investment-programs', 'Programs', '◉'],
+      ['/investor', 'Investor', '⬡'],
+      ['/teasers', 'Teasers', '◷'],
+      ['/public-profile', 'Public Profile', '◍'],
+      ['/collateral', 'Collateral', '◰'],
+      ['/event-spaces', 'Event Spaces', '◐'],
+      ['/broker', 'Broker', '⊞'],
+    ]},
+    { label: 'Account', items: [
+      ['/agreements', 'Agreements', '✎'],
+      ['/subscription', 'Subscription', '◫'],
+      ['/payout-settings', 'Payout Settings', '＄'],
+      ['/my-payouts', 'My Payouts', '◫'],
+      ['/messaging-policy', 'Messaging Policy', '✉'],
+      ['/profile', 'Company', '⚙'],
+    ]},
   ],
   vendor: [
-    ['/app', 'Dashboard', '▦'],
-    ['/search', 'Search Bids', '⌕'],
-    ['/bids', 'My Bids', '◧'],
-    ['/profile', 'Profile', '☺'],
+    { label: 'Workspace', items: [
+      ['/app', 'Dashboard', '▦'],
+      ['/search', 'Search Bids', '⌕'],
+      ['/bids', 'My Bids', '◧'],
+      ['/my-invites', 'Invitations', '✉'],
+    ]},
+    { label: 'Intelligence', items: [
+      ['/coo', 'AI COO', '✦'],
+      ['/divini-scores', 'Divini Score', '◈'],
+      ['/war-room', 'War Room', '⚑'],
+    ]},
+    { label: 'Catalog & Vendor', items: [
+      ['/products', 'Catalog', '◳'],
+      ['/vendor-pricing', 'Pricing', '$'],
+      ['/samples', 'Samples', '◌'],
+      ['/onboarding-templates', 'Onboarding', '✓'],
+      ['/relationships', 'Relationships', '⚖'],
+      ['/collateral', 'Collateral', '◰'],
+    ]},
+    { label: 'Investment', items: [
+      ['/investor', 'Investor', '⬡'],
+      ['/broker', 'Broker', '⊞'],
+    ]},
+    { label: 'Account', items: [
+      ['/agreements', 'Agreements', '✎'],
+      ['/subscription', 'Subscription', '◫'],
+      ['/payout-settings', 'Payout Settings', '＄'],
+      ['/my-payouts', 'My Payouts', '◫'],
+      ['/messaging-policy', 'Messaging Policy', '✉'],
+      ['/profile', 'Profile', '☺'],
+    ]},
+  ],
+};
+
+// Compact mobile bottom bar: a few key destinations only (the full set lives in
+// the sidebar / is reachable on desktop).
+const MOBILE: Record<string, Item[]> = {
+  buyer: [
+    ['/app', 'Home', '▦'],
+    ['/projects', 'Projects', '▣'],
+    ['/reports', 'Reports', '▥'],
+    ['/investor', 'Investor', '⬡'],
+    ['/profile', 'Account', '⚙'],
+  ],
+  vendor: [
+    ['/app', 'Home', '▦'],
+    ['/search', 'Search', '⌕'],
+    ['/bids', 'Bids', '◧'],
+    ['/investor', 'Investor', '⬡'],
+    ['/profile', 'Account', '☺'],
   ],
 };
 
@@ -22,9 +114,18 @@ export default function Shell({ children }: { children: ReactNode }) {
   const { isAdmin } = useFeatures();
   const nav = useNavigate();
   const loc = useLocation();
-  const role = company?.kind ?? 'buyer';
-  const items: [string, string, string][] = [...NAV[role]];
-  if (isAdmin) items.push(['/admin/features', 'Features', '✦']);
+  const role = company?.kind === 'vendor' ? 'vendor' : 'buyer';
+
+  const sections: Section[] = [];
+  if (isAdmin) {
+    sections.push({ label: 'Admin', items: [
+      ['/admin', 'Admin Console', '◆'],
+      ['/admin/features', 'Features', '✦'],
+    ]});
+  }
+  if (company) sections.push(...SECTIONS[role]);
+
+  const mobileItems: Item[] = company ? MOBILE[role] : (isAdmin ? [['/admin', 'Admin', '◆']] : []);
 
   return (
     <div className="app">
@@ -36,12 +137,16 @@ export default function Shell({ children }: { children: ReactNode }) {
             <div className="tg">Procurement</div>
           </div>
         </div>
-        <div className="nav-label">{role === 'vendor' ? 'Vendor' : 'Buyer Workspace'}</div>
         <nav className="nav">
-          {items.map(([path, label, icon]) => (
-            <a key={path} className={loc.pathname === path ? 'active' : ''} onClick={() => nav(path)}>
-              <span>{icon}</span> {label}
-            </a>
+          {sections.map((sec) => (
+            <div key={sec.label}>
+              <div className="nav-label">{sec.label}</div>
+              {sec.items.map(([path, label, icon]) => (
+                <a key={path} className={loc.pathname === path ? 'active' : ''} onClick={() => nav(path)}>
+                  <span>{icon}</span> {label}
+                </a>
+              ))}
+            </div>
           ))}
         </nav>
         <div className="foot">
@@ -60,9 +165,9 @@ export default function Shell({ children }: { children: ReactNode }) {
         </div>
         <div className="content">{children}</div>
         <nav className="mbottom">
-          {items.map(([path, label, icon]) => (
+          {mobileItems.map(([path, label, icon]) => (
             <a key={path} className={loc.pathname === path ? 'active' : ''} onClick={() => nav(path)}>
-              <span style={{ fontSize: 18 }}>{icon}</span>{label.split(' ')[0]}
+              <span style={{ fontSize: 18 }}>{icon}</span>{label}
             </a>
           ))}
         </nav>

@@ -1,49 +1,47 @@
-# Deploy Divini Procure (Vercel + diviniprocure.com)
+# Deploy Divini Procure (self-hosted)
 
-The app is on GitHub at `adagentpc-del/divini-procure` and builds cleanly (`npm run build`).
-Three short steps to get it live and auto-deploying.
+Divini Procure is a single Node process (Express API + built Vite SPA) backed by a
+Docker Postgres container, fronted by Caddy + pm2 on the droplet. It uses native
+email/password auth. It is NOT a Vercel/Supabase app. For the full first-time
+checklist see FIRST-DEPLOY-RUNBOOK.md; this file is the short repeat-deploy loop.
 
-## 1. Import the repo into Vercel (~2 min)
-1. Go to https://vercel.com/new
-2. Under **Import Git Repository**, pick **adagentpc-del/divini-procure**
-   (if you don't see it, click "Adjust GitHub App permissions" and grant access to the repo).
-3. Vercel auto-detects **Vite** — leave Build Command (`npm run build`) and Output (`dist`) as is.
-4. Expand **Environment Variables** and add these two (values are in `.env`):
-   - `VITE_SUPABASE_URL` = `https://qrqydaaeswtihmsoztjx.supabase.co`
-   - `VITE_SUPABASE_ANON_KEY` = `sb_publishable_pfFrm2hRGEi7-s_5C6Gviw_7BcHx8ZN`
-5. Click **Deploy**. You'll get a live `…vercel.app` URL in ~1 minute.
+> Golden rule: `rsync` runs in the MAC terminal; `deploy.sh` and `psql` run in the
+> SERVER web console. Never sync `.env.local`.
 
-From now on, every `git push` (or my pushes via GitHub Desktop) auto-deploys.
-
-## 2. Point diviniprocure.com at Vercel
-1. In the Vercel project → **Settings → Domains** → add `diviniprocure.com` and `www.diviniprocure.com`.
-2. Vercel shows the exact DNS records. In **GoDaddy → your domain → DNS**, set:
-   - **A** record: Host `@` → Value `76.76.21.21`
-   - **CNAME** record: Host `www` → Value `cname.vercel-dns.com`
-   (Use whatever Vercel shows if it differs — follow its panel.)
-3. Wait for DNS to verify (minutes to ~an hour). Vercel issues HTTPS automatically.
-
-## 3. Turn on auth + point Supabase at your URLs
-In the Supabase dashboard (https://supabase.com/dashboard/project/qrqydaaeswtihmsoztjx):
-- **Authentication → Providers → Email**: it's on by default. For frictionless testing, you can turn **"Confirm email" OFF** (turn it back on for production).
-- **Authentication → URL Configuration**: set **Site URL** to `https://diviniprocure.com` and add your `…vercel.app` URL and `http://localhost:5173` to **Redirect URLs**.
-
-## Run locally meanwhile
+## 1. MAC terminal - push code
 ```bash
-cd divini-procure
-npm install
-npm run dev   # http://localhost:5173
+rsync -avz --delete \
+  --exclude 'node_modules' --exclude '.git' --exclude 'dist*' --exclude '.env.local' \
+  ~/Claude/Projects/OpenAD/sites/divini-procure/ \
+  root@SERVER:/root/sites/divini-procure/
 ```
 
----
+## 2. SERVER web console - apply schema (idempotent; run twice on a fresh DB)
+```bash
+docker exec -i divini_procure_db psql -U aibos -d divini_procure \
+  < /root/sites/divini-procure/db/apply-all.sql
+```
 
-### What's live in the app right now
-- **Login / sign up** (Supabase email auth)
-- **Company onboarding** — creates your buyer or vendor company (vendors pick services)
-- **Dashboard** — role-aware, reads your live Supabase data
-- **Buyer:** Projects (create buildings) · **Vendor:** Search Bids (matched to services), My Bids
-- **Profile** — edit company info; vendor plan ($100/mo via PayPal), trust, team seats
+## 3. SERVER web console - build + restart
+```bash
+cd /root/sites/divini-procure && bash deploy.sh
+pm2 restart divini-procure --update-env
+```
 
-### Next build steps (when you want them)
-Full bid lifecycle (submit/edit/award/revisions), messaging threads, the admin verification console,
-PayPal subscription checkout, file uploads to Supabase Storage, and the Capacitor iOS wrapper.
+## 4. SERVER - smoke
+```bash
+curl -s localhost:PORT/api/healthz                                    # expect 200 {ok:true} NOT 401
+curl -s -o /dev/null -w "%{http_code}\n" https://diviniprocure.com/   # expect 200
+```
+
+## Notes
+- Required env in `.env.local` (server-side): `SESSION_SECRET`, `DATABASE_URL`,
+  `DOWNLOAD_URL_SECRET`, `ADMIN_ALLOWED_EMAILS`, `PUBLIC_APP_URL`/`ALLOWED_ORIGINS`,
+  `EMAIL_PROVIDER`+`EMAIL_API_KEY` (required for register -> verify -> login).
+- In production the app now FAILS CLOSED: it refuses to start if `SESSION_SECRET`
+  or `DOWNLOAD_URL_SECRET` is unset/dev-default, and CORS denies cross-origin when
+  the allowlist is empty. Set those env vars before deploying.
+- `STRIPE_SECRET_KEY` stays UNSET until you are ready to move real money (payouts
+  stay queue-only; records are correct).
+- If `/api/healthz` returns 401 after deploy, a self-pathed router is gating
+  everything; verify healthz is 200 before declaring success.

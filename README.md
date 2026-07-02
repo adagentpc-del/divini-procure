@@ -9,9 +9,9 @@ Web-first (React + Vite), packaged for iOS/Android with Capacitor, on a Supabase
 - Capacitor (iOS / Android shell) — see `../IOS_BUILD_PLAN.md`
 
 ## Live backend
-- Project: **Divini Procure** (`qrqydaaeswtihmsoztjx`, region us-east-1)
-- API URL: `https://qrqydaaeswtihmsoztjx.supabase.co`
-- Dashboard: https://supabase.com/dashboard/project/qrqydaaeswtihmsoztjx
+- Project: **Divini Procure** (self-hosted Postgres (no Supabase))
+- API URL: `(removed - self-hosted, no Supabase)`
+- Dashboard: (removed)
 
 ## Setup
 ```bash

@@ -1,5 +1,5 @@
 import { useFeatures } from '../lib/features';
-import { supabase } from '../lib/supabase';
+import { setFeatureFlag } from '../lib/db';
 
 const AUD: Record<string, string> = { both: 'Developer + Vendor', buyer: 'Developer', vendor: 'Vendor', admin: 'Admin' };
 
@@ -8,11 +8,11 @@ export default function AdminFeatures() {
   if (!isAdmin) return <div className="card">Admins only.</div>;
 
   async function toggle(key: string, enabled: boolean) {
-    await supabase.from('feature_flags').update({ enabled }).eq('key', key);
+    await setFeatureFlag(key, { enabled });
     await reload();
   }
   async function setAudience(key: string, audience: string) {
-    await supabase.from('feature_flags').update({ audience }).eq('key', key);
+    await setFeatureFlag(key, { audience });
     await reload();
   }
 

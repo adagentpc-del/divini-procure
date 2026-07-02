@@ -39,6 +39,6 @@ Once it's connected, ask Claude to "create the GitHub repo and push" and it will
 - `README.md` — setup + roadmap
 
 ### Live Supabase backend (already created)
-- Project: **Divini Procure** (`qrqydaaeswtihmsoztjx`, us-east-1)
-- URL: https://qrqydaaeswtihmsoztjx.supabase.co
-- Dashboard: https://supabase.com/dashboard/project/qrqydaaeswtihmsoztjx
+- Project: **Divini Procure** (self-hosted Postgres (no Supabase))
+- URL: (removed - self-hosted, no Supabase)
+- Dashboard: (removed)

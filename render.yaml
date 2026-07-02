@@ -1,0 +1,63 @@
+# Render Blueprint for Divini Procure.
+# Single Node web service: builds the Vite SPA + the Express backend (server/)
+# and serves BOTH from one process. Database is external (the owned local
+# Postgres via DATABASE_URL). Auth = Authentik (OIDC). Files = local disk
+# (FILE_STORAGE_DIR — mount a persistent disk for it in production).
+#
+# NODE_ENV is set only at runtime (startCommand), not as a build env var, so
+# `pnpm install` during build still installs devDependencies (vite, typescript).
+services:
+  - type: web
+    name: divini-procure
+    runtime: node
+    plan: free
+    region: oregon
+    branch: main
+    autoDeploy: true
+    buildCommand: |
+      set -e
+      corepack enable
+      pnpm install --no-frozen-lockfile --prod=false
+      BASE_PATH=/ pnpm run build
+      pnpm --dir server install --no-frozen-lockfile --prod=false
+      pnpm --dir server run build
+      rm -rf server/dist/public
+      cp -r dist server/dist/public
+    startCommand: NODE_ENV=production node --enable-source-maps server/dist/index.js
+    healthCheckPath: /api/healthz
+    envVars:
+      - key: NODE_VERSION
+        value: "22.22.0"
+      # ---- set these in the host dashboard (sync:false = not in git) ----
+      - key: DATABASE_URL
+        sync: false
+      # Authentik (OIDC) — backend verification (runtime)
+      - key: OIDC_ISSUER
+        sync: false
+      - key: OIDC_JWKS_URL
+        sync: false
+      - key: OIDC_CLIENT_ID
+        sync: false
+      - key: OIDC_CLIENT_SECRET
+        sync: false
+      # Authentik (OIDC) — frontend (build-time, Vite inlines these)
+      - key: VITE_OIDC_ISSUER
+        sync: false
+      - key: VITE_OIDC_CLIENT_ID
+        sync: false
+      - key: VITE_OIDC_REDIRECT_URI
+        sync: false
+      # Admin gate + storage + serving
+      - key: ADMIN_ALLOWED_EMAILS
+        sync: false
+      - key: FILE_STORAGE_DIR
+        value: /data/procure-files
+      - key: DOWNLOAD_URL_SECRET
+        sync: false
+      - key: PUBLIC_APP_URL
+        sync: false
+    # Persistent disk for uploaded files (production).
+    disk:
+      name: procure-files
+      mountPath: /data/procure-files
+      sizeGB: 5

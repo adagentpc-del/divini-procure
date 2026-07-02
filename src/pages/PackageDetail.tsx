@@ -7,6 +7,15 @@ import {
   getBidsForPackage, submitPricedBid, getQuestions, askQuestion, answerQuestion,
 } from '../lib/db';
 import DocumentPanel from '../components/DocumentPanel';
+import FeeBadge from '../components/FeeBadge';
+import ExistingRelationshipCheckbox from '../components/ExistingRelationshipCheckbox';
+import { apiGet } from '../lib/api';
+import {
+  getBidCredits, getVerification, subscribeToTier,
+  canBid, isVerified, bidsLeftLabel, verificationLabel,
+  VENDOR_PRO_TIER_KEY, VENDOR_PRO_PRICE_LABEL,
+  type BidCredits, type Verification,
+} from '../lib/monetization';
 
 export default function PackageDetail() {
   const { id } = useParams();
@@ -25,6 +34,14 @@ export default function PackageDetail() {
   const [msg, setMsg] = useState('');
   // owner line-item adder
   const [desc, setDesc] = useState(''); const [qty, setQty] = useState('1'); const [unit, setUnit] = useState('');
+  // grandfathered existing-relationship fee state (keyed by vendor_company_id)
+  const [rels, setRels] = useState<Record<string, any>>({});
+  const [relOpen, setRelOpen] = useState<string | null>(null);
+  // monetization V2: bid credits + verification gating (null = gate off)
+  const [credits, setCredits] = useState<BidCredits | null>(null);
+  const [verif, setVerif] = useState<Verification | null>(null);
+  const [upgrading, setUpgrading] = useState(false);
+  const [upgradeMsg, setUpgradeMsg] = useState('');
 
   const isOwner = company && p && p.building?.company_id === company.id;
   const isVendor = company?.kind === 'vendor';
@@ -37,9 +54,41 @@ export default function PackageDetail() {
     if (pk) {
       setBids(await getBidsForPackage(id));
       setQuestions(await getQuestions(id));
+      // developer (owner) view: load grandfathered relationship/fee status per vendor
+      const devCompanyId = pk.building?.company_id;
+      if (devCompanyId && company?.id === devCompanyId) {
+        try {
+          const d = await apiGet<{ relationships: any[] }>(`/relationships/mine?companyId=${devCompanyId}`);
+          const map: Record<string, any> = {};
+          (d.relationships ?? []).forEach((r) => { map[r.vendor_company_id] = r; });
+          setRels(map);
+        } catch { /* non-fatal */ }
+      }
     }
   }
   useEffect(() => { load(); }, [id]);
+
+  // Vendor-only: load bid credits + verification status (tolerate absence).
+  async function loadEntitlements() {
+    if (company?.kind !== 'vendor') return;
+    const [c, v] = await Promise.all([getBidCredits(), getVerification()]);
+    setCredits(c);
+    setVerif(v);
+  }
+  useEffect(() => { loadEntitlements(); /* eslint-disable-next-line */ }, [company?.id]);
+
+  async function upgradeToPro() {
+    setUpgrading(true); setUpgradeMsg('');
+    try {
+      await subscribeToTier(VENDOR_PRO_TIER_KEY);
+      setUpgradeMsg('You are now on Vendor Pro. Bidding is unlimited.');
+      await loadEntitlements();
+    } catch (e: any) {
+      setUpgradeMsg(e?.message ?? 'Could not start your upgrade. Please try again.');
+    } finally {
+      setUpgrading(false);
+    }
+  }
 
   const boq = isOn('boq_line_items') && items.length > 0;
   const lineTotal = (li: any) => (Number(prices[li.id] || 0) * Number(li.qty || 1)) || 0;
@@ -63,6 +112,7 @@ export default function PackageDetail() {
     await submitPricedBid(id, company.id, { price: bidTotal, days: Number(days) || 0, note, items: items_payload });
     setMsg('Bid submitted.'); setLump(''); setDays(''); setNote(''); setPrices({});
     load();
+    loadEntitlements(); // a bid consumes a quarterly credit; refresh the count
   }
 
   async function ask() { if (id && company && q) { await askQuestion(id, company.id, q); setQ(''); setQuestions(await getQuestions(id)); } }
@@ -80,6 +130,15 @@ export default function PackageDetail() {
           <h1>{p.category}</h1>
           <div className="sub">{p.building?.name} · {p.building?.location ?? ''} · <span className="badge b-neutral">{p.status}</span>{p.deadline ? ` · due ${p.deadline}` : ''}</div>
         </div>
+        {isOwner && (
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button className="btn" onClick={() => nav('/packages/' + p.id + '/compare')}>Compare quotes</button>
+            <button className="btn" onClick={() => nav('/package/' + p.id + '/intel')}>Intelligence</button>
+            <button className="btn" onClick={() => nav('/package/' + p.id + '/submittals')}>Submittals</button>
+            <button className="btn" onClick={() => nav('/package/' + p.id + '/delivery')}>Delivery</button>
+            <button className="btn primary" onClick={() => nav('/package/' + p.id + '/rfq-assist')}>RFQ assist</button>
+          </div>
+        )}
       </div>
 
       {/* Documents / CAD */}
@@ -104,7 +163,7 @@ export default function PackageDetail() {
                       <td>{i + 1}</td>
                       <td>{li.description}</td>
                       <td>{li.qty}</td>
-                      <td>{li.unit || '—'}</td>
+                      <td>{li.unit || '-'}</td>
                       {isVendor && !isOwner && <td style={{ width: 110 }}><input value={prices[li.id] || ''} onChange={e => setPrices({ ...prices, [li.id]: e.target.value })} placeholder="0" disabled={!!myBid} /></td>}
                       {isVendor && !isOwner && <td>${lineTotal(li).toLocaleString()}</td>}
                       {isOwner && <td><a className="note" style={{ cursor: 'pointer', color: 'var(--red)' }} onClick={async () => { await deleteLineItem(li.id); setItems(await getLineItems(id!)); }}>Remove</a></td>}
@@ -116,7 +175,7 @@ export default function PackageDetail() {
           {isOwner && (
             <form onSubmit={addLI} className="card" style={{ marginTop: 10 }}>
               <div className="two">
-                <div className="field"><label>Line description</label><input value={desc} onChange={e => setDesc(e.target.value)} placeholder="e.g. Lobby millwork — walnut" /></div>
+                <div className="field"><label>Line description</label><input value={desc} onChange={e => setDesc(e.target.value)} placeholder="e.g. Lobby millwork - walnut" /></div>
                 <div className="field"><label>Unit</label><input value={unit} onChange={e => setUnit(e.target.value)} placeholder="ea / sf / lf" /></div>
               </div>
               <div className="field" style={{ maxWidth: 160 }}><label>Qty</label><input value={qty} onChange={e => setQty(e.target.value)} /></div>
@@ -133,8 +192,42 @@ export default function PackageDetail() {
           <div className="card">
             {myBid ? (
               <div className="ok">You submitted a bid of ${Number(myBid.price).toLocaleString()} · {myBid.days} days · status {myBid.status}.</div>
+            ) : !isVerified(verif) ? (
+              /* Verify-first gate: cannot bid or contact developers until verified */
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                  <span className="badge b-amber">{verificationLabel(verif)}</span>
+                </div>
+                <div style={{ fontWeight: 700, marginBottom: 4 }}>Get verified to start bidding</div>
+                <div className="note" style={{ marginBottom: 12, lineHeight: 1.6 }}>
+                  You can browse every project freely. To submit a bid or contact this developer, your
+                  account must pass verification.
+                  {verif?.missing?.length ? ` Still needed: ${verif.missing.join(', ')}.` : ''}
+                </div>
+                <button className="btn primary" onClick={() => nav('/profile')}>Complete verification</button>
+              </div>
+            ) : !canBid(credits) ? (
+              /* Out of quarterly credits: upgrade to Pro */
+              <div>
+                <div style={{ fontWeight: 700, marginBottom: 4 }}>You have used all 5 bids this quarter</div>
+                <div className="note" style={{ marginBottom: 12, lineHeight: 1.6 }}>
+                  Free vendors get 5 bids per quarter with no rollover. Upgrade to Vendor Pro for
+                  unlimited bidding.
+                </div>
+                {upgradeMsg && <div className="note" style={{ marginBottom: 10 }}>{upgradeMsg}</div>}
+                <button className="btn primary" onClick={upgradeToPro} disabled={upgrading}>
+                  {upgrading ? 'Starting…' : `Upgrade to Pro - ${VENDOR_PRO_PRICE_LABEL}`}
+                </button>
+              </div>
             ) : (
               <>
+                {credits && (
+                  <div style={{ marginBottom: 10 }}>
+                    <span className={`badge ${credits.unlimited ? 'b-green' : 'b-neutral'}`}>
+                      {bidsLeftLabel(credits)}
+                    </span>
+                  </div>
+                )}
                 {msg && <div className="ok">{msg}</div>}
                 {!boq && <div className="field" style={{ maxWidth: 220 }}><label>Total price ($)</label><input value={lump} onChange={e => setLump(e.target.value)} /></div>}
                 {boq && <div className="note" style={{ marginBottom: 10 }}>Bid total from line items: <strong>${bidTotal.toLocaleString()}</strong></div>}
@@ -143,6 +236,14 @@ export default function PackageDetail() {
                   <div className="field"><label>Notes</label><input value={note} onChange={e => setNote(e.target.value)} placeholder="Inclusions, lead time, terms" /></div>
                 </div>
                 <button className="btn primary" onClick={submit} disabled={bidTotal <= 0}>Submit bid</button>
+                {!credits?.unlimited && credits && (
+                  <div className="note" style={{ marginTop: 8 }}>
+                    Need more than 5 bids a quarter?{' '}
+                    <a style={{ cursor: 'pointer', color: 'var(--emerald)', fontWeight: 600 }} onClick={() => nav('/subscription')}>
+                      See Vendor Pro ({VENDOR_PRO_PRICE_LABEL})
+                    </a>
+                  </div>
+                )}
               </>
             )}
           </div>
@@ -155,17 +256,44 @@ export default function PackageDetail() {
           <div className="sectitle">Bids received ({bids.length})</div>
           <div className="card" style={{ padding: 0 }}>
             <table>
-              <thead><tr><th>Vendor</th><th>Price</th><th>Timeline</th><th>Status</th></tr></thead>
+              <thead><tr><th>Vendor</th><th>Price</th><th>Timeline</th><th>Status</th><th>Fee rule</th><th></th></tr></thead>
               <tbody>
-                {bids.length === 0 ? <tr><td colSpan={4} className="note" style={{ padding: 14 }}>No bids yet.</td></tr>
-                  : bids.map(b => (
-                    <tr key={b.id}>
-                      <td><strong>{b.vendor?.name ?? '—'}</strong></td>
-                      <td>${Number(b.price).toLocaleString()}</td>
-                      <td>{b.days} days</td>
-                      <td><span className="badge b-neutral">{b.status}</span></td>
-                    </tr>
-                  ))}
+                {bids.length === 0 ? <tr><td colSpan={6} className="note" style={{ padding: 14 }}>No bids yet.</td></tr>
+                  : bids.map(b => {
+                    const rel = rels[b.vendor_company_id];
+                    return (
+                      <>
+                        <tr key={b.id}>
+                          <td><strong>{b.vendor?.name ?? '-'}</strong></td>
+                          <td>${Number(b.price).toLocaleString()}</td>
+                          <td>{b.days} days</td>
+                          <td><span className="badge b-neutral">{b.status}</span></td>
+                          <td><FeeBadge fee={rel?.fee} relationship={rel} audience="developer" /></td>
+                          <td>
+                            {!rel && (
+                              <a className="note" style={{ cursor: 'pointer', color: 'var(--emerald)' }}
+                                 onClick={() => setRelOpen(relOpen === b.vendor_company_id ? null : b.vendor_company_id)}>
+                                {relOpen === b.vendor_company_id ? 'Cancel' : 'Mark existing relationship'}
+                              </a>
+                            )}
+                          </td>
+                        </tr>
+                        {relOpen === b.vendor_company_id && !rel && (
+                          <tr key={b.id + '-rel'}>
+                            <td colSpan={6}>
+                              <ExistingRelationshipCheckbox
+                                developerCompanyId={p.building.company_id}
+                                vendorCompanyId={b.vendor_company_id}
+                                vendorName={b.vendor?.name}
+                                projectId={p.building.id}
+                                onConfirmed={() => { setRelOpen(null); load(); }}
+                              />
+                            </td>
+                          </tr>
+                        )}
+                      </>
+                    );
+                  })}
               </tbody>
             </table>
           </div>
@@ -180,7 +308,7 @@ export default function PackageDetail() {
             {questions.length === 0 && <div className="note" style={{ marginBottom: 10 }}>No questions yet.</div>}
             {questions.map(qq => (
               <div key={qq.id} style={{ padding: '8px 0', borderTop: '1px solid var(--line)' }}>
-                <div style={{ fontWeight: 600, fontSize: 13.5 }}>Q: {qq.question} <span className="note">— {qq.vendor?.name ?? 'Vendor'}</span></div>
+                <div style={{ fontWeight: 600, fontSize: 13.5 }}>Q: {qq.question} <span className="note">- {qq.vendor?.name ?? 'Vendor'}</span></div>
                 {qq.answer ? <div className="note">A: {qq.answer}</div>
                   : isOwner ? <a className="note" style={{ cursor: 'pointer', color: 'var(--emerald)' }} onClick={() => answer(qq.id)}>Answer</a>
                   : <div className="note">Awaiting answer</div>}

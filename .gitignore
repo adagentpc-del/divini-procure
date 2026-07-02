@@ -1,9 +1,31 @@
-node_modules
-dist
+# dependencies
+node_modules/
+
+# builds / artifacts (dist, dist-verify, dist_final, dist_<timestamp>, etc.)
+dist/
+dist*/
+build/
+.vite/
+*.tsbuildinfo
+
+# vite temp config files
+vite.config.ts.timestamp-*.mjs
+vite.config.*.timestamp-*.mjs
+
+# env & secrets
 .env
-.env.local
-.DS_Store
-ios/App/Pods
-ios/App/App/public
+.env.*
+!.env.example
+!.env.local.example
+*.pem
+*.key
+serviceAccount*.json
+
+# capacitor / native
+ios/App/Pods/
+ios/App/App/public/
+android/
+
+# logs / os
 *.log
-.vite
+.DS_Store

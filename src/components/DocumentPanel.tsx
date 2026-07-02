@@ -53,7 +53,7 @@ export default function DocumentPanel({ packageId, buildingId, canUpload }: { pa
         </div>
       )}
       {docs.length === 0
-        ? <div className="note">{canUpload ? 'No documents yet — upload drawings, specs, or schedules.' : 'No documents shared.'}</div>
+        ? <div className="note">{canUpload ? 'No documents yet - upload drawings, specs, or schedules.' : 'No documents shared.'}</div>
         : docs.map(d => (
           <div key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 0', borderTop: '1px solid var(--line)' }}>
             <span style={{ fontSize: 18, color: 'var(--emerald)' }}>{icon(d.kind)}</span>

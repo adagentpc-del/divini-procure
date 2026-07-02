@@ -20,10 +20,10 @@ export default function Privacy() {
       <h2 style={h2}>Information we collect</h2>
       <p>We collect only what we need to run the marketplace:</p>
       <ul>
-        <li><strong>Account &amp; contact details</strong> — your email, name, phone, company name, role, and city.</li>
-        <li><strong>Company &amp; marketplace data</strong> — projects, bid packages, bids, line items, messages, reviews, and subscription/plan status.</li>
-        <li><strong>Uploaded content</strong> — documents and images you upload (e.g. drawings, credentials).</li>
-        <li><strong>Technical data</strong> — basic, standard log and device information needed to operate and secure the service.</li>
+        <li><strong>Account &amp; contact details</strong> - your email, name, phone, company name, role, and city.</li>
+        <li><strong>Company &amp; marketplace data</strong> - projects, bid packages, bids, line items, messages, reviews, and subscription/plan status.</li>
+        <li><strong>Uploaded content</strong> - documents and images you upload (e.g. drawings, credentials).</li>
+        <li><strong>Technical data</strong> - basic, standard log and device information needed to operate and secure the service.</li>
       </ul>
 
       <h2 style={h2}>How we use it</h2>
@@ -38,13 +38,13 @@ export default function Privacy() {
       <p>
         Your data is stored with our infrastructure providers, who process it on our behalf:
         <strong> Supabase</strong> (database, authentication, and file storage), <strong>Vercel</strong> (web hosting),
-        and <strong>PayPal</strong> (vendor subscription payments — we do not store full card details). We do not sell your
+        and <strong>PayPal</strong> (vendor subscription payments - we do not store full card details). We do not sell your
         personal information, and we do not share it with third parties for their own marketing.
       </p>
 
       <h2 style={h2}>Visibility within the marketplace</h2>
       <p>
-        Some information is shared with other users to make the marketplace work — for example, a vendor’s
+        Some information is shared with other users to make the marketplace work - for example, a vendor’s
         company name and submitted bids are visible to the developer who posted the package, and posted
         packages are visible to matching vendors. Uploaded documents are shared only with the counterparties
         of the relevant package or bid.

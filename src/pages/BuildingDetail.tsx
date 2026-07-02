@@ -47,7 +47,7 @@ export default function BuildingDetail() {
         <div>
           <a className="note" style={{ cursor: 'pointer' }} onClick={() => nav('/projects')}>← Projects</a>
           <h1>{b.name}</h1>
-          <div className="sub">{b.location ?? '—'} · {b.developer ?? ''}</div>
+          <div className="sub">{b.location ?? '-'} · {b.developer ?? ''}</div>
         </div>
         {isOwner && <button className="btn primary" onClick={() => setAdding(a => !a)}>{adding ? 'Cancel' : '+ New bid package'}</button>}
       </div>
@@ -80,8 +80,8 @@ export default function BuildingDetail() {
                 <tr key={p.id} className="row-click" onClick={() => nav('/package/' + p.id)}>
                   <td><strong>{p.category}</strong></td>
                   <td><span className="badge b-neutral">{p.status}</span></td>
-                  <td>{p.budget_min || p.budget_max ? `$${Number(p.budget_min || 0).toLocaleString()}–$${Number(p.budget_max || 0).toLocaleString()}` : '—'}</td>
-                  <td>{p.deadline ?? '—'}</td>
+                  <td>{p.budget_min || p.budget_max ? `$${Number(p.budget_min || 0).toLocaleString()}–$${Number(p.budget_max || 0).toLocaleString()}` : '-'}</td>
+                  <td>{p.deadline ?? '-'}</td>
                 </tr>
               ))}
           </tbody>

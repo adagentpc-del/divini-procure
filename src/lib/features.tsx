@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
-import { supabase } from './supabase';
+import { getFeatureFlags } from './db';
 import { useAuth } from './auth';
 
 export const ADMIN_EMAIL = 'adagentpc@gmail.com';
@@ -21,13 +21,16 @@ const Ctx = createContext<FeaturesState>({} as FeaturesState);
 export const useFeatures = () => useContext(Ctx);
 
 export function FeaturesProvider({ children }: { children: ReactNode }) {
-  const { session, company } = useAuth();
+  const { session, company, isAdmin } = useAuth();
   const [flags, setFlags] = useState<Flag[]>([]);
-  const isAdmin = (session?.user?.email ?? '') === ADMIN_EMAIL;
 
   async function reload() {
-    const { data } = await supabase.from('feature_flags').select('*').order('sort');
-    setFlags((data as Flag[]) ?? []);
+    try {
+      const data = await getFeatureFlags();
+      setFlags((data as Flag[]) ?? []);
+    } catch {
+      setFlags([]);
+    }
   }
   useEffect(() => { if (session) reload(); }, [session]);
 

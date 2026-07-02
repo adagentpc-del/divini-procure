@@ -1,48 +1,37 @@
 import { useState } from 'react';
-import { supabase } from '../lib/supabase';
+import { Link, useNavigate } from 'react-router-dom';
+import { useAuth } from '../lib/auth';
 
 export default function Login() {
-  const [mode, setMode] = useState<'in' | 'up'>('in');
+  const { signIn, resendVerification } = useAuth();
+  const nav = useNavigate();
   const [email, setEmail] = useState('');
-  const [pw, setPw] = useState('');
+  const [password, setPassword] = useState('');
   const [err, setErr] = useState('');
-  const [ok, setOk] = useState('');
+  const [needsVerify, setNeedsVerify] = useState(false);
+  const [resent, setResent] = useState(false);
   const [busy, setBusy] = useState(false);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    setErr(''); setOk(''); setBusy(true);
+    setErr('');
+    setNeedsVerify(false);
+    setResent(false);
+    setBusy(true);
     try {
-      if (mode === 'in') {
-        const { error } = await supabase.auth.signInWithPassword({ email, password: pw });
-        if (error) throw error;
-      } else {
-        const { error } = await supabase.auth.signUp({ email, password: pw });
-        if (error) throw error;
-        setOk('Account created. If email confirmation is on, check your inbox — otherwise you are signed in.');
-      }
+      await signIn(email.trim(), password);
+      nav('/app');
     } catch (e: any) {
-      setErr(e.message ?? 'Something went wrong.');
+      const msg = e?.message ?? 'Could not sign in.';
+      if (/verify your email/i.test(msg)) setNeedsVerify(true);
+      setErr(msg);
     } finally {
       setBusy(false);
     }
   }
 
-  async function sendReset() {
-    setErr(''); setOk('');
-    if (!email) { setErr('Enter your email above first, then tap “Forgot password?”.'); return; }
-    setBusy(true);
-    try {
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/reset`,
-      });
-      if (error) throw error;
-      setOk('If an account exists for that email, a password reset link is on its way. Check your inbox.');
-    } catch (e: any) {
-      setErr(e.message ?? 'Could not send reset email.');
-    } finally {
-      setBusy(false);
-    }
+  async function resend() {
+    try { await resendVerification(email.trim()); setResent(true); } catch { /* ignore */ }
   }
 
   return (
@@ -55,29 +44,38 @@ export default function Login() {
             <div className="note">Procurement marketplace</div>
           </div>
         </div>
+
         {err && <div className="err">{err}</div>}
-        {ok && <div className="ok">{ok}</div>}
-        <form onSubmit={submit}>
-          <div className="field"><label>Email</label>
-            <input type="email" value={email} onChange={e => setEmail(e.target.value)} required /></div>
-          <div className="field"><label>Password</label>
-            <input type="password" value={pw} onChange={e => setPw(e.target.value)} required minLength={6} /></div>
-          <button className="btn primary block lg" disabled={busy}>
-            {busy ? 'Please wait…' : mode === 'in' ? 'Sign in' : 'Create account'}
-          </button>
-        </form>
-        {mode === 'in' && (
-          <div style={{ textAlign: 'center', marginTop: 12 }}>
-            <a className="note" style={{ cursor: 'pointer' }} onClick={() => { if (!busy) sendReset(); }}>
-              Forgot password?
-            </a>
+        {needsVerify && (
+          <div className="note" style={{ marginBottom: 12 }}>
+            {resent ? (
+              'Verification email sent. Check your inbox.'
+            ) : (
+              <>
+                Need a new verification link?{' '}
+                <button type="button" className="linklike" onClick={resend} style={{ background: 'none', border: 0, color: 'var(--emerald)', cursor: 'pointer', padding: 0, fontWeight: 600 }}>
+                  Resend it
+                </button>
+              </>
+            )}
           </div>
         )}
-        <div style={{ textAlign: 'center', marginTop: 14 }}>
-          <a className="note" style={{ cursor: 'pointer' }}
-            onClick={() => { setMode(mode === 'in' ? 'up' : 'in'); setErr(''); setOk(''); }}>
-            {mode === 'in' ? 'No account? Create one' : 'Have an account? Sign in'}
-          </a>
+
+        <form onSubmit={submit}>
+          <div className="field">
+            <label>Email</label>
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required placeholder="you@company.com" autoComplete="email" />
+          </div>
+          <div className="field">
+            <label>Password</label>
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required placeholder="Your password" autoComplete="current-password" />
+          </div>
+          <button className="btn primary block lg" disabled={busy}>{busy ? 'Signing in...' : 'Sign in'}</button>
+        </form>
+
+        <div className="note" style={{ marginTop: 16, display: 'flex', justifyContent: 'space-between' }}>
+          <Link to="/register" style={{ color: 'var(--emerald)', fontWeight: 600 }}>Create an account</Link>
+          <Link to="/forgot" style={{ color: 'var(--emerald)', fontWeight: 600 }}>Forgot password?</Link>
         </div>
       </div>
     </div>
