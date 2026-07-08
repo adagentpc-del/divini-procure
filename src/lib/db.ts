@@ -1,147 +1,305 @@
-import { supabase } from './supabase';
+/**
+ * Data calls - same public API as before, but every call now hits the Express
+ * backend (src/lib/api.ts) instead of Supabase PostgREST/Storage. Function
+ * signatures are unchanged so the pages need no rewrites for data access.
+ */
+import { apiGet, apiSend, apiUpload, apiBlob } from './api';
 
-export async function createCompanyForUser(userId: string, payload: {
-  kind: 'buyer' | 'vendor'; name: string; contact_name?: string; email?: string;
-  phone?: string; city?: string; region?: string; services?: string[];
-}) {
-  const { data: company, error } = await supabase
-    .from('companies')
-    .insert({
-      kind: payload.kind, name: payload.name, contact_name: payload.contact_name,
-      email: payload.email, phone: payload.phone, city: payload.city, region: payload.region,
-    })
-    .select()
-    .single();
-  if (error) throw error;
+export type CompanyPayload = {
+  kind: 'buyer' | 'vendor' | 'investor'; name: string; contact_name?: string; contact_title?: string;
+  email?: string; phone?: string; street?: string; city?: string; region?: string;
+  services?: string[];
+  // richer developer profile (all optional)
+  website?: string; description?: string; state?: string; ownership_group?: string;
+  development_team?: string; asset_types?: string[]; headquarters?: string;
+  // vendor + investor profile arrays (all optional)
+  coverage_areas?: string[]; service_categories?: string[]; capabilities?: string[];
+  focus_areas?: string[]; geographies?: string[];
+};
 
-  const { error: mErr } = await supabase
-    .from('company_members')
-    .insert({ company_id: company.id, user_id: userId, role: 'owner', seat: 1 });
-  if (mErr) throw mErr;
+export async function createCompanyForUser(_userId: string, payload: CompanyPayload) {
+  // userId is now derived from the verified token on the backend.
+  return apiSend<{ id: string }>('POST', '/companies', payload);
+}
 
-  if (payload.kind === 'vendor') {
-    await supabase.from('vendor_profiles').insert({
-      company_id: company.id, trust: 70, verify_status: 'pending',
-      services: payload.services ?? [],
-    });
-  }
-  return company;
+// ---- developer onboarding: website extract + brand media upload ----
+export type ExtractResult = {
+  available: boolean; name?: string | null; description?: string | null;
+  services?: string[]; tags?: string[];
+};
+export async function extractProfileFromUrl(url: string) {
+  return apiSend<ExtractResult>('POST', '/onboarding/extract', { url });
+}
+export type MediaCategory =
+  | 'logo' | 'image' | 'deck' | 'brochure'
+  | 'doc' | 'cert' | 'insurance' | 'license' | 'w9'
+  | 'other';
+export async function uploadCompanyMedia(
+  file: File,
+  opts: { companyId: string; category: MediaCategory },
+) {
+  const form = new FormData();
+  form.append('file', file);
+  form.append('companyId', opts.companyId);
+  form.append('category', opts.category);
+  return apiUpload<any>('/onboarding/media', form);
 }
 
 export async function getBuildings(companyId: string) {
-  const { data } = await supabase
-    .from('buildings').select('*').eq('company_id', companyId).order('created_at');
-  return data ?? [];
+  return apiGet<any[]>(`/buildings?companyId=${encodeURIComponent(companyId)}`);
+}
+
+export async function createBuilding(payload: { company_id: string; name: string; location?: string; developer?: string }) {
+  return apiSend('POST', '/buildings', payload);
 }
 
 export async function getOpenPackages(filter?: { categories?: string[] }) {
-  let q = supabase
-    .from('packages')
-    .select('*, building:buildings(name, location, developer)')
-    .in('status', ['open', 'shortlisting']);
-  if (filter?.categories?.length) q = q.in('category', filter.categories);
-  const { data } = await q.order('deadline');
-  return data ?? [];
+  const qs = filter?.categories?.length ? `?categories=${encodeURIComponent(filter.categories.join(','))}` : '';
+  return apiGet<any[]>(`/packages/open${qs}`);
 }
 
 export async function getMyBids(companyId: string) {
-  const { data } = await supabase
-    .from('bids')
-    .select('*, package:packages(category, building:buildings(name))')
-    .eq('vendor_company_id', companyId)
-    .order('created_at', { ascending: false });
-  return data ?? [];
+  return apiGet<any[]>(`/bids/mine?companyId=${encodeURIComponent(companyId)}`);
 }
 
 export async function getVendorProfile(companyId: string) {
-  const { data } = await supabase
-    .from('vendor_profiles').select('*').eq('company_id', companyId).maybeSingle();
-  return data;
+  return apiGet<any>(`/vendor-profiles/${encodeURIComponent(companyId)}`);
 }
 
 export async function getBuilding(id: string) {
-  const { data } = await supabase.from('buildings').select('*').eq('id', id).maybeSingle();
-  return data;
+  return apiGet<any>(`/buildings/${encodeURIComponent(id)}`);
 }
 export async function getPackages(buildingId: string) {
-  const { data } = await supabase.from('packages').select('*').eq('building_id', buildingId).order('created_at');
-  return data ?? [];
+  return apiGet<any[]>(`/buildings/${encodeURIComponent(buildingId)}/packages`);
 }
 export async function createPackage(buildingId: string, p: { category: string; status?: string; deadline?: string; budget_min?: number; budget_max?: number; }) {
-  const { data, error } = await supabase.from('packages').insert({ building_id: buildingId, ...p }).select().single();
-  if (error) throw error; return data;
+  return apiSend('POST', `/buildings/${encodeURIComponent(buildingId)}/packages`, p);
 }
 export async function getPackage(id: string) {
-  const { data } = await supabase.from('packages')
-    .select('*, building:buildings(id, name, location, developer, company_id)')
-    .eq('id', id).maybeSingle();
-  return data;
+  return apiGet<any>(`/packages/${encodeURIComponent(id)}`);
 }
 export async function setPackageStatus(id: string, status: string) {
-  await supabase.from('packages').update({ status }).eq('id', id);
+  await apiSend('POST', `/packages/${encodeURIComponent(id)}/status`, { status });
 }
 
 export async function getLineItems(packageId: string) {
-  const { data } = await supabase.from('package_line_items').select('*').eq('package_id', packageId).order('sort');
-  return data ?? [];
+  return apiGet<any[]>(`/packages/${encodeURIComponent(packageId)}/line-items`);
 }
 export async function addLineItem(packageId: string, li: { description: string; qty?: number; unit?: string; cost_code?: string; item_no?: string; }) {
-  const { error } = await supabase.from('package_line_items').insert({ package_id: packageId, ...li });
-  if (error) throw error;
+  await apiSend('POST', `/packages/${encodeURIComponent(packageId)}/line-items`, li);
 }
-export async function deleteLineItem(id: string) { await supabase.from('package_line_items').delete().eq('id', id); }
+export async function deleteLineItem(id: string) {
+  await apiSend('DELETE', `/line-items/${encodeURIComponent(id)}`);
+}
 
 export async function getDocuments(opts: { packageId?: string; buildingId?: string }) {
-  let q = supabase.from('documents').select('*').order('created_at', { ascending: false });
-  if (opts.packageId) q = q.eq('package_id', opts.packageId);
-  else if (opts.buildingId) q = q.eq('building_id', opts.buildingId);
-  const { data } = await q;
-  return data ?? [];
+  const params = new URLSearchParams();
+  if (opts.packageId) params.set('packageId', opts.packageId);
+  else if (opts.buildingId) params.set('buildingId', opts.buildingId);
+  const qs = params.toString();
+  return apiGet<any[]>(`/documents${qs ? `?${qs}` : ''}`);
 }
-export async function uploadDocument(file: File, opts: { companyId: string; userId: string; buildingId?: string; packageId?: string }) {
-  const path = `${opts.companyId}/${opts.packageId ?? opts.buildingId ?? 'misc'}/${Date.now()}-${file.name}`;
-  const { error: upErr } = await supabase.storage.from('project-files').upload(path, file, { upsert: false });
-  if (upErr) throw upErr;
-  const ext = (file.name.split('.').pop() ?? '').toLowerCase();
-  const { error } = await supabase.from('documents').insert({
-    company_id: opts.companyId, building_id: opts.buildingId ?? null, package_id: opts.packageId ?? null,
-    name: file.name, kind: ext, storage_path: path, size: file.size, uploaded_by: opts.userId,
-  });
-  if (error) throw error;
+export async function uploadDocument(file: File, opts: { companyId: string; userId?: string; buildingId?: string; packageId?: string }) {
+  const form = new FormData();
+  form.append('file', file);
+  form.append('companyId', opts.companyId);
+  if (opts.buildingId) form.append('buildingId', opts.buildingId);
+  if (opts.packageId) form.append('packageId', opts.packageId);
+  return apiUpload('/documents', form);
 }
 export async function signedUrl(path: string) {
-  const { data } = await supabase.storage.from('project-files').createSignedUrl(path, 3600);
-  return data?.signedUrl ?? null;
+  try {
+    const { signedUrl } = await apiGet<{ signedUrl: string }>(`/documents/signed-url?path=${encodeURIComponent(path)}`);
+    return signedUrl ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export async function getBidsForPackage(packageId: string) {
-  const { data } = await supabase.from('bids')
-    .select('*, vendor:companies(name)')
-    .eq('package_id', packageId).order('price');
-  return data ?? [];
+  return apiGet<any[]>(`/packages/${encodeURIComponent(packageId)}/bids`);
 }
 export async function submitPricedBid(packageId: string, vendorCompanyId: string, payload: {
   price: number; days: number; note?: string; items?: { line_item_id: string; unit_price: number; qty: number; amount: number }[];
 }) {
-  const { data: bid, error } = await supabase.from('bids').insert({
-    package_id: packageId, vendor_company_id: vendorCompanyId,
-    price: payload.price, days: payload.days, note: payload.note, status: 'submitted', docs_ok: true,
-  }).select().single();
-  if (error) throw error;
-  if (payload.items?.length) {
-    await supabase.from('bid_items').insert(payload.items.map(i => ({ bid_id: bid.id, ...i })));
-  }
-  return bid;
+  return apiSend('POST', `/packages/${encodeURIComponent(packageId)}/bids`, { vendorCompanyId, ...payload });
 }
 
 export async function getQuestions(packageId: string) {
-  const { data } = await supabase.from('rfq_questions').select('*, vendor:companies(name)').eq('package_id', packageId).order('created_at');
-  return data ?? [];
+  return apiGet<any[]>(`/packages/${encodeURIComponent(packageId)}/questions`);
 }
 export async function askQuestion(packageId: string, vendorCompanyId: string, question: string) {
-  const { error } = await supabase.from('rfq_questions').insert({ package_id: packageId, vendor_company_id: vendorCompanyId, question });
-  if (error) throw error;
+  await apiSend('POST', `/packages/${encodeURIComponent(packageId)}/questions`, { vendorCompanyId, question });
 }
 export async function answerQuestion(id: string, answer: string) {
-  await supabase.from('rfq_questions').update({ answer, answered_at: new Date().toISOString() }).eq('id', id);
+  await apiSend('POST', `/questions/${encodeURIComponent(id)}/answer`, { answer });
+}
+
+// ---- RFQ assist (CAD/spec intake + deterministic line-item suggestions) ----
+export type SuggestedLine = {
+  id?: string; name: string; category?: string; qty?: number; unit?: string;
+  spec?: string; notes?: string; status?: string;
+};
+export async function uploadRfqDocument(file: File, opts: { companyId: string; packageId: string; category: string; }) {
+  const form = new FormData();
+  form.append('file', file);
+  form.append('companyId', opts.companyId);
+  form.append('packageId', opts.packageId);
+  form.append('category', opts.category);
+  return apiUpload<any>('/rfq/documents', form);
+}
+export async function getRfqDocuments(packageId: string) {
+  return apiGet<any[]>(`/rfq/documents/${encodeURIComponent(packageId)}`);
+}
+export async function suggestRfqLines(packageId: string, body: { needs?: string; specText?: string }) {
+  return apiSend<{ suggestions: SuggestedLine[]; sourceUsedDocText: boolean }>('POST', '/rfq/suggest-lines', { packageId, ...body });
+}
+export async function getRfqSuggestions(packageId: string) {
+  return apiGet<{ suggestions: SuggestedLine[] }>(`/rfq/suggest-lines/${encodeURIComponent(packageId)}`);
+}
+export async function applyRfqLines(packageId: string, payload: { lineIds?: string[]; lines?: SuggestedLine[] }) {
+  return apiSend<{ applied: number; lineItems: any[] }>('POST', '/rfq/apply-lines', { packageId, ...payload });
+}
+
+// ---- company profile + account ----
+export async function updateCompany(id: string, patch: { name?: string; contact_name?: string; phone?: string; city?: string }) {
+  return apiSend('PATCH', `/companies/${encodeURIComponent(id)}`, patch);
+}
+export async function deleteMyAccount() {
+  await apiSend('POST', '/account/delete');
+}
+export async function exportMyData() {
+  const blob = await apiBlob('/account/export');
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `divini-procure-data-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  // Defer cleanup: revoking synchronously after click cancels the download in
+  // Firefox/Safari. A macrotask tick lets the browser start the download first.
+  setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 0);
+}
+
+// ---- incentive engine: intro credits, trust, founding ----
+export type CreditState = {
+  balance: number;
+  monthlyGrant: number;
+  metered: boolean;
+  ledger: { delta: number; reason: string; created_at: string }[];
+};
+export async function getMyCredits(scope?: 'investor' | 'company') {
+  return apiGet<{ scope: string; actorId: string; credits: CreditState }>(
+    `/incentives/credits${scope ? `?scope=${scope}` : ''}`,
+  );
+}
+export async function getFoundingStatus() {
+  return apiGet<{ investorFounder: boolean; companyFounder: boolean }>('/incentives/founding');
+}
+export type TrustResult = {
+  score: number;
+  band: 'new' | 'building' | 'established' | 'trusted';
+  factors: { label: string; points: number; max: number }[];
+  profile: Record<string, any> | null;
+};
+export async function getMyTrust() {
+  return apiGet<{ companyId?: string; trust: TrustResult | null }>('/incentives/trust');
+}
+export async function saveTrust(patch: Record<string, unknown>) {
+  return apiSend<{ profile: Record<string, any>; trust: TrustResult }>('POST', '/incentives/trust', patch);
+}
+export async function getMyReferral() {
+  return apiGet<{ code: string; count: number; creditsEarned: number }>('/incentives/referral');
+}
+export async function attributeReferral(code: string) {
+  return apiSend<{ attributed: boolean; reason?: string }>('POST', '/incentives/referral/attribute', { code });
+}
+export async function setInvestorPrivacy(patch: { quiet_mode?: boolean; visibility?: string }) {
+  return apiSend<{ privacy: { quiet_mode: boolean; visibility: string } }>('PATCH', '/investor/privacy', patch);
+}
+
+// ---- owner-email transfer ----
+// Hand control of the company to a new email. The backend upserts that user
+// (unverified) and emails them a verify/claim link to set a password and take
+// over; the company_members owner row and companies.email move to them.
+export async function transferOwnership(companyId: string, newEmail: string) {
+  return apiSend<{ ok: boolean; newOwner: { id: string; email: string | null } }>(
+    'POST',
+    '/auth/transfer-ownership',
+    { companyId, newEmail },
+  );
+}
+
+// ---- current engagements ("what you have going on") ----
+export type Engagement = {
+  id: string; company_id: string; created_by?: string | null;
+  title: string; type?: string | null; status?: string | null;
+  counterparty?: string | null; value_cents?: number | null;
+  location?: string | null; notes?: string | null;
+  created_at: string; updated_at?: string | null;
+};
+export type EngagementPayload = {
+  title: string; type?: string; status?: string; counterparty?: string;
+  valueCents?: number | null; location?: string; notes?: string;
+};
+export async function listEngagements() {
+  const d = await apiGet<{ engagements: Engagement[] }>('/engagements');
+  return d.engagements ?? [];
+}
+export async function createEngagement(payload: EngagementPayload) {
+  const d = await apiSend<{ engagement: Engagement }>('POST', '/engagements', payload);
+  return d.engagement;
+}
+export async function updateEngagement(id: string, patch: Partial<EngagementPayload>) {
+  const d = await apiSend<{ engagement: Engagement }>('PATCH', `/engagements/${encodeURIComponent(id)}`, patch);
+  return d.engagement;
+}
+
+// ---- referral partner revenue (commission ledger + payouts) ----
+export type PartnerCommission = {
+  id: string; partner_id: string; referred_company_id?: string | null;
+  source: string; gross_cents: number; platform_fee_cents: number;
+  processing_cost_cents: number; net_profit_cents: number; commission_cents: number;
+  status: string; excluded: boolean; created_at: string;
+};
+export type PartnerPayout = {
+  id: string; partner_id: string; period?: string | null;
+  gross_volume_cents: number; platform_fees_cents: number; processing_costs_cents: number;
+  net_profit_cents: number; commission_pct?: number | null;
+  commission_owed_cents: number; commission_paid_cents: number; manual_adjustment_cents: number;
+  status: string; created_at: string; updated_at?: string | null;
+};
+export type PartnerRevTotals = {
+  netProfitCents: number; commissionCents: number;
+  pendingCommissionCents: number; paidCommissionCents: number;
+  payoutOwedCents: number; payoutPaidCents: number;
+};
+export type PartnerRevView = {
+  partner: any; commissions: PartnerCommission[]; payouts: PartnerPayout[]; totals: PartnerRevTotals;
+};
+export async function getPartnerRev(partnerId: string) {
+  return apiGet<PartnerRevView>(`/admin/partner-rev/${encodeURIComponent(partnerId)}`);
+}
+export async function addPartnerCommission(partnerId: string, body: {
+  source: string; grossCents: number; platformFeeCents: number; processingCostCents: number;
+  referredCompanyId?: string;
+}) {
+  return apiSend<{ commission: PartnerCommission }>('POST', `/admin/partner-rev/${encodeURIComponent(partnerId)}/commissions`, body);
+}
+export async function patchPartnerCommission(id: string, patch: { status?: string; excluded?: boolean }) {
+  return apiSend<{ commission: PartnerCommission }>('PATCH', `/admin/partner-rev/commissions/${encodeURIComponent(id)}`, patch);
+}
+export async function computePartnerPayout(partnerId: string, period: string) {
+  return apiSend<{ payout: PartnerPayout; commissionsCounted: number }>('POST', `/admin/partner-rev/${encodeURIComponent(partnerId)}/payouts/compute`, { period });
+}
+export async function patchPartnerPayout(id: string, patch: { status?: string; manual_adjustment_cents?: number; commission_paid_cents?: number }) {
+  return apiSend<{ payout: PartnerPayout }>('PATCH', `/admin/partner-rev/payouts/${encodeURIComponent(id)}`, patch);
+}
+
+// ---- feature flags ----
+export async function getFeatureFlags() {
+  return apiGet<any[]>('/feature-flags');
+}
+export async function setFeatureFlag(key: string, patch: { enabled?: boolean; audience?: string }) {
+  await apiSend('PATCH', `/feature-flags/${encodeURIComponent(key)}`, patch);
 }

@@ -25,13 +25,13 @@ export default function MyBids() {
           <thead><tr><th>Building</th><th>Category</th><th>Price</th><th>Timeline</th><th>Status</th></tr></thead>
           <tbody>
             {loading ? <tr><td colSpan={5} className="note">Loading…</td></tr>
-              : rows.length === 0 ? <tr><td colSpan={5} className="note">No bids yet — submit one from Search Bids.</td></tr>
+              : rows.length === 0 ? <tr><td colSpan={5} className="note">No bids yet - submit one from Search Bids.</td></tr>
               : rows.map(b => (
                 <tr key={b.id} className="row-click">
-                  <td><strong>{b.package?.building?.name ?? '—'}</strong></td>
-                  <td>{b.package?.category ?? '—'}</td>
-                  <td>{b.price != null ? `$${Number(b.price).toLocaleString()}` : '—'}</td>
-                  <td>{b.days ? `${b.days} days` : '—'}</td>
+                  <td><strong>{b.package?.building?.name ?? '-'}</strong></td>
+                  <td>{b.package?.category ?? '-'}</td>
+                  <td>{b.price != null ? `$${Number(b.price).toLocaleString()}` : '-'}</td>
+                  <td>{b.days ? `${b.days} days` : '-'}</td>
                   <td><span className={'badge ' + (badge[b.status] ?? 'b-neutral')}>{b.status}</span></td>
                 </tr>
               ))}

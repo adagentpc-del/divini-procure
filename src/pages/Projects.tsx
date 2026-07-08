@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
-import { supabase } from '../lib/supabase';
-import { getBuildings } from '../lib/db';
+import { getBuildings, createBuilding } from '../lib/db';
 
 export default function Projects() {
   const { company } = useAuth();
@@ -22,8 +21,8 @@ export default function Projects() {
     e.preventDefault();
     if (!company) return;
     setBusy(true);
-    await supabase.from('buildings').insert({
-      company_id: company.id, name, location, developer: company.name, progress: 0,
+    await createBuilding({
+      company_id: company.id, name, location, developer: company.name,
     });
     setName(''); setLocation(''); setAdding(false); setBusy(false);
     load();
@@ -55,11 +54,11 @@ export default function Projects() {
           <thead><tr><th>Project</th><th>Location</th><th>Progress</th></tr></thead>
           <tbody>
             {rows.length === 0
-              ? <tr><td colSpan={3} className="note">No projects yet — create your first one.</td></tr>
+              ? <tr><td colSpan={3} className="note">No projects yet - create your first one.</td></tr>
               : rows.map(b => (
                 <tr key={b.id} className="row-click" onClick={() => nav('/building/' + b.id)}>
                   <td><strong>{b.name}</strong></td>
-                  <td>{b.location ?? '—'}</td>
+                  <td>{b.location ?? '-'}</td>
                   <td>{b.progress ?? 0}%</td>
                 </tr>
               ))}

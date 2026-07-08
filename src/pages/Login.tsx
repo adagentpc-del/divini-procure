@@ -1,59 +1,81 @@
 import { useState } from 'react';
-import { supabase } from '../lib/supabase';
+import { Link, useNavigate } from 'react-router-dom';
+import { useAuth } from '../lib/auth';
 
 export default function Login() {
-  const [mode, setMode] = useState<'in' | 'up'>('in');
+  const { signIn, resendVerification } = useAuth();
+  const nav = useNavigate();
   const [email, setEmail] = useState('');
-  const [pw, setPw] = useState('');
+  const [password, setPassword] = useState('');
   const [err, setErr] = useState('');
-  const [ok, setOk] = useState('');
+  const [needsVerify, setNeedsVerify] = useState(false);
+  const [resent, setResent] = useState(false);
   const [busy, setBusy] = useState(false);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    setErr(''); setOk(''); setBusy(true);
+    setErr('');
+    setNeedsVerify(false);
+    setResent(false);
+    setBusy(true);
     try {
-      if (mode === 'in') {
-        const { error } = await supabase.auth.signInWithPassword({ email, password: pw });
-        if (error) throw error;
-      } else {
-        const { error } = await supabase.auth.signUp({ email, password: pw });
-        if (error) throw error;
-        setOk('Account created. If email confirmation is on, check your inbox — otherwise you are signed in.');
-      }
+      await signIn(email.trim(), password);
+      nav('/app');
     } catch (e: any) {
-      setErr(e.message ?? 'Something went wrong.');
+      const msg = e?.message ?? 'Could not sign in.';
+      if (/verify your email/i.test(msg)) setNeedsVerify(true);
+      setErr(msg);
     } finally {
       setBusy(false);
     }
+  }
+
+  async function resend() {
+    try { await resendVerification(email.trim()); setResent(true); } catch { /* ignore */ }
   }
 
   return (
     <div className="center">
       <div className="auth-card">
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18 }}>
-          <div style={{ width: 38, height: 38, borderRadius: 9, background: 'var(--emerald-deep)', color: 'var(--champagne)', display: 'grid', placeItems: 'center', fontFamily: "'Cormorant Garamond',serif", fontWeight: 700 }}>DG</div>
+          <img src="/brand/mark-emerald.png" alt="Divini Procure" style={{ width: 46, height: 46, objectFit: 'contain' }} />
           <div>
             <h1 style={{ fontSize: 24 }}>Divini Procure</h1>
             <div className="note">Procurement marketplace</div>
           </div>
         </div>
+
         {err && <div className="err">{err}</div>}
-        {ok && <div className="ok">{ok}</div>}
+        {needsVerify && (
+          <div className="note" style={{ marginBottom: 12 }}>
+            {resent ? (
+              'Verification email sent. Check your inbox.'
+            ) : (
+              <>
+                Need a new verification link?{' '}
+                <button type="button" className="linklike" onClick={resend} style={{ background: 'none', border: 0, color: 'var(--emerald)', cursor: 'pointer', padding: 0, fontWeight: 600 }}>
+                  Resend it
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
         <form onSubmit={submit}>
-          <div className="field"><label>Email</label>
-            <input type="email" value={email} onChange={e => setEmail(e.target.value)} required /></div>
-          <div className="field"><label>Password</label>
-            <input type="password" value={pw} onChange={e => setPw(e.target.value)} required minLength={6} /></div>
-          <button className="btn primary block lg" disabled={busy}>
-            {busy ? 'Please wait…' : mode === 'in' ? 'Sign in' : 'Create account'}
-          </button>
+          <div className="field">
+            <label>Email</label>
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required placeholder="you@company.com" autoComplete="email" />
+          </div>
+          <div className="field">
+            <label>Password</label>
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required placeholder="Your password" autoComplete="current-password" />
+          </div>
+          <button className="btn primary block lg" disabled={busy}>{busy ? 'Signing in...' : 'Sign in'}</button>
         </form>
-        <div style={{ textAlign: 'center', marginTop: 14 }}>
-          <a className="note" style={{ cursor: 'pointer' }}
-            onClick={() => { setMode(mode === 'in' ? 'up' : 'in'); setErr(''); setOk(''); }}>
-            {mode === 'in' ? 'No account? Create one' : 'Have an account? Sign in'}
-          </a>
+
+        <div className="note" style={{ marginTop: 16, display: 'flex', justifyContent: 'space-between' }}>
+          <Link to="/register" style={{ color: 'var(--emerald)', fontWeight: 600 }}>Create an account</Link>
+          <Link to="/forgot" style={{ color: 'var(--emerald)', fontWeight: 600 }}>Forgot password?</Link>
         </div>
       </div>
     </div>

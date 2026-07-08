@@ -53,9 +53,9 @@ export default function SearchBids() {
                 <tr key={r.id} className="row-click" onClick={() => nav('/package/' + r.id)}>
                   <td><strong>{r.building?.name}</strong></td>
                   <td>{r.category}</td>
-                  <td>{r.building?.developer ?? '—'}</td>
-                  <td>{r.building?.location ?? '—'}</td>
-                  <td>{r.deadline ?? '—'}</td>
+                  <td>{r.building?.developer ?? '-'}</td>
+                  <td>{r.building?.location ?? '-'}</td>
+                  <td>{r.deadline ?? '-'}</td>
                 </tr>
               ))}
           </tbody>
