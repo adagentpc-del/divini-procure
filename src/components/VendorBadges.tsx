@@ -34,7 +34,7 @@ export default function VendorBadges(props: VendorBadgeFlags & { className?: str
   const status = (props.verification_status || '').toLowerCase();
   const isVerifiedPlus =
     truthy(props.verifiedPlus) || truthy(props.verified_plus) || status === 'verified_plus' || status === 'verified+';
-  const isVerified = truthy(props.verified) || status === 'verified' || isVerifiedPlus;
+  const isVerified = truthy(props.verified) || status === 'verified' || status === 'approved' || isVerifiedPlus;
   const isFeatured = truthy(props.featured);
 
   if (!isVerified && !isVerifiedPlus && !isFeatured) return null;

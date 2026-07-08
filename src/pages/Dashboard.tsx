@@ -194,7 +194,7 @@ function VendorMonetizationTiles() {
                 ? `Needed: ${verif.missing.join(', ')}`
                 : 'Required to bid and contact developers'}
           </div>
-          {(verif?.status !== 'verified' || expiringSoon) && (
+          {(verif?.status !== 'verified' && verif?.status !== 'approved' || expiringSoon) && (
             <div style={{ marginTop: 8 }}>
               <a style={{ cursor: 'pointer', color: 'var(--emerald)', fontWeight: 600, fontSize: 13 }} onClick={() => nav('/profile')}>
                 Manage credentials

@@ -1,12 +1,16 @@
-# Divini Procure — re-platform OFF Supabase onto the unified local stack
+# Divini Procure — migration log (historical)
+
+> This document records the one-time re-platform from Supabase to the current
+> self-hosted stack. It is a historical record, not setup instructions.
+> See `README.md` for the current architecture.
 
 Procure was a pure client-side Vite SPA talking **directly** to Supabase (auth +
-PostgREST + Storage, no backend). It has been re-platformed onto the SAME local,
-self-hosted stack as its sibling `divinipartner`:
+PostgREST + Storage, no backend). It was re-platformed onto a self-hosted Express +
+PostgreSQL stack:
 
 | Concern | Before (Supabase) | After (this change) |
 |---|---|---|
-| Auth | GoTrue (`supabase.auth.*`) | **Authentik OIDC** (Authorization Code + PKCE) via `oidc-client-ts` (SPA) + `jose` token verification (backend) |
+| Auth | GoTrue (`supabase.auth.*`) | **Native email/password auth** with JWT (httpOnly cookie) — `server/src/routes/auth-native.ts`. (An intermediate Authentik OIDC step was later replaced by native auth.) |
 | Data | PostgREST query builder over Postgres + RLS | **Express backend** over **plain Postgres** (`pg`), RLS reimplemented as backend authz |
 | Storage | Supabase Storage bucket `project-files` | **Local-disk** uploads + HMAC short-lived signed download URLs |
 | Backend | none (SPA → SaaS) | **new `server/` Express app** that also serves the built SPA |

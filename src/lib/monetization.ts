@@ -23,7 +23,9 @@ export type BidCredits = {
   unlimited: boolean;
 };
 
-export type VerificationStatus = 'unverified' | 'pending' | 'verified' | 'expired' | 'rejected';
+// 'approved' is the canonical DB value (verify_status CHECK constraint: pending|ai-verified|approved|flagged).
+// 'verified' is accepted as a forward-compat alias the server may emit.
+export type VerificationStatus = 'unverified' | 'pending' | 'approved' | 'verified' | 'expired' | 'rejected';
 
 export type Verification = {
   status: VerificationStatus;
@@ -119,7 +121,8 @@ export function v2Active(credits: BidCredits | null, verification: Verification 
 export function isVerified(v: Verification | null): boolean {
   // If verification gating is off (null), nothing blocks the vendor.
   if (!v) return true;
-  return v.status === 'verified';
+  // DB canonical value is 'approved'; 'verified' accepted as forward-compat alias.
+  return v.status === 'approved' || v.status === 'verified';
 }
 
 /** True when the vendor has at least one bid credit (or unlimited). */
@@ -139,6 +142,7 @@ export function bidsLeftLabel(c: BidCredits | null): string {
 const STATUS_LABELS: Record<VerificationStatus, string> = {
   unverified: 'Not verified',
   pending: 'Verification under review',
+  approved: 'Verified',
   verified: 'Verified',
   expired: 'Verification expired',
   rejected: 'Verification rejected',
@@ -153,6 +157,7 @@ export function verificationLabel(v: Verification | null): string {
 export function verificationBadgeClass(v: Verification | null): string {
   if (!v) return 'b-green';
   switch (v.status) {
+    case 'approved':
     case 'verified':
       return 'b-green';
     case 'pending':

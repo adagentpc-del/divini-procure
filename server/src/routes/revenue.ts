@@ -12,7 +12,7 @@
  * money through any processor. Zero em dashes by convention.
  */
 import { Router, type Request, type Response, type NextFunction } from "express";
-import { getAuth, requireAdmin } from "../auth.js";
+import { getAuth, requireAdmin, requireUser } from "../auth.js";
 import { q, q1 } from "../pool.js";
 import { enqueueSplitsForRevenue } from "../lib/split-engine.js";
 
@@ -142,6 +142,76 @@ router.patch(
       void enqueueSplitsForRevenue(row.id, getAuth(req).email);
     }
     res.json({ revenue: row });
+  }),
+);
+
+// ---------------------------------------------------------------------------
+// GET /me/success-fees -> vendor-facing fee summary for the authenticated company.
+// ---------------------------------------------------------------------------
+router.get(
+  "/me/success-fees",
+  requireUser,
+  h(async (req, res) => {
+    const { companyId } = getAuth(req);
+    if (!companyId) {
+      return res.json({ owedCents: 0, paidCents: 0, count: 0 });
+    }
+    const row = await q1<{ owed_cents: string; paid_cents: string; cnt: string }>(
+      `SELECT
+         COALESCE(SUM(fee_cents) FILTER (WHERE status IN ('accrued','invoiced')), 0) AS owed_cents,
+         COALESCE(SUM(fee_cents) FILTER (WHERE status = 'collected'), 0)             AS paid_cents,
+         COUNT(*)                                                                     AS cnt
+       FROM platform_revenue
+       WHERE vendor_company_id = $1`,
+      [companyId],
+    );
+    res.json({
+      owedCents: num(row?.owed_cents),
+      paidCents: num(row?.paid_cents),
+      count: num(row?.cnt),
+    });
+  }),
+);
+
+// ---------------------------------------------------------------------------
+// GET /admin/monetization-summary -> platform-wide monetization dashboard tile.
+// ---------------------------------------------------------------------------
+router.get(
+  "/admin/monetization-summary",
+  requireAdmin,
+  h(async (_req, res) => {
+    const feeRow = await q1<{ total: string }>(
+      `SELECT COALESCE(SUM(fee_cents), 0) AS total
+         FROM platform_revenue
+        WHERE source_type = 'procurement_fee'`,
+    );
+
+    let proSubscribers = 0;
+    let proMrrCents = 0;
+    try {
+      const subRow = await q1<{ cnt: string; mrr: string }>(
+        `SELECT COUNT(*) AS cnt, COALESCE(SUM(amount_cents), 0) AS mrr
+           FROM subscriptions
+          WHERE status = 'active' AND plan_key ILIKE '%pro%'`,
+      );
+      proSubscribers = num(subRow?.cnt);
+      proMrrCents = num(subRow?.mrr);
+    } catch {
+      // subscriptions table may not exist yet
+    }
+
+    const verRow = await q1<{ cnt: string }>(
+      `SELECT COUNT(*) AS cnt
+         FROM vendor_credentials
+        WHERE doc_status = 'pending'`,
+    );
+
+    res.json({
+      successFeeTotalCents: num(feeRow?.total),
+      proMrrCents,
+      proSubscribers,
+      verificationQueueCount: num(verRow?.cnt),
+    });
   }),
 );
 

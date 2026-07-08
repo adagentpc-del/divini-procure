@@ -22,8 +22,8 @@
  * dashes by convention.
  */
 import { Router, type Request, type Response, type NextFunction } from "express";
-import { getAuth, requireAdmin } from "../auth.js";
-import { NotFoundError } from "../db.js";
+import { getAuth, requireAdmin, requireUser } from "../auth.js";
+import { NotFoundError, userCompanyIds } from "../db.js";
 import { q, q1 } from "../pool.js";
 import { PROCURE_MONETIZATION_V2 } from "../config.js";
 import { REQUIRED_CREDENTIAL_TYPES } from "../lib/verificationGate.js";
@@ -539,4 +539,179 @@ router.patch(
   }),
 );
 
+// ===========================================================================
+// (C) VENDOR SELF-SERVE DOCUMENT UPLOAD
+// ===========================================================================
+
+const VALID_CREDENTIAL_TYPES = ["license", "gl_insurance", "trade_cert", "other"] as const;
+
+// POST /api/me/verification/documents
+router.post(
+  "/me/verification/documents",
+  requireUser,
+  h(async (req, res) => {
+    const auth = getAuth(req);
+    const body = (req.body ?? {}) as {
+      credentialType?: string;
+      fileKey?: string;
+      fileName?: string;
+      expiresAt?: string;
+    };
+
+    const credentialType = body.credentialType ? String(body.credentialType) : "";
+    const fileKey = body.fileKey ? String(body.fileKey) : "";
+
+    if (!credentialType || !(VALID_CREDENTIAL_TYPES as readonly string[]).includes(credentialType)) {
+      res.status(400).json({ error: `credentialType must be one of: ${VALID_CREDENTIAL_TYPES.join(", ")}` });
+      return;
+    }
+    if (!fileKey) {
+      res.status(400).json({ error: "fileKey is required" });
+      return;
+    }
+
+    const companyIds = await userCompanyIds(auth.userId!);
+    if (companyIds.length === 0) {
+      res.status(403).json({ error: "user has no associated company" });
+      return;
+    }
+    const companyId = companyIds[0];
+
+    const fileName = body.fileName ? String(body.fileName) : null;
+    const expiresAt = body.expiresAt ? String(body.expiresAt) : null;
+
+    const row = await q1(
+      `INSERT INTO vendor_credentials (company_id, credential_type, file_key, file_name, doc_status, expires_at)
+       VALUES ($1, $2, $3, $4, 'pending', $5::timestamptz)
+       RETURNING *`,
+      [companyId, credentialType, fileKey, fileName, expiresAt],
+    );
+
+    const verifyStatus = await recomputeVendorVerifyStatus(companyId);
+
+    res.status(201).json({ credential: row, verifyStatus });
+  }),
+);
+
+// ===========================================================================
+// (D) VENDOR VERIFICATION OVERVIEW (developer dashboard)
+// ===========================================================================
+
+// GET /api/me/vendor-verification-overview?companyId=...
+router.get(
+  "/me/vendor-verification-overview",
+  requireUser,
+  h(async (req, res) => {
+    const auth = getAuth(req);
+    const requestedCompanyId = req.query.companyId ? String(req.query.companyId) : null;
+
+    // Verify the requester is a member of the requested company (or is admin)
+    if (requestedCompanyId && !auth.isAdmin) {
+      const companyIds = await userCompanyIds(auth.userId!);
+      if (!companyIds.includes(requestedCompanyId)) {
+        res.status(403).json({ error: "forbidden" });
+        return;
+      }
+    }
+
+    // Resolve the companyId to use for the preferences lookup
+    const companyId =
+      requestedCompanyId ??
+      (auth.userId ? (await userCompanyIds(auth.userId))[0] ?? null : null);
+
+    // Platform-wide vendor stats (simpler approach as specified)
+    const stats = await q1<{ verified: string; pending: string }>(
+      `SELECT
+         count(*) FILTER (WHERE lower(verify_status) = 'approved')::int  AS verified,
+         count(*) FILTER (WHERE verify_status IS NULL OR lower(verify_status) = 'pending')::int AS pending
+       FROM vendor_profiles`,
+      [],
+    );
+
+    const expiringRow = await q1<{ expiring: string }>(
+      `SELECT count(DISTINCT company_id)::int AS expiring
+       FROM vendor_credentials
+       WHERE lower(doc_status) = 'verified'
+         AND expires_at IS NOT NULL
+         AND expires_at > now()
+         AND expires_at <= now() + interval '30 days'`,
+      [],
+    );
+
+    let verifiedVendorsOnly = false;
+    if (companyId) {
+      try {
+        const pref = await q1<{ verified_vendors_only: boolean }>(
+          `SELECT verified_vendors_only FROM company_rfp_preferences WHERE company_id = $1`,
+          [companyId],
+        );
+        verifiedVendorsOnly = pref?.verified_vendors_only ?? false;
+      } catch {
+        // table may not exist yet — default to false
+        verifiedVendorsOnly = false;
+      }
+    }
+
+    res.json({
+      verifiedVendors: Number(stats?.verified ?? 0),
+      pendingVendors: Number(stats?.pending ?? 0),
+      expiringVendors: Number(expiringRow?.expiring ?? 0),
+      verifiedVendorsOnly,
+    });
+  }),
+);
+
+// ===========================================================================
+// (E) RFP PREFERENCES
+// ===========================================================================
+
+// PATCH /api/me/rfp-preferences
+router.patch(
+  "/me/rfp-preferences",
+  requireUser,
+  h(async (req, res) => {
+    const auth = getAuth(req);
+    const body = (req.body ?? {}) as { companyId?: string; verifiedVendorsOnly?: boolean };
+    const companyId = body.companyId ? String(body.companyId) : null;
+    const verifiedVendorsOnly =
+      typeof body.verifiedVendorsOnly === "boolean" ? body.verifiedVendorsOnly : false;
+
+    if (!companyId) {
+      res.status(400).json({ error: "companyId is required" });
+      return;
+    }
+
+    if (!auth.isAdmin) {
+      const companyIds = await userCompanyIds(auth.userId!);
+      if (!companyIds.includes(companyId)) {
+        res.status(403).json({ error: "forbidden" });
+        return;
+      }
+    }
+
+    // Idempotent migration: ensure table exists
+    await q(
+      `CREATE TABLE IF NOT EXISTS company_rfp_preferences (
+         company_id uuid PRIMARY KEY,
+         verified_vendors_only boolean NOT NULL DEFAULT false,
+         updated_at timestamptz DEFAULT now()
+       )`,
+      [],
+    );
+
+    const row = await q1<{ verified_vendors_only: boolean }>(
+      `INSERT INTO company_rfp_preferences (company_id, verified_vendors_only, updated_at)
+       VALUES ($1, $2, now())
+       ON CONFLICT (company_id) DO UPDATE
+         SET verified_vendors_only = excluded.verified_vendors_only,
+             updated_at = now()
+       RETURNING verified_vendors_only`,
+      [companyId, verifiedVendorsOnly],
+    );
+
+    res.json({ ok: true, verifiedVendorsOnly: row?.verified_vendors_only ?? verifiedVendorsOnly });
+  }),
+);
+
 export default router;
+
