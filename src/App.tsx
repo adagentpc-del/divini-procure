@@ -87,6 +87,13 @@ import MyInvites from './pages/MyInvites';
 import PayoutSettings from './pages/PayoutSettings';
 import MyPayouts from './pages/MyPayouts';
 import AdminPayouts from './pages/AdminPayouts';
+import COITracker from './pages/COITracker';
+import RetainageDashboard from './pages/RetainageDashboard';
+import LenderPortal from './pages/LenderPortal';
+import DrawRequestView from './pages/DrawRequestView';
+import DisputeCenter from './pages/DisputeCenter';
+import InvestorWatchlist from './pages/InvestorWatchlist';
+import ProgressPhotos from './pages/ProgressPhotos';
 
 function Gate({ children }: { children: JSX.Element }) {
   const { session, company, isAdmin, loading } = useAuth();
@@ -159,6 +166,13 @@ function Routed() {
       <Route path="/vendor-pricing" element={<Gate><VendorPricing /></Gate>} />
       <Route path="/award" element={<Gate><AwardWorkflow /></Gate>} />
       <Route path="/change-orders" element={<Gate><ChangeOrders /></Gate>} />
+      <Route path="/coi-tracker" element={<Gate><COITracker /></Gate>} />
+      <Route path="/retainage" element={<Gate><RetainageDashboard /></Gate>} />
+      <Route path="/lender-portal" element={<Gate><LenderPortal /></Gate>} />
+      <Route path="/lender-view/:token" element={<DrawRequestView />} />
+      <Route path="/dispute-center" element={<Gate><DisputeCenter /></Gate>} />
+      <Route path="/investor-watchlist" element={<Gate><InvestorWatchlist /></Gate>} />
+      <Route path="/progress-photos" element={<Gate><ProgressPhotos /></Gate>} />
       <Route path="/products" element={<Gate><ProductCatalog /></Gate>} />
       <Route path="/vendor-import" element={<Gate><VendorImport /></Gate>} />
       <Route path="/designer" element={<Gate><DesignerDashboard /></Gate>} />

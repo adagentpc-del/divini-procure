@@ -93,6 +93,15 @@ import authNativeRouter from "./routes/auth-native.js";
 import verificationRouter from "./routes/verification.js";
 import scoreRefreshRouter from "./routes/score-refresh.js";
 import splitTermsRouter from "./routes/split-terms.js";
+// ---- Gap-closure Wave 2: COI, retainage, lender portal, disputes, quick-hits --
+import coiRouter from "./routes/coi.js";
+import retainageRouter from "./routes/retainage.js";
+import lenderPortalRouter from "./routes/lender-portal.js";
+import disputesRouter from "./routes/disputes.js";
+import watchlistRouter from "./routes/watchlist.js";
+import projectHealthRouter from "./routes/project-health.js";
+import progressPhotosRouter from "./routes/progress-photos.js";
+import paymentEtaRouter from "./routes/payment-eta.js";
 // ---- Monetization V2 (flag-gated): bid credits + verification gate -----------
 import { PROCURE_MONETIZATION_V2 } from "./config.js";
 import { getBidCredits, consumeBidCredit } from "./lib/bidCredits.js";
@@ -179,6 +188,15 @@ router.use(csvImportRouter);
 router.use(verificationRouter);
 router.use(scoreRefreshRouter);
 router.use(splitTermsRouter);
+// ---- Gap-closure Wave 2 routers -----------------------------------------------
+router.use(coiRouter);
+router.use(retainageRouter);
+router.use(lenderPortalRouter);
+router.use(disputesRouter);
+router.use(watchlistRouter);
+router.use(projectHealthRouter);
+router.use(progressPhotosRouter);
+router.use(paymentEtaRouter);
 
 // ---- health ----------------------------------------------------------------
 router.get("/healthz", (_req, res) => {

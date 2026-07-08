@@ -33,6 +33,13 @@ const SECTIONS: Record<string, Section[]> = {
       ['/vendor-import', 'Import Vendors', '⇪'],
       ['/samples', 'Samples', '◌'],
     ]},
+    { label: 'Project Finance', items: [
+      ['/lender-portal', 'Lender Portal', '⬙'],
+      ['/retainage', 'Retainage', '◑'],
+      ['/coi-tracker', 'COI Tracker', '◻'],
+      ['/progress-photos', 'Progress Photos', '⊡'],
+      ['/dispute-center', 'Dispute Center', '⚖'],
+    ]},
     { label: 'Project Roles', items: [
       ['/designer', 'Designer', '✑'],
       ['/gc', 'GC', '⛏'],
@@ -43,6 +50,7 @@ const SECTIONS: Record<string, Section[]> = {
       ['/trust-profile', 'Trust Profile', '✦'],
       ['/investor', 'Investor', '⬡'],
       ['/my-introductions', 'Introductions', '✦'],
+      ['/investor-watchlist', 'Watchlist', '◉'],
       ['/teasers', 'Teasers', '◷'],
       ['/public-profile', 'Public Profile', '◍'],
       ['/collateral', 'Collateral', '◰'],
@@ -77,6 +85,11 @@ const SECTIONS: Record<string, Section[]> = {
       ['/onboarding-templates', 'Onboarding', '✓'],
       ['/relationships', 'Relationships', '⚖'],
       ['/collateral', 'Collateral', '◰'],
+    ]},
+    { label: 'Payments & Compliance', items: [
+      ['/retainage', 'Retainage', '◑'],
+      ['/coi-tracker', 'Insurance (COI)', '◻'],
+      ['/dispute-center', 'Dispute Center', '⚖'],
     ]},
     { label: 'Investment', items: [
       ['/investor', 'Investor', '⬡'],

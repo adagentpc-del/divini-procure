@@ -15,6 +15,15 @@ const h =
 
 const router = Router();
 
+async function getCompanyId(userId: string | null | undefined): Promise<string | null> {
+  if (!userId) return null;
+  const row = await q1<{ company_id: string }>(
+    `SELECT company_id FROM company_members WHERE user_id = $1 LIMIT 1`,
+    [userId],
+  );
+  return row?.company_id ?? null;
+}
+
 function num(v: number | string | null | undefined, fallback = 0): number {
   if (v == null) return fallback;
   const n = typeof v === "string" ? Number(v) : v;
@@ -28,7 +37,8 @@ router.get(
   "/retainage",
   requireUser,
   h(async (req, res) => {
-    const { companyId, isAdmin } = getAuth(req);
+    const { userId, isAdmin } = getAuth(req);
+    const companyId = await getCompanyId(userId);
     const { buildingId, vendorCompanyId, developerCompanyId } = req.query as Record<string, string>;
 
     const conditions: string[] = [];
@@ -131,7 +141,8 @@ router.patch(
   "/retainage/:id",
   requireUser,
   h(async (req, res) => {
-    const { companyId, email, isAdmin } = getAuth(req);
+    const { userId, email, isAdmin } = getAuth(req);
+    const companyId = await getCompanyId(userId);
 
     const existing = await q1<any>(
       `SELECT * FROM retainage_records WHERE id = $1`,
@@ -194,7 +205,8 @@ router.get(
   "/lien-waivers",
   requireUser,
   h(async (req, res) => {
-    const { companyId, isAdmin } = getAuth(req);
+    const { userId, isAdmin } = getAuth(req);
+    const companyId = await getCompanyId(userId);
     const { buildingId, vendorCompanyId } = req.query as Record<string, string>;
 
     const conditions: string[] = [];
@@ -326,7 +338,8 @@ router.get(
   "/me/retainage-summary",
   requireUser,
   h(async (req, res) => {
-    const { companyId } = getAuth(req);
+    const { userId } = getAuth(req);
+    const companyId = await getCompanyId(userId);
     if (!companyId) {
       return res.json({
         asVendor: { heldCents: 0, releasedCents: 0, pendingReleaseCount: 0 },
