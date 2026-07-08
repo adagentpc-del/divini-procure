@@ -16,6 +16,15 @@ const h =
 
 const router = Router();
 
+async function getCompanyId(userId: string | null | undefined): Promise<string | null> {
+  if (!userId) return null;
+  const row = await q1<{ company_id: string }>(
+    `SELECT company_id FROM company_members WHERE user_id = $1 LIMIT 1`,
+    [userId],
+  );
+  return row?.company_id ?? null;
+}
+
 // ---------------------------------------------------------------------------
 // GET /disputes -- list disputes for the authenticated company (or all if admin)
 // ---------------------------------------------------------------------------
@@ -23,7 +32,8 @@ router.get(
   "/disputes",
   requireUser,
   h(async (req, res) => {
-    const { companyId, isAdmin } = getAuth(req);
+    const { userId, isAdmin } = getAuth(req);
+    const companyId = await getCompanyId(userId);
     const status = (req.query.status as string) || "";
     const buildingId = (req.query.buildingId as string) || "";
 
@@ -71,7 +81,8 @@ router.post(
   "/disputes",
   requireUser,
   h(async (req, res) => {
-    const { companyId, email } = getAuth(req);
+    const { userId, email } = getAuth(req);
+    const companyId = await getCompanyId(userId);
     if (!companyId) {
       return res.status(400).json({ error: "company required" });
     }
@@ -119,7 +130,8 @@ router.get(
   "/disputes/:id",
   requireUser,
   h(async (req, res) => {
-    const { companyId, isAdmin } = getAuth(req);
+    const { userId, isAdmin } = getAuth(req);
+    const companyId = await getCompanyId(userId);
 
     const dispute = await q1<any>(
       `SELECT d.*,
@@ -162,7 +174,8 @@ router.patch(
   "/disputes/:id",
   requireUser,
   h(async (req, res) => {
-    const { companyId, email, isAdmin } = getAuth(req);
+    const { userId, email, isAdmin } = getAuth(req);
+    const companyId = await getCompanyId(userId);
 
     const existing = await q1<any>(
       `SELECT * FROM disputes WHERE id = $1`,
@@ -256,7 +269,8 @@ router.post(
   "/disputes/:id/messages",
   requireUser,
   h(async (req, res) => {
-    const { companyId, email, isAdmin } = getAuth(req);
+    const { userId, email, isAdmin } = getAuth(req);
+    const companyId = await getCompanyId(userId);
 
     const dispute = await q1<any>(
       `SELECT * FROM disputes WHERE id = $1`,
