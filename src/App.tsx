@@ -34,6 +34,7 @@ import AdminReferralPartners from './pages/AdminReferralPartners';
 import AdminRevenue from './pages/AdminRevenue';
 import SuperAdminDashboard from './pages/dashboards/SuperAdminDashboard';
 import Landing from './pages/Landing';
+import PublicOpportunities from './pages/PublicOpportunities';
 import JoinInvite from './pages/JoinInvite';
 import ReferralLanding from './pages/ReferralLanding';
 import QuoteComparison from './pages/QuoteComparison';
@@ -54,6 +55,7 @@ import InvestmentProfile from './pages/InvestmentProfile';
 import InvestmentPrograms from './pages/InvestmentPrograms';
 import InvestorOnboarding from './pages/InvestorOnboarding';
 import InvestorDashboard from './pages/InvestorDashboard';
+import MyIntroductions from './pages/MyIntroductions';
 import AdminInvestment from './pages/AdminInvestment';
 import Subscription from './pages/Subscription';
 import AdminSubscriptions from './pages/AdminSubscriptions';
@@ -126,6 +128,7 @@ function Routed() {
       <Route path="/accessibility" element={<Accessibility />} />
       <Route path="/onboarding" element={!session ? <Navigate to="/login" replace /> : company ? <Navigate to="/app" replace /> : isAdmin ? <Navigate to="/admin" replace /> : <Onboarding />} />
       <Route path="/" element={<Landing />} />
+      <Route path="/opportunities" element={<PublicOpportunities />} />
       <Route path="/join/:code" element={<JoinInvite />} />
       <Route path="/r/:code" element={<ReferralLanding />} />
       <Route path="/ref/:code" element={<RefLanding />} />
@@ -151,6 +154,7 @@ function Routed() {
       <Route path="/investor-onboarding" element={<Gate><InvestorOnboarding /></Gate>} />
       <Route path="/trust-profile" element={<Gate><TrustProfile /></Gate>} />
       <Route path="/investor" element={<Gate><InvestorDashboard /></Gate>} />
+      <Route path="/my-introductions" element={<Gate><MyIntroductions /></Gate>} />
       <Route path="/subscription" element={<Gate><Subscription /></Gate>} />
       <Route path="/vendor-pricing" element={<Gate><VendorPricing /></Gate>} />
       <Route path="/award" element={<Gate><AwardWorkflow /></Gate>} />

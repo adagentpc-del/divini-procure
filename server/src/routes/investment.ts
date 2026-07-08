@@ -760,7 +760,85 @@ router.post(
       subjectId: program.id,
       detail: { decision, nextStatus },
     });
+    // Best-effort notify the developer's investment contact when the program goes live.
+    if (String(decision) === "approve") {
+      try {
+        const devProfile = await q1<{ investment_contact_email: string }>(
+          `select investment_contact_email from developer_investment_profiles where company_id = $1`,
+          [program.company_id],
+        );
+        if (devProfile?.investment_contact_email) {
+          await sendEmail({
+            to: devProfile.investment_contact_email,
+            subject: "Your investment program is live",
+            text: `Your program "${program.name || program.id}" has been reviewed and approved. It is now visible to qualified investors on Divini Procure. Log in to your dashboard to manage matches and introduction requests.`,
+          });
+        }
+      } catch {
+        // ignore email errors
+      }
+    }
     res.json({ program: row });
+  }),
+);
+
+// Public unauthenticated browse endpoint - no auth required.
+router.get(
+  "/investment/public-opportunities",
+  h(async (req, res) => {
+    const { assetClass, location, minInvestment, investorType } = req.query as Record<string, string | undefined>;
+
+    // Build dynamic WHERE clauses
+    const conditions: string[] = [
+      `p.status IN ('approved','active')`,
+      `p.visibility IN ('public_teaser','approved_investor_preview','non_accredited_program')`,
+    ];
+    const params: unknown[] = [];
+
+    if (assetClass) {
+      params.push(assetClass);
+      conditions.push(`p.asset_class = $${params.length}`);
+    }
+    if (location) {
+      params.push(`%${location}%`);
+      conditions.push(`p.location ilike $${params.length}`);
+    }
+    if (minInvestment) {
+      const cents = Math.round(parseFloat(minInvestment) * 100);
+      if (!isNaN(cents)) {
+        params.push(cents);
+        conditions.push(`p.min_investment_cents <= $${params.length}`);
+      }
+    }
+    if (investorType) {
+      params.push(investorType);
+      conditions.push(`p.investor_type_accepted = $${params.length}`);
+    }
+
+    const where = conditions.join(" AND ");
+    const rows = await q<any>(
+      `select p.*,
+              c.name as developer_name,
+              dpp.bio, dpp.markets, dpp.asset_classes as developer_asset_classes,
+              dpp.completed_projects
+         from investment_programs p
+         join companies c on c.id = p.company_id
+         left join developer_public_profiles dpp on dpp.company_id = p.company_id
+        where ${where}
+        order by p.created_at desc`,
+      params,
+    );
+
+    const programs = rows.map((p: any) => ({
+      ...programTeaser(p),
+      developer_name: p.developer_name ?? null,
+      developer_bio: p.bio ?? null,
+      developer_markets: p.markets ?? null,
+      developer_asset_classes: p.developer_asset_classes ?? null,
+      developer_completed_projects: p.completed_projects ?? null,
+    }));
+
+    res.json({ programs, total: programs.length });
   }),
 );
 
@@ -1223,6 +1301,62 @@ router.post(
   }),
 );
 
+router.get(
+  "/investor/introductions",
+  requireUser,
+  h(async (req, res) => {
+    const auth = getAuth(req);
+    const investor = await myInvestor(auth.userId!);
+    if (!investor) return res.json({ introductions: [] });
+
+    const rows = await q<any>(
+      `select r.*,
+              p.name as program_name, p.asset_class, p.location, p.program_type,
+              p.projected_return, p.hold_period, p.target_raise_cents, p.min_investment_cents,
+              c.name as developer_name,
+              dip.investment_contact_name, dip.investment_contact_email, dip.investment_contact_phone
+         from investor_introduction_requests r
+         join investment_programs p on p.id = r.program_id
+         join companies c on c.id = p.company_id
+         left join developer_investment_profiles dip on dip.company_id = p.company_id
+        where r.investor_id = $1
+        order by r.updated_at desc`,
+      [investor.id]
+    );
+    // Only reveal developer contact info when status is approved or intro_made
+    const out = rows.map((r: any) => {
+      const approved = ['approved', 'intro_made'].includes(r.status);
+      return {
+        id: r.id,
+        status: r.status,
+        pipeline_status: r.pipeline_status,
+        created_at: r.created_at,
+        updated_at: r.updated_at,
+        developer_notes: r.developer_notes,
+        program: {
+          id: r.program_id,
+          name: r.program_name,
+          asset_class: r.asset_class,
+          location: r.location,
+          program_type: r.program_type,
+          projected_return: r.projected_return,
+          hold_period: r.hold_period,
+          target_raise_cents: r.target_raise_cents,
+          min_investment_cents: r.min_investment_cents,
+        },
+        developer: {
+          name: r.developer_name,
+          contact_name: approved ? r.investment_contact_name : null,
+          contact_email: approved ? r.investment_contact_email : null,
+          contact_phone: approved ? r.investment_contact_phone : null,
+          contact_revealed: approved,
+        },
+      };
+    });
+    res.json({ introductions: out });
+  }),
+);
+
 router.patch(
   "/investment/introductions/:id",
   requireUser,
@@ -1277,6 +1411,45 @@ router.patch(
       subjectId: intro.id,
       detail: { decision, status: m.status },
     });
+    // Best-effort notify the investor of the decision.
+    try {
+      const investorProfile = await q1<{ email: string }>(
+        `select email from investor_profiles where id = $1`,
+        [intro.investor_id],
+      );
+      const investorEmail = investorProfile?.email;
+      const programName = program.name || program.id;
+      const baseUrl = process.env.APP_URL ?? "https://app.diviniprocure.com";
+      if (investorEmail) {
+        if (String(decision) === "approve") {
+          await sendEmail({
+            to: investorEmail,
+            subject: "Your introduction request was approved",
+            text: `Good news -- ${programName} has approved your introduction request for ${programName}. You can now connect directly. Log in to your Divini Procure investor dashboard to see their contact information.`,
+          });
+        } else if (String(decision) === "decline") {
+          await sendEmail({
+            to: investorEmail,
+            subject: "Update on your introduction request",
+            text: `Thank you for your interest in ${programName}. The sponsor has reviewed your request and is not moving forward at this time. You can browse other opportunities at ${baseUrl}/opportunities.`,
+          });
+        } else if (String(decision) === "request_info") {
+          await sendEmail({
+            to: investorEmail,
+            subject: "More information requested",
+            text: `The sponsor for ${programName} has requested additional information before proceeding. Please log in to your Divini Procure dashboard to respond.`,
+          });
+        } else if (String(decision) === "require_nda") {
+          await sendEmail({
+            to: investorEmail,
+            subject: "NDA required to proceed",
+            text: `The sponsor for ${programName} requires an NDA before sharing further details. Please log in to your Divini Procure investor dashboard to sign the NDA.`,
+          });
+        }
+      }
+    } catch {
+      // ignore email errors
+    }
     res.json({ introductionRequest: row });
   }),
 );
@@ -1437,6 +1610,22 @@ router.patch(
       subjectId: profile.id,
       detail: { decision, reviewStatus },
     });
+    // Best-effort notify investor when their profile is approved.
+    if (String(decision) === "approve") {
+      try {
+        const investorEmail = profile.email as string | null | undefined;
+        const baseUrl = process.env.APP_URL ?? "https://app.diviniprocure.com";
+        if (investorEmail) {
+          await sendEmail({
+            to: investorEmail,
+            subject: "Your investor profile has been approved",
+            text: `Your Divini Procure investor profile has been reviewed and approved. You can now browse and request introductions to investment opportunities. Log in at ${baseUrl}/investor.`,
+          });
+        }
+      } catch {
+        // ignore email errors
+      }
+    }
     res.json({ profile: row });
   }),
 );

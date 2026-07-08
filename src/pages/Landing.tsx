@@ -188,6 +188,7 @@ export default function Landing() {
           <div className="navlinks">
             <a className="hidelink" onClick={() => document.getElementById('why')?.scrollIntoView({behavior:'smooth'})}>Why Divini</a>
             <a className="hidelink" onClick={() => document.getElementById('how')?.scrollIntoView({behavior:'smooth'})}>How it works</a>
+            <a onClick={() => nav('/opportunities')}>Browse deals</a>
             <a onClick={() => nav('/pricing')}>Pricing</a>
             <LanguageSwitcher />
             <a onClick={go}>Log in</a>
