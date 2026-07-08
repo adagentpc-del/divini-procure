@@ -1,0 +1,100 @@
+# Divini Procure — electron-builder configuration
+# Produces distributable installers for macOS (.dmg), Windows (.exe), Linux (.AppImage + .deb)
+
+appId: com.diviniprocure.app
+productName: Divini Procure
+copyright: Copyright 2025 Divini Procure
+
+# Entry point (compiled from electron/main.ts)
+main: dist-electron/main.js
+
+# Files included in the packaged app
+files:
+  - dist/**/*          # Vite-built SPA
+  - dist-electron/**/* # Compiled Electron main + preload
+  - public/logo.png
+  - package.json
+
+# Exclude large dev-only paths
+asarUnpack:
+  - resources/**
+
+directories:
+  buildResources: electron/build
+  output: release
+
+# ---- macOS ----------------------------------------------------------------
+mac:
+  category: public.app-category.business
+  icon: electron/build/icon.icns
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: electron/build/entitlements.mac.plist
+  entitlementsInherit: electron/build/entitlements.mac.plist
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64   # Apple Silicon
+
+dmg:
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
+  window:
+    width: 540
+    height: 380
+
+# ---- Windows --------------------------------------------------------------
+win:
+  icon: electron/build/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+        - ia32
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Divini Procure
+
+# ---- Linux ----------------------------------------------------------------
+linux:
+  icon: electron/build/icons
+  category: Office
+  target:
+    - AppImage
+    - deb
+    - rpm
+
+deb:
+  depends:
+    - libgtk-3-0
+    - libnotify4
+    - libnss3
+    - libxss1
+    - libxtst6
+    - xdg-utils
+    - libatspi2.0-0
+    - libuuid1
+
+# ---- Auto-update publish config -------------------------------------------
+# Uncomment and fill in once you have a GitHub release or S3 bucket set up.
+# publish:
+#   provider: github
+#   owner: YOUR_GITHUB_ORG
+#   repo: divini-procure
+#   releaseType: release
+
+# ---- Protocol (deep link) -------------------------------------------------
+protocols:
+  - name: Divini Procure
+    schemes:
+      - divini

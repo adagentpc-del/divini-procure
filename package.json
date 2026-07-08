@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "description": "Divini Procure - procurement marketplace (Vite SPA + Express/Postgres backend, Authentik OIDC, local-disk storage)",
+  "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
     "test": "node --experimental-strip-types --test \"tests/**/*.test.ts\"",
@@ -12,6 +13,15 @@
     "build:all": "pnpm run build && pnpm run build:server && rm -rf server/dist/public && cp -r dist server/dist/public",
     "start": "node --enable-source-maps server/dist/index.js",
     "preview": "vite preview",
+
+    "electron:compile": "tsc -p electron/tsconfig.json --outDir dist-electron",
+    "electron:dev": "concurrently -k -n VITE,ELECTRON -c cyan,yellow \"vite\" \"wait-on http://localhost:5173 && electron dist-electron/main.js\"",
+    "electron:build": "ELECTRON=true vite build && npm run electron:compile",
+    "electron:dist": "npm run electron:build && electron-builder",
+    "dist:mac": "npm run electron:build && electron-builder --mac",
+    "dist:win": "npm run electron:build && electron-builder --win",
+    "dist:linux": "npm run electron:build && electron-builder --linux",
+
     "app:build": "npm run build && npx cap sync",
     "cap:sync": "npx cap sync",
     "cap:add:ios": "npx cap add ios",
@@ -43,6 +53,13 @@
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
     "typescript": "^5.5.4",
-    "vite": "^5.4.0"
+    "vite": "^5.4.0",
+
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3",
+    "electron-updater": "^6.3.4",
+    "concurrently": "^8.2.2",
+    "wait-on": "^7.2.0",
+    "@types/node": "^20.14.0"
   }
 }
