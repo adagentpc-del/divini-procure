@@ -50,6 +50,18 @@ const pt: Translations = {
     es: 'Español',
     ht: 'Kreyòl ayisyen',
     pt: 'Português',
+    fr: 'Français',
+    de: 'Deutsch',
+    it: 'Italiano',
+    zh: '中文',
+    ar: 'العربية',
+    ja: '日本語',
+    ko: '한국어',
+    ru: 'Русский',
+    hi: 'हिन्दी',
+    vi: 'Tiếng Việt',
+    tr: 'Türkçe',
+    pl: 'Polski',
   },
 
   nav: {
