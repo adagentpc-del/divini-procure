@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
+import LanguageSwitcher from '../components/LanguageSwitcher';
 
 // Prefill the email from the invite/referral landing pages if one was captured.
 function readInviteEmail(): string {
@@ -120,6 +121,9 @@ export default function Register() {
         <div className="note" style={{ marginTop: 16 }}>
           Already have an account?{' '}
           <Link to="/login" style={{ color: 'var(--emerald)', fontWeight: 600 }}>Sign in</Link>
+        </div>
+        <div style={{ marginTop: 18, display: 'flex', justifyContent: 'center' }}>
+          <LanguageSwitcher full />
         </div>
       </div>
     </div>

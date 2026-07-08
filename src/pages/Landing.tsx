@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import VendorBadges from '../components/VendorBadges';
+import LanguageSwitcher from '../components/LanguageSwitcher';
 
 export default function Landing() {
   const nav = useNavigate();
@@ -188,6 +189,7 @@ export default function Landing() {
             <a className="hidelink" onClick={() => document.getElementById('why')?.scrollIntoView({behavior:'smooth'})}>Why Divini</a>
             <a className="hidelink" onClick={() => document.getElementById('how')?.scrollIntoView({behavior:'smooth'})}>How it works</a>
             <a onClick={() => nav('/pricing')}>Pricing</a>
+            <LanguageSwitcher />
             <a onClick={go}>Log in</a>
             <button className="btn primary" onClick={go}>Get started</button>
           </div>

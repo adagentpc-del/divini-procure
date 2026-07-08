@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
+import LanguageSwitcher from '../components/LanguageSwitcher';
 
 export default function Login() {
   const { signIn, resendVerification } = useAuth();
@@ -76,6 +77,9 @@ export default function Login() {
         <div className="note" style={{ marginTop: 16, display: 'flex', justifyContent: 'space-between' }}>
           <Link to="/register" style={{ color: 'var(--emerald)', fontWeight: 600 }}>Create an account</Link>
           <Link to="/forgot" style={{ color: 'var(--emerald)', fontWeight: 600 }}>Forgot password?</Link>
+        </div>
+        <div style={{ marginTop: 18, display: 'flex', justifyContent: 'center' }}>
+          <LanguageSwitcher full />
         </div>
       </div>
     </div>

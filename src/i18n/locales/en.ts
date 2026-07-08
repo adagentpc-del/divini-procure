@@ -1,0 +1,316 @@
+/**
+ * English (en) — default locale for Divini Procure.
+ * All other locales must mirror every key in this file.
+ */
+const en = {
+  // ---- Common / shared ----
+  common: {
+    loading: 'Loading…',
+    save: 'Save',
+    cancel: 'Cancel',
+    submit: 'Submit',
+    back: 'Back',
+    next: 'Next',
+    close: 'Close',
+    delete: 'Delete',
+    edit: 'Edit',
+    view: 'View',
+    confirm: 'Confirm',
+    yes: 'Yes',
+    no: 'No',
+    search: 'Search',
+    filter: 'Filter',
+    export: 'Export',
+    upload: 'Upload',
+    download: 'Download',
+    or: 'or',
+    and: 'and',
+    all: 'All',
+    none: 'None',
+    required: 'Required',
+    optional: 'Optional',
+    success: 'Success',
+    error: 'Something went wrong. Please try again.',
+    comingSoon: 'Coming soon',
+    learnMore: 'Learn more',
+    getStarted: 'Get started',
+    signIn: 'Sign in',
+    signOut: 'Sign out',
+    createAccount: 'Create account',
+    platform: 'Divini Procure',
+    tagline: 'Procurement marketplace',
+    copyrightNotice: '© {{year}} Divini Procure. All rights reserved.',
+    skipToContent: 'Skip to content',
+  },
+
+  // ---- Language switcher ----
+  language: {
+    label: 'Language',
+    en: 'English',
+    es: 'Español',
+    ht: 'Kreyòl ayisyen',
+    pt: 'Português',
+  },
+
+  // ---- Navigation ----
+  nav: {
+    dashboard: 'Dashboard',
+    projects: 'Projects',
+    search: 'Search bids',
+    myBids: 'My bids',
+    myInvites: 'Invitations',
+    profile: 'Profile',
+    relationships: 'Relationships',
+    agreements: 'Agreements',
+    subscription: 'Subscription',
+    reports: 'Reports',
+    admin: 'Admin',
+    logout: 'Sign out',
+    pricing: 'Pricing',
+    privacy: 'Privacy',
+    terms: 'Terms',
+  },
+
+  // ---- Landing page ----
+  landing: {
+    eyebrow: 'The procurement platform for real estate & construction',
+    headline: 'Procurement that actually works',
+    subheadline:
+      'Connect developers, general contractors, and verified vendors on one intelligent platform.',
+    ctaPrimary: 'Request access',
+    ctaSecondary: 'Learn how it works',
+    trustBadge: 'Trusted by real estate developers and contractors across the US',
+    painTitle_developer: 'For developers & GCs',
+    painTitle_vendor: 'For vendors & suppliers',
+    painBad_1: 'Too many calls to get a simple quote',
+    painFix_1: 'Divini sends your scope to qualified vendors automatically.',
+    painBad_2: 'No way to compare bids side by side',
+    painFix_2: 'Quote comparison with score-weighted ranking, built in.',
+    painBad_3: 'Vendors go dark after winning a bid',
+    painFix_3: 'Delivery tracking, submittals, and change orders in one place.',
+    painBad_4: 'Wasted time with unqualified suppliers',
+    painFix_4: 'Every vendor is verified before they can bid.',
+    howItWorksTitle: 'How it works',
+    step1: 'Post your project or package',
+    step2: 'Invite verified vendors or let Divini match them',
+    step3: 'Compare quotes intelligently',
+    step4: 'Award, track delivery, and close the loop',
+    ctaFinalTitle: 'Ready to simplify procurement?',
+    ctaFinalSub: 'Join developers and vendors already using Divini Procure.',
+  },
+
+  // ---- Auth ----
+  auth: {
+    loginTitle: 'Welcome back',
+    loginSubtitle: 'Sign in to Divini Procure',
+    registerTitle: 'Create your account',
+    registerSubtitle: 'Divini Procure marketplace',
+    email: 'Email',
+    emailPlaceholder: 'you@company.com',
+    password: 'Password',
+    passwordPlaceholder: 'Your password',
+    confirmPassword: 'Confirm password',
+    confirmPasswordPlaceholder: 'Repeat your password',
+    signInButton: 'Sign in',
+    signingIn: 'Signing in…',
+    createButton: 'Create account',
+    creating: 'Creating account…',
+    forgotPassword: 'Forgot password?',
+    createAccountLink: 'Create an account',
+    alreadyHaveAccount: 'Already have an account?',
+    signInLink: 'Sign in',
+    resendVerification: 'Resend it',
+    resendSent: 'Verification email sent. Check your inbox.',
+    needNewLink: 'Need a new verification link?',
+    checkEmailTitle: 'Check your email',
+    checkEmailBody:
+      'We sent a verification link to {{email}}. Click it to activate your account. The link expires in 24 hours.',
+    resendButton: 'Resend verification email',
+    resendDone: 'Verification email re-sent',
+    agreeLabel: 'I agree to the',
+    terms: 'Terms',
+    privacy: 'Privacy Policy',
+    paymentPolicy: 'Payment Policy',
+    nonCircumvention: 'Non-Circumvention Agreement',
+    agreeMustAccept: 'Please agree to the Terms, Privacy, Payment, and Non-Circumvention policies to continue.',
+    passwordMinLength: 'Password must be at least 8 characters.',
+    passwordMismatch: 'Passwords do not match.',
+    forgotTitle: 'Reset your password',
+    forgotSubtitle: 'Enter your email and we will send a reset link.',
+    sendResetLink: 'Send reset link',
+    sendingLink: 'Sending…',
+    resetLinkSent: 'Reset link sent. Check your inbox.',
+    resetTitle: 'Set a new password',
+    resetButton: 'Reset password',
+    resetting: 'Resetting…',
+    resetSuccess: 'Password updated. You can now sign in.',
+    verifyEmailTitle: 'Verify your email',
+    verifyEmailChecking: 'Verifying your email address…',
+    verifyEmailSuccess: 'Email verified. Redirecting you to the app…',
+    verifyEmailFailed: 'Verification failed. The link may have expired.',
+    verifyResend: 'Send a new link',
+  },
+
+  // ---- Onboarding ----
+  onboarding: {
+    title: 'Set up your company',
+    subtitle: 'Tell us about your business to get started.',
+    companyName: 'Company name',
+    companyNamePlaceholder: 'Acme Construction LLC',
+    role: 'Role',
+    roleDeveloper: 'Developer / Owner',
+    roleGC: 'General Contractor',
+    roleVendor: 'Vendor / Supplier',
+    roleDesigner: 'Designer / Architect',
+    roleBroker: 'Broker',
+    roleInvestor: 'Investor',
+    website: 'Website',
+    websitePlaceholder: 'https://yourcompany.com',
+    phone: 'Phone number',
+    phonePlaceholder: '+1 (305) 000-0000',
+    continueButton: 'Continue',
+    saving: 'Saving…',
+    stepOf: 'Step {{current}} of {{total}}',
+  },
+
+  // ---- Dashboard ----
+  dashboard: {
+    greeting: 'Welcome back, {{name}}',
+    noProjects: 'No active projects yet.',
+    createProject: 'Create a project',
+    recentActivity: 'Recent activity',
+    openBids: 'Open bids',
+    activeProjects: 'Active projects',
+    pendingInvites: 'Pending invitations',
+    yourScore: 'Your Divini Score',
+  },
+
+  // ---- Projects ----
+  projects: {
+    title: 'Projects',
+    newProject: 'New project',
+    noProjects: 'No projects yet.',
+    projectName: 'Project name',
+    status: 'Status',
+    statusActive: 'Active',
+    statusDraft: 'Draft',
+    statusClosed: 'Closed',
+    budget: 'Budget',
+    location: 'Location',
+    deadline: 'Deadline',
+  },
+
+  // ---- Bids ----
+  bids: {
+    title: 'My bids',
+    noBids: 'No bids submitted yet.',
+    submitBid: 'Submit bid',
+    bidAmount: 'Bid amount',
+    bidStatus: 'Status',
+    statusPending: 'Pending review',
+    statusAccepted: 'Accepted',
+    statusDeclined: 'Declined',
+    statusAwarded: 'Awarded',
+    searchBids: 'Search bids',
+    filterCategory: 'Filter by category',
+  },
+
+  // ---- Profile ----
+  profile: {
+    title: 'My profile',
+    companyInfo: 'Company information',
+    contactInfo: 'Contact information',
+    documents: 'Documents & certifications',
+    verificationStatus: 'Verification status',
+    verified: 'Verified',
+    unverified: 'Not verified',
+    pendingVerification: 'Verification pending',
+    uploadDocument: 'Upload document',
+    licenseNumber: 'License number',
+    insuranceCertificate: 'Insurance certificate',
+    saveChanges: 'Save changes',
+  },
+
+  // ---- Subscription / Pricing ----
+  subscription: {
+    title: 'Plans & pricing',
+    freePlan: 'Free',
+    proPlan: 'Pro',
+    verifiedPlus: 'Verified+',
+    featured: 'Featured',
+    perMonth: '/month',
+    perYear: '/year',
+    currentPlan: 'Current plan',
+    upgrade: 'Upgrade',
+    downgrade: 'Downgrade',
+    cancelPlan: 'Cancel plan',
+    bidCredits: '{{count}} bid credits / quarter',
+    unlimitedBids: 'Unlimited bids',
+    prioritySupport: 'Priority support',
+    featuredPlacement: 'Featured placement in search',
+  },
+
+  // ---- Legal pages ----
+  legal: {
+    termsTitle: 'Terms of Service',
+    privacyTitle: 'Privacy Policy',
+    cookiesTitle: 'Cookie Policy',
+    paymentPolicyTitle: 'Payment Policy',
+    nonCircumventionTitle: 'Non-Circumvention Agreement',
+    accessibilityTitle: 'Accessibility',
+    messagingPolicyTitle: 'Messaging Policy',
+    lastUpdated: 'Last updated: {{date}}',
+  },
+
+  // ---- Cookie banner ----
+  cookies: {
+    message:
+      'We use cookies to keep you signed in and improve your experience. See our',
+    cookiePolicy: 'Cookie Policy',
+    accept: 'Accept',
+    decline: 'Decline',
+  },
+
+  // ---- Admin ----
+  admin: {
+    title: 'Admin console',
+    users: 'Users',
+    invites: 'Invites',
+    revenue: 'Revenue',
+    features: 'Feature flags',
+    verification: 'Verification',
+    analytics: 'Analytics',
+    audit: 'Audit log',
+    campaigns: 'Campaigns',
+    subscriptions: 'Subscriptions',
+    feeMatrix: 'Fee matrix',
+    agreements: 'Agreements',
+    tasks: 'Admin tasks',
+    payouts: 'Payouts',
+    discountCodes: 'Discount codes',
+    referralPartners: 'Referral partners',
+  },
+
+  // ---- Errors ----
+  errors: {
+    notFound: 'Page not found.',
+    unauthorized: 'You are not authorized to view this page.',
+    sessionExpired: 'Your session has expired. Please sign in again.',
+    networkError: 'Network error. Please check your connection.',
+    serverError: 'Server error. Our team has been notified.',
+    fieldRequired: 'This field is required.',
+    invalidEmail: 'Please enter a valid email address.',
+    invalidUrl: 'Please enter a valid URL.',
+  },
+};
+
+export default en;
+
+// Derive the shape from the English source object so all locales must match its keys.
+// We use a mapped type that converts all leaf values to `string` so translated
+// locales are not constrained to the exact English literal values.
+type DeepStringify<T> = T extends string
+  ? string
+  : { [K in keyof T]: DeepStringify<T[K]> };
+
+export type Translations = DeepStringify<typeof en>;

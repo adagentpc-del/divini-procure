@@ -2,6 +2,7 @@ import { ReactNode } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import { useFeatures } from '../lib/features';
+import LanguageSwitcher from './LanguageSwitcher';
 
 type Item = [string, string, string]; // [path, label, icon]
 type Section = { label: string; items: Item[] };
@@ -159,6 +160,7 @@ export default function Shell({ children }: { children: ReactNode }) {
         <div className="topbar">
           <div className="sp" />
           <div className="note">{company?.name}</div>
+          <LanguageSwitcher />
         </div>
         <div className="mtop">
           <span className="nm">Divini Procure</span>
