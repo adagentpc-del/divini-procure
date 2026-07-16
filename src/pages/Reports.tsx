@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { apiGet, getSessionToken } from '../lib/api';
+import { apiGet } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useFeatures } from '../lib/features';
 
@@ -32,15 +32,12 @@ const money = (cents: number | null | undefined) =>
     ? '-'
     : `$${(cents / 100).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 
-// Raw CSV download: the JSON api client cannot stream text, so we fetch with the
-// same credentials + bearer fallback the api client uses, then trigger a blob
-// download. Returns an error string or null.
+// Raw CSV download: the JSON api client cannot stream text, so we fetch with
+// credentials (cookie) and trigger a blob download. Returns an error string or null.
 async function downloadCsv(path: string, filename: string): Promise<string | null> {
   try {
-    const token = getSessionToken();
     const res = await fetch(`${BASE}/api${path}`, {
       credentials: 'include',
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
     if (!res.ok) {
       let detail = '';

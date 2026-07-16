@@ -14,6 +14,7 @@
  * Tables live in db/schema-superadmin.sql. Zero em dashes by convention.
  */
 import { Router, type Request, type Response, type NextFunction } from "express";
+import { randomBytes } from "node:crypto";
 import { getAuth, requireUser, requireAdmin } from "../auth.js";
 import { q, q1 } from "../pool.js";
 import { PUBLIC_APP_URL } from "../config.js";
@@ -25,11 +26,12 @@ const h =
   (req: Request, res: Response, next: NextFunction) =>
     fn(req, res).catch(next);
 
-/** Short, URL-safe, human-typable random code. */
+/** Short, URL-safe, human-typable cryptographically-secure random code. */
 function randomCode(prefix = ""): string {
-  const body = Math.random().toString(36).slice(2, 8) + Math.random().toString(36).slice(2, 6);
-  const code = body.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 10);
-  return prefix ? `${prefix}-${code}` : code;
+  // Use 6 random bytes -> 12-char hex, keep alphanumeric chars, uppercase.
+  // crypto.randomBytes is CSPRNG - safe for invite/discount/referral codes.
+  const body = randomBytes(6).toString("hex").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 10);
+  return prefix ? `${prefix}-${body}` : body;
 }
 
 /** Build a public link from a relative path (env URL or relative). */

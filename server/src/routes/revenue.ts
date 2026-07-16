@@ -14,6 +14,7 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { getAuth, requireAdmin, requireUser } from "../auth.js";
 import { q, q1 } from "../pool.js";
+import { getMyCompany } from "../db.js";
 import { enqueueSplitsForRevenue } from "../lib/split-engine.js";
 
 const h =
@@ -152,8 +153,9 @@ router.get(
   "/me/success-fees",
   requireUser,
   h(async (req, res) => {
-    const { companyId } = getAuth(req);
-    if (!companyId) {
+    const auth = getAuth(req);
+    const company = auth.userId ? await getMyCompany(auth.userId) : null;
+    if (!company) {
       return res.json({ owedCents: 0, paidCents: 0, count: 0 });
     }
     const row = await q1<{ owed_cents: string; paid_cents: string; cnt: string }>(
@@ -163,7 +165,7 @@ router.get(
          COUNT(*)                                                                     AS cnt
        FROM platform_revenue
        WHERE vendor_company_id = $1`,
-      [companyId],
+      [company.id],
     );
     res.json({
       owedCents: num(row?.owed_cents),

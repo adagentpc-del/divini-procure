@@ -14,8 +14,9 @@
  *   POST /auth/transfer-ownership   { companyId, newEmail } (owner/admin) -> { ok }
  *
  * The session is delivered as an httpOnly Secure SameSite=Lax cookie
- * `divini_session` AND returned in the response body as `token` so SPA clients
- * that send Authorization Bearer keep working. Generic errors on auth failure.
+ * `divini_session`. The token is NOT returned in the response body to prevent
+ * leakage via logs, XSS, or JS access. Use the cookie for all authenticated
+ * requests. Generic errors on auth failure.
  *
  * Zero em dashes by convention.
  */
@@ -59,6 +60,8 @@ function setSessionCookie(res: Response, token: string): void {
     "SameSite=Lax",
     `Max-Age=${SESSION_TTL_SECONDS}`,
   ];
+  // Always set Secure in production. In development, omit it so cookies work
+  // over http://localhost without requiring HTTPS.
   if (IS_PROD) attrs.push("Secure");
   res.append("Set-Cookie", attrs.join("; "));
 }
@@ -131,11 +134,12 @@ async function issueSessionResponse(res: Response, user: db.UserRow): Promise<vo
   setSessionCookie(res, token);
   const company = await db.getMyCompany(user.id);
   const isAdmin = db.isAdminEmail(user.email);
+  // Token is set as an httpOnly cookie only - never returned in the response
+  // body to prevent exposure via XSS, browser history, or server logs.
   res.json({
     user: { id: user.id, email: user.email },
     isAdmin,
     company: company ?? null,
-    token,
   });
 }
 

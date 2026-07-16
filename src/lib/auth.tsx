@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
-import { apiGet, apiSend, setSessionToken } from './api';
+import { apiGet, apiSend } from './api';
 
 // One-shot signup attribution: after the user is authed, claim any pending
 // invite code (/join/:code) and attribute any referral partner code (/r/:code)
@@ -40,11 +40,13 @@ export type Company = {
 // `session.user.id` / `session.user.email` keeps working unchanged.
 export type Session = {
   user: { id: string; email: string | null };
-  accessToken: string | null;
 };
 
 type MeResponse = { user: { id: string; email: string | null }; isAdmin: boolean; company: Company | null };
-type AuthResponse = MeResponse & { token: string };
+// Auth responses no longer include a token in the body - the session is
+// maintained exclusively via the httpOnly `divini_session` cookie to prevent
+// XSS token theft via localStorage.
+type AuthResponse = MeResponse;
 
 // register() returns whether the caller should be sent to a "check your email"
 // screen (always true on success), so the Register page can show that state.
@@ -77,7 +79,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Apply an authoritative me/auth response into context state.
   function applyMe(me: MeResponse): void {
-    setSession({ user: me.user, accessToken: null });
+    setSession({ user: me.user });
     setCompany(me.company ?? null);
     setIsAdmin(me.isAdmin);
   }
@@ -107,10 +109,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Handle an auth response (login / verify / reset): store token + state, run
-  // attribution.
+  // Handle an auth response (login / verify / reset): update local state, run
+  // attribution. Session is maintained by the httpOnly cookie set by the server.
   function adoptAuth(res: AuthResponse): void {
-    setSessionToken(res.token ?? null);
     applyMe(res);
     void runSignupAttribution();
   }
@@ -152,7 +153,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = async (): Promise<void> => {
     try { await apiSend('POST', '/auth/logout'); } catch { /* ignore */ }
-    setSessionToken(null);
+    // Server clears the httpOnly cookie via Set-Cookie on logout.
     setSession(null);
     setCompany(null);
     setIsAdmin(false);

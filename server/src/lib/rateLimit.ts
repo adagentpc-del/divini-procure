@@ -10,9 +10,15 @@ import type { Request, Response, NextFunction } from "express";
 
 type Bucket = { count: number; resetAt: number };
 
+/**
+ * Return the client IP using Express's already-processed req.ip.
+ * Express normalises the X-Forwarded-For chain according to the `trust proxy`
+ * setting in app.ts (`trust proxy: 1`), so req.ip is the correct client IP
+ * and cannot be spoofed by injecting extra values into the XFF header.
+ * Reading the raw XFF header here would bypass that protection.
+ */
 function clientIp(req: Request): string {
-  const xff = (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim();
-  return xff || req.socket.remoteAddress || "unknown";
+  return req.ip ?? req.socket.remoteAddress ?? "unknown";
 }
 
 /**

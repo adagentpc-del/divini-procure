@@ -4,6 +4,7 @@
  * (cookie / Bearer) runs as middleware (authMiddleware) before the router.
  */
 import express, { type Express } from "express";
+import helmet from "helmet";
 import cors from "cors";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,6 +15,34 @@ import { authRateLimit } from "./lib/rateLimit.js";
 
 const app: Express = express();
 app.set("trust proxy", 1);
+
+// Security headers via Helmet. Applied first so every response gets hardened
+// headers: X-Content-Type-Options, X-Frame-Options, Referrer-Policy, HSTS
+// (in prod), and a Content-Security-Policy that restricts inline scripts/styles.
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"], // allow CSS-in-JS / inline styles from React
+        imgSrc: ["'self'", "data:", "blob:"],
+        fontSrc: ["'self'"],
+        connectSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        formAction: ["'self'"],
+        frameAncestors: ["'none'"],
+        upgradeInsecureRequests: IS_PROD ? [] : null,
+      },
+    },
+    // HSTS: only in production (requires HTTPS).
+    hsts: IS_PROD
+      ? { maxAge: 31536000, includeSubDomains: true, preload: true }
+      : false,
+    crossOriginEmbedderPolicy: false, // allow third-party resources without COEP headers
+  }),
+);
 
 // CORS - allow PUBLIC_APP_URL / ALLOWED_ORIGINS and same-origin (no Origin).
 const allowedOrigins = getAllowedOrigins();
