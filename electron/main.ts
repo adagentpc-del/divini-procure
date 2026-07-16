@@ -25,7 +25,9 @@ import {
   Notification,
   session,
 } from "electron";
-import { autoUpdater } from "electron-updater";
+// electron-updater is CommonJS — must use default import then destructure.
+import updaterPkg from "electron-updater";
+const { autoUpdater } = updaterPkg;
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import fs from "node:fs";
