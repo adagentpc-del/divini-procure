@@ -1,5 +1,5 @@
 import React, { lazy, Suspense } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import NotFound from './pages/NotFound';
 import { AuthProvider, useAuth } from './lib/auth';
 import { FeaturesProvider, useFeatures } from './lib/features';
@@ -102,8 +102,10 @@ const AdminVerification = lazy(() => import('./pages/AdminVerification'));
 
 function Gate({ children }: { children: JSX.Element }) {
   const { session, company, isAdmin, loading } = useAuth();
+  const location = useLocation();
   if (loading) return <div className="center"><div className="note">Loading…</div></div>;
-  if (!session) return <Navigate to="/login" replace />;
+  // Pass the intended destination so Login can redirect back after sign-in.
+  if (!session) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   if (!company) return <Navigate to={isAdmin ? '/admin' : '/onboarding'} replace />;
   return <Shell>{children}</Shell>;
 }
@@ -114,8 +116,9 @@ function Gate({ children }: { children: JSX.Element }) {
 function SuperAdminGate({ children }: { children: JSX.Element }) {
   const { session, loading } = useAuth();
   const { isAdmin } = useFeatures();
+  const location = useLocation();
   if (loading) return <div className="center"><div className="note">Loading…</div></div>;
-  if (!session) return <Navigate to="/login" replace />;
+  if (!session) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   if (!isAdmin) return <Navigate to="/app" replace />;
   return <SuperAdminDashboard>{children}</SuperAdminDashboard>;
 }

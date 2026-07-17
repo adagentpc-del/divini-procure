@@ -1,11 +1,14 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import LanguageSwitcher from '../components/LanguageSwitcher';
 
 export default function Login() {
   const { signIn, resendVerification } = useAuth();
   const nav = useNavigate();
+  const location = useLocation();
+  // Restore the page the user was trying to reach before being redirected to login.
+  const intendedDest = (location.state as { from?: string } | null)?.from || '/app';
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [err, setErr] = useState('');
@@ -21,7 +24,7 @@ export default function Login() {
     setBusy(true);
     try {
       await signIn(email.trim(), password);
-      nav('/app');
+      nav(intendedDest, { replace: true });
     } catch (e: any) {
       const msg = e?.message ?? 'Could not sign in.';
       if (/verify your email/i.test(msg)) setNeedsVerify(true);

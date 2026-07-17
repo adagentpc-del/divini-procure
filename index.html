@@ -32,7 +32,17 @@
       "url": "https://diviniprocure.com/",
       "logo": "https://diviniprocure.com/logo.png",
       "description": "A procurement bidding marketplace for real estate development and construction.",
-      "email": "adagentpc@gmail.com"
+      "email": "adagentpc@gmail.com",
+      "areaServed": [
+        { "@type": "State", "name": "Florida" },
+        { "@type": "Country", "name": "United States" }
+      ],
+      "address": {
+        "@type": "PostalAddress",
+        "addressLocality": "Miami",
+        "addressRegion": "FL",
+        "addressCountry": "US"
+      }
     }
     </script>
     
@@ -113,6 +123,18 @@
       ]
     }
     </script>
+    <!-- GEO / Local SEO: Florida-based SaaS serving the SE US construction market -->
+    <meta name="geo.region" content="US-FL" />
+    <meta name="geo.placename" content="Miami, Florida" />
+    <meta name="geo.position" content="25.7617;-80.1918" />
+    <meta name="ICBM" content="25.7617, -80.1918" />
+
+    <!-- Preload primary font to improve LCP (instead of @import in CSS bundle) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
+    <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=Inter:wght@400;500;600&display=swap" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=Inter:wght@400;500;600&display=swap" />
+
     <link rel="icon" type="image/png" href="/favicon.png" />
     <link rel="apple-touch-icon" href="/favicon.png" />
   </head>

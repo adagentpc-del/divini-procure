@@ -130,6 +130,13 @@ export default function Shell({ children }: { children: ReactNode }) {
   const { company, signOut } = useAuth();
   const { isAdmin } = useFeatures();
   const nav = useNavigate();
+
+  async function handleSignOut() {
+    await signOut();
+    // Imperatively navigate to /login after signOut clears session state to
+    // prevent a brief flash of protected content on the stale render.
+    nav('/login', { replace: true });
+  }
   const loc = useLocation();
   const role = company?.kind === 'vendor' ? 'vendor' : 'buyer';
 
@@ -159,7 +166,7 @@ export default function Shell({ children }: { children: ReactNode }) {
             <div key={sec.label}>
               <div className="nav-label">{sec.label}</div>
               {sec.items.map(([path, label, icon]) => (
-                <a key={path} className={loc.pathname === path ? 'active' : ''} onClick={() => nav(path)}>
+                <a key={path} href={path} className={loc.pathname === path ? 'active' : ''} onClick={(e) => { e.preventDefault(); nav(path); }}>
                   <span>{icon}</span> {label}
                 </a>
               ))}
@@ -167,7 +174,7 @@ export default function Shell({ children }: { children: ReactNode }) {
           ))}
         </nav>
         <div className="foot">
-          <a onClick={signOut} style={{ cursor: 'pointer' }}>Sign out</a>
+          <a href="/login" onClick={(e) => { e.preventDefault(); handleSignOut(); }} style={{ cursor: 'pointer' }}>Sign out</a>
         </div>
       </aside>
 
@@ -179,12 +186,12 @@ export default function Shell({ children }: { children: ReactNode }) {
         </div>
         <div className="mtop">
           <span className="nm">Divini Procure</span>
-          <a onClick={signOut} style={{ color: '#fff', cursor: 'pointer', fontSize: 13 }}>Sign out</a>
+          <a href="/login" onClick={(e) => { e.preventDefault(); handleSignOut(); }} style={{ color: '#fff', cursor: 'pointer', fontSize: 13 }}>Sign out</a>
         </div>
         <div className="content">{children}</div>
         <nav className="mbottom">
           {mobileItems.map(([path, label, icon]) => (
-            <a key={path} className={loc.pathname === path ? 'active' : ''} onClick={() => nav(path)}>
+            <a key={path} href={path} className={loc.pathname === path ? 'active' : ''} onClick={(e) => { e.preventDefault(); nav(path); }}>
               <span style={{ fontSize: 18 }}>{icon}</span>{label}
             </a>
           ))}
