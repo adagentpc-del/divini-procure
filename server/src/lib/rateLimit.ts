@@ -83,3 +83,42 @@ export const forgotRateLimit = rateLimit({ windowMs: 60 * 60_000, max: 5 });
  * Strict limiter for resend-verification: 5 per IP per hour.
  */
 export const resendVerifyRateLimit = rateLimit({ windowMs: 60 * 60_000, max: 5 });
+
+/**
+ * LLM endpoint limiter: 30 requests per authenticated user per hour.
+ *
+ * Each LLM call can take 15-20 seconds and costs real compute. This prevents
+ * a single user from flooding the inference backend and running up costs.
+ * Applied per userId (not IP) so VPN users don't share a bucket.
+ *
+ * Falls back to IP when no userId is available (unauthenticated calls should
+ * never reach LLM endpoints, but this provides defense in depth).
+ */
+export function llmRateLimit(opts: { max?: number; windowMs?: number } = {}) {
+  const { max = 30, windowMs = 60 * 60_000 } = opts;
+  const buckets = new Map<string, Bucket>();
+
+  function sweep(now: number) {
+    if (buckets.size < 5000) return;
+    for (const [k, b] of buckets) if (b.resetAt <= now) buckets.delete(k);
+  }
+
+  return function llmRateLimitMw(req: Request, res: Response, next: NextFunction) {
+    const now = Date.now();
+    sweep(now);
+    // Key on userId when available (set by requireUser); fallback to IP.
+    const key: string = (req as any).userId ?? clientIp(req);
+    let b = buckets.get(key);
+    if (!b || b.resetAt <= now) {
+      b = { count: 0, resetAt: now + windowMs };
+      buckets.set(key, b);
+    }
+    b.count += 1;
+    if (b.count > max) {
+      const retrySec = Math.max(1, Math.ceil((b.resetAt - now) / 1000));
+      res.setHeader("Retry-After", String(retrySec));
+      return res.status(429).json({ error: "LLM rate limit exceeded. Please try again later." });
+    }
+    next();
+  };
+}

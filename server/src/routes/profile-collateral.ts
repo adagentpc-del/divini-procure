@@ -192,6 +192,8 @@ router.delete(
 );
 
 // GET /profiles/:companyId/decks -> PUBLIC decks for a company (any authed user).
+// storage_path is intentionally omitted from the response: callers receive a
+// signed download_url that expires, not the raw storage key.
 router.get(
   "/profiles/:companyId/decks",
   requireUser,
@@ -203,7 +205,10 @@ router.get(
         order by sort asc, created_at desc`,
       [req.params.companyId],
     );
-    const withUrls = decks.map((d) => ({ ...d, download_url: signDownloadUrl(d.storage_path) }));
+    const withUrls = decks.map(({ storage_path, ...d }: any) => ({
+      ...d,
+      download_url: signDownloadUrl(storage_path),
+    }));
     res.json({ decks: withUrls });
   }),
 );

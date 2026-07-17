@@ -3,6 +3,7 @@
  * Tabs: Draw Requests | Lender Access | History
  */
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 interface Building {
   id: string;
@@ -68,6 +69,7 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 export default function LenderPortal() {
+  const nav = useNavigate();
   const [tab, setTab] = useState<'draws' | 'access' | 'history'>('draws');
   const [companyId, setCompanyId] = useState('');
   const [buildings, setBuildings] = useState<Building[]>([]);
@@ -421,7 +423,7 @@ export default function LenderPortal() {
                   </button>
                 )}
                 <button className="btn" style={{ fontSize: '0.8rem', padding: '0.35rem 0.9rem', background: 'transparent', border: '1px solid var(--border)', color: 'var(--ink)' }}
-                  onClick={() => window.location.assign(`/draw-request/${dr.id}`)}>
+                  onClick={() => nav(`/lender-portal?drawId=${dr.id}`)}>
                   View Details
                 </button>
               </div>

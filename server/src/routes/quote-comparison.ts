@@ -89,8 +89,10 @@ router.get(
       building: { id: _bid, name: _bname, location: _bloc, company_id: _bcompany },
     };
 
-    // All bids on this package (buyer sees every vendor's bid). The comparison
-    // columns are nullable add-ons from schema-quote-compare.sql.
+    // All active bids on this package (buyer sees every vendor's bid). The
+    // comparison columns are nullable add-ons from schema-quote-compare.sql.
+    // Withdrawn and rejected bids are excluded -- they represent vendor
+    // retractions or disqualifications and must not influence the ranking.
     const bidRows = await q<any>(
       `select bd.id, bd.price, bd.note,
               bd.lead_time_days, bd.freight_cents, bd.warranty_text,
@@ -98,7 +100,9 @@ router.get(
               c.name as vendor_company
          from bids bd
          join companies c on c.id = bd.vendor_company_id
-        where bd.package_id = $1 and coalesce(bd.is_draft, false) = false
+        where bd.package_id = $1
+          and coalesce(bd.is_draft, false) = false
+          and coalesce(bd.status, 'submitted') not in ('withdrawn', 'rejected')
         order by bd.created_at`,
       [packageId],
     );
@@ -166,17 +170,36 @@ router.get(
     //                 More coverage is better.
     // Dimensions with no signal across all bids contribute 0.5 (neutral) so a
     // single missing field never unfairly sinks a bid.
+    //
+    // IMPORTANT: null freight / install means the vendor did not specify that
+    // cost -- it must not be coerced to 0 (which would falsely reward them with
+    // a lower all-in price). Only known, non-null values are included so that
+    // an unspecified freight is scored as "unknown" (neutral 0.5) rather than
+    // "free" (which would unfairly advantage that vendor in the price ranking).
     const allIn = (b: CompareBid) =>
-      b.total_cents + (b.freight_cents ?? 0) + (b.install_cents ?? 0);
+      b.total_cents +
+      (b.freight_cents != null ? b.freight_cents : 0) +
+      (b.install_cents != null ? b.install_cents : 0);
+
+    // Whether a bid has KNOWN all-in pricing (total > 0 and every addendum
+    // either specified or explicitly zero). Used to drop bids with partial
+    // pricing from the price-ranking min/max so they don't skew the scale.
+    const hasKnownAllIn = (b: CompareBid) =>
+      b.total_cents > 0 &&
+      b.freight_cents != null &&
+      b.install_cents != null;
     const coverage = (b: CompareBid) =>
       b.line_items.length + (b.scope_notes ? 1 : 0) + (b.warranty_text ? 1 : 0);
 
-    const prices = bids.map(allIn);
+    // For min/max price scaling, only include bids with fully-specified pricing
+    // (total + freight + install all known). This prevents vendors who omitted
+    // freight from appearing cheaper than those who priced it explicitly.
+    const knownPrices = bids.filter(hasKnownAllIn).map(allIn);
     const leads = bids.map((b) => (b.lead_time_days != null ? b.lead_time_days : null));
     const covers = bids.map(coverage);
 
-    const minPrice = Math.min(...prices.filter((p) => p > 0), Infinity);
-    const maxPrice = Math.max(...prices, 0);
+    const minPrice = knownPrices.length ? Math.min(...knownPrices) : Infinity;
+    const maxPrice = knownPrices.length ? Math.max(...knownPrices) : 0;
     const leadVals = leads.filter((l): l is number => l != null && l > 0);
     const minLead = leadVals.length ? Math.min(...leadVals) : null;
     const maxLead = leadVals.length ? Math.max(...leadVals) : null;
@@ -187,12 +210,17 @@ router.get(
 
     const scored = bids.map((b) => {
       const price = allIn(b);
-      // Lower price -> higher score. Neutral when no price signal.
+      // Lower price -> higher score. Neutral (0.5) when:
+      //   - no price signal exists across all bids, OR
+      //   - this bid has unknown freight/install (partial pricing is not
+      //     comparable to fully-specified bids and must not score as cheaper).
       let priceScore = 0.5;
-      if (maxPrice > minPrice && price > 0 && Number.isFinite(minPrice)) {
-        priceScore = 1 - (price - minPrice) / (maxPrice - minPrice);
-      } else if (Number.isFinite(minPrice) && price === minPrice) {
-        priceScore = 1;
+      if (hasKnownAllIn(b) && Number.isFinite(minPrice)) {
+        if (maxPrice > minPrice) {
+          priceScore = 1 - (price - minPrice) / (maxPrice - minPrice);
+        } else {
+          priceScore = 1; // all fully-specified bids tied on all-in price
+        }
       }
       // Faster lead -> higher score. Neutral when this bid has no lead time.
       let speedScore = 0.5;

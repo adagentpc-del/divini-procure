@@ -24,6 +24,11 @@ import { q, q1 } from "../pool.js";
 import { llmEnabled, llmText } from "../lib/llm.js";
 import { sendEmail } from "../lib/email.js";
 import { PROCURE_MONETIZATION_V2 } from "../config.js";
+import { llmRateLimit } from "../lib/rateLimit.js";
+
+// 30 LLM-powered requests per user per hour. Applied to the quote-analysis
+// endpoint which is the only one that conditionally calls llmText().
+const intelLlmLimit = llmRateLimit({ max: 30, windowMs: 60 * 60_000 });
 
 /**
  * Monetization V2 gate: when the flag is ON, only VERIFIED vendors may be
@@ -400,6 +405,7 @@ type BidRow = {
 router.get(
   "/intel/quote-analysis/:packageId",
   requireUser,
+  intelLlmLimit,
   h(async (req, res) => {
     const packageId = req.params.packageId;
     const ctx = await packageContext(packageId);
@@ -417,7 +423,8 @@ router.get(
          from bids b
          left join companies c on c.id = b.vendor_company_id
         where b.package_id = $1
-          and coalesce(b.is_draft, false) = false`,
+          and coalesce(b.is_draft, false) = false
+          and coalesce(b.status, 'submitted') not in ('withdrawn', 'rejected')`,
       [packageId],
     );
 
