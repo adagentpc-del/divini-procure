@@ -23,6 +23,8 @@ export interface EmailMessage {
   text?: string;
   html?: string;
   replyTo?: string;
+  /** Optional extra RFC headers (e.g. List-Unsubscribe for bulk/campaign mail). */
+  headers?: Record<string, string>;
 }
 
 export interface EmailResult {
@@ -85,6 +87,10 @@ export async function sendEmail(msg: EmailMessage): Promise<EmailResult> {
           html,
           text,
           reply_to: msg.replyTo,
+          // Resend accepts arbitrary headers via the `headers` key.
+          ...(msg.headers && Object.keys(msg.headers).length > 0
+            ? { headers: msg.headers }
+            : {}),
         }),
       });
       const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;

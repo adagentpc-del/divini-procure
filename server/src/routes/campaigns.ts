@@ -15,9 +15,11 @@
  * Zero em dashes by convention of the ported routers.
  */
 import { Router, type Request, type Response, type NextFunction } from "express";
+import { randomBytes } from "node:crypto";
 import { getAuth, requireAdmin } from "../auth.js";
 import { q, q1 } from "../pool.js";
 import { sendEmail } from "../lib/email.js";
+import { PUBLIC_APP_URL } from "../config.js";
 
 // Async handler wrapper that funnels errors to the error middleware.
 const h =
@@ -305,7 +307,14 @@ router.post(
     if (campaign.status !== "test_sent")
       return res.status(400).json({ error: "send a test first" });
 
-    const audience = await resolveSegment(campaign.segment);
+    const rawAudience = await resolveSegment(campaign.segment);
+
+    // Filter out globally suppressed (unsubscribed) addresses.
+    const suppressedRows = await q<{ email: string }>(
+      `select email from email_suppressions`,
+    );
+    const suppressed = new Set(suppressedRows.map((r) => r.email.toLowerCase()));
+    const audience = rawAudience.filter((r) => !suppressed.has(r.email.toLowerCase()));
 
     // Snapshot recipients and flip to 'sending' up front. This also guards
     // against a concurrent double send: only flip if still test_sent.
@@ -322,13 +331,26 @@ router.post(
     let sentCount = 0;
     let failedCount = 0;
     for (const r of audience) {
+      // Per-recipient unsubscribe token (CAN-SPAM / RFC 8058 one-click).
+      const token = randomBytes(32).toString("hex");
+      const unsubUrl = `${PUBLIC_APP_URL}/api/unsubscribe?token=${token}`;
+      const unsubFooter = `<hr style="margin:24px 0;border:none;border-top:1px solid #e7e1d6"/>
+<p style="font-size:12px;color:#7d776c;margin:0">
+  You received this email because you have an account with Divini Procure.
+  <a href="${unsubUrl}" style="color:#7d776c">Unsubscribe</a>
+</p>`;
+
       let ok = false;
       let error: string | null = null;
       try {
         const result = await sendEmail({
           to: r.email,
           subject: campaign.subject,
-          html: campaign.body_html || "",
+          html: (campaign.body_html || "") + unsubFooter,
+          headers: {
+            "List-Unsubscribe": `<${unsubUrl}>`,
+            "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+          },
         });
         ok = result.ok || result.skipped === true;
         if (!ok) error = result.error ?? "send failed";
@@ -339,8 +361,8 @@ router.post(
       if (ok) sentCount += 1;
       else failedCount += 1;
       await q(
-        `insert into campaign_recipients (campaign_id, email, name, company_id, status, sent_at, error)
-         values ($1, $2, $3, $4, $5, $6, $7)`,
+        `insert into campaign_recipients (campaign_id, email, name, company_id, status, sent_at, error, unsubscribe_token)
+         values ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [
           req.params.id,
           r.email,
@@ -349,6 +371,7 @@ router.post(
           ok ? "sent" : "failed",
           ok ? new Date().toISOString() : null,
           error,
+          token,
         ],
       );
     }
@@ -368,6 +391,49 @@ router.post(
     });
   }),
 );
+
+// GET /unsubscribe?token= : public one-click unsubscribe. No auth required.
+// Reads the token from campaign_recipients, inserts the address into
+// email_suppressions, and returns a plain confirmation page.
+router.get(
+  "/unsubscribe",
+  h(async (req, res) => {
+    const token = typeof req.query.token === "string" ? req.query.token.trim() : "";
+    if (!token) {
+      res.status(400).send("Missing unsubscribe token.");
+      return;
+    }
+    const row = await q1<{ email: string }>(
+      `select email from campaign_recipients where unsubscribe_token = $1`,
+      [token],
+    );
+    if (!row) {
+      // Token not found or already used — show a neutral message either way.
+      res.status(200).send(unsubPage("You have been unsubscribed.", "If you did not expect this, no action is needed."));
+      return;
+    }
+    // Upsert into suppressions (idempotent).
+    await q(
+      `insert into email_suppressions (email, source) values ($1, 'campaign_link')
+       on conflict (email) do nothing`,
+      [row.email.toLowerCase()],
+    );
+    // Invalidate the token so the same link cannot be replayed to probe emails.
+    await q(
+      `update campaign_recipients set unsubscribe_token = null where unsubscribe_token = $1`,
+      [token],
+    );
+    res.status(200).send(unsubPage("You have been unsubscribed.", "You will no longer receive marketing emails from Divini Procure."));
+  }),
+);
+
+function unsubPage(heading: string, body: string): string {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"/><title>Unsubscribe</title>
+<style>body{font-family:Inter,Arial,sans-serif;color:#2c2a26;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
+.box{max-width:480px;padding:40px;text-align:center}h1{font-family:Georgia,serif;color:#123c2e;font-size:22px}
+p{color:#7d776c;font-size:15px}</style></head>
+<body><div class="box"><h1>${escapeHtml(heading)}</h1><p>${escapeHtml(body)}</p></div></body></html>`;
+}
 
 function escapeHtml(s: string): string {
   return s.replace(
