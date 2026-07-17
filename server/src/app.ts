@@ -3,9 +3,11 @@
  * serving the built Vite SPA AND the /api router. Native session verification
  * (cookie / Bearer) runs as middleware (authMiddleware) before the router.
  */
-import express, { type Express } from "express";
+import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import helmet from "helmet";
 import cors from "cors";
+import morgan from "morgan";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { authMiddleware } from "./auth.js";
@@ -15,6 +17,33 @@ import { authRateLimit } from "./lib/rateLimit.js";
 
 const app: Express = express();
 app.set("trust proxy", 1);
+
+// ---------------------------------------------------------------------------
+// Request correlation ID - attach before morgan so it appears in every log line.
+// Downstream handlers can read req.correlationId for structured logging.
+// ---------------------------------------------------------------------------
+declare global {
+  // eslint-disable-next-line @typescript-eslint/no-namespace
+  namespace Express {
+    interface Request {
+      correlationId: string;
+    }
+  }
+}
+app.use((req: Request, _res: Response, next: NextFunction) => {
+  req.correlationId =
+    (req.headers["x-request-id"] as string | undefined) ||
+    (req.headers["x-correlation-id"] as string | undefined) ||
+    randomUUID();
+  next();
+});
+
+// HTTP request logging via morgan. Use 'combined' in prod for full access logs
+// (IP, method, path, status, duration). Use 'dev' in development for colour.
+morgan.token("reqid", (req: Request) => req.correlationId);
+app.use(
+  morgan(IS_PROD ? ':reqid :remote-addr :method :url :status :res[content-length] ":referrer" ":user-agent" - :response-time ms' : "dev"),
+);
 
 // Security headers via Helmet. Applied first so every response gets hardened
 // headers: X-Content-Type-Options, X-Frame-Options, Referrer-Policy, HSTS

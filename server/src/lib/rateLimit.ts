@@ -72,3 +72,14 @@ export const loginRateLimit = rateLimit({ windowMs: 15 * 60_000, max: 5 });
  * Prevents an attacker from repeatedly overwriting a victim's verify token.
  */
 export const registerRateLimit = rateLimit({ windowMs: 15 * 60_000, max: 10 });
+
+/**
+ * Strict limiter for forgot-password and resend-verification: 5 per IP per hour.
+ * Prevents email bombing and token regeneration loops.
+ */
+export const forgotRateLimit = rateLimit({ windowMs: 60 * 60_000, max: 5 });
+
+/**
+ * Strict limiter for resend-verification: 5 per IP per hour.
+ */
+export const resendVerifyRateLimit = rateLimit({ windowMs: 60 * 60_000, max: 5 });

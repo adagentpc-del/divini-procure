@@ -19,14 +19,13 @@
 
 function apiBase(): string {
   const env = (process.env.PAYPAL_ENV || "sandbox").toLowerCase();
-  // FAIL-LOUD in production: if PAYPAL_ENV is not explicitly set to "live",
-  // payments will silently hit the sandbox and no real money will be collected.
+  // FAIL CLOSED in production: if PAYPAL_ENV is not explicitly set to "live",
+  // we throw at startup to prevent silent sandbox routing of real money.
   if (process.env.NODE_ENV === "production" && env !== "live") {
-    // eslint-disable-next-line no-console
-    console.warn(
-      "[paypal] WARNING: PAYPAL_ENV is not set to 'live' in production. " +
-        "All PayPal orders will be routed to the SANDBOX and no real money will be captured. " +
-        "Set PAYPAL_ENV=live to enable real payments.",
+    throw new Error(
+      "[paypal] FATAL: PAYPAL_ENV is not set to 'live' in production. " +
+        "All PayPal orders would be routed to the SANDBOX. " +
+        "Set PAYPAL_ENV=live to enable real payments, or set NODE_ENV != production for sandbox testing.",
     );
   }
   return env === "live"
@@ -131,6 +130,8 @@ export interface CaptureResult {
   ok: boolean;
   status: string;
   orderId: string;
+  /** The reference_id from the first purchase_unit (mirrors what was set at order creation). */
+  referenceId: string | null;
 }
 
 /** Capture a previously-approved order. ok=true only on COMPLETED. */
@@ -140,9 +141,14 @@ export async function captureOrder(orderId: string): Promise<CaptureResult> {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
   });
-  const j = (await r.json().catch(() => ({}))) as { status?: string; message?: string };
+  const j = (await r.json().catch(() => ({}))) as {
+    status?: string;
+    message?: string;
+    purchase_units?: { reference_id?: string }[];
+  };
   if (!r.ok) throw new PaypalApiError(r.status, j.message || "PayPal capture failed");
-  return { ok: j.status === "COMPLETED", status: j.status || "unknown", orderId };
+  const referenceId = j.purchase_units?.[0]?.reference_id ?? null;
+  return { ok: j.status === "COMPLETED", status: j.status || "unknown", orderId, referenceId };
 }
 
 // ===========================================================================

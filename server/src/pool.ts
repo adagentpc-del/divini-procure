@@ -1,10 +1,10 @@
 /**
- * Postgres connection pool (the `pg` driver). Plain local Postgres - no SSL
- * required for the localhost:5433 AI Builder OS database. A managed URL with
- * sslmode=require also works (pg honours the connection string).
+ * Postgres connection pool (the `pg` driver). Plain local Postgres for dev;
+ * in production, DATABASE_URL must include sslmode=require (or the ssl block
+ * below enforces it) so all data-in-transit is encrypted.
  */
 import pg from "pg";
-import { DATABASE_URL } from "./config.js";
+import { DATABASE_URL, IS_PROD } from "./config.js";
 
 const { Pool } = pg;
 
@@ -13,6 +13,11 @@ export const pool = new Pool({
   // Keep the pool modest; this is a single-process app.
   max: 10,
   idleTimeoutMillis: 30_000,
+  // Require SSL in production unless the connection string already includes
+  // sslmode. Managed databases (Railway, Render, Supabase, RDS) all support it.
+  ssl: IS_PROD && !DATABASE_URL.includes("sslmode=disable")
+    ? { rejectUnauthorized: true }
+    : false,
 });
 
 /** Thin query helper returning rows. */

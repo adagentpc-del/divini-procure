@@ -130,6 +130,9 @@ export async function upsertUserForRegistration(args: {
   passwordHash: string;
   verifyToken: string;
   verifyExpires: Date;
+  termsAgreedAt?: Date;
+  termsVersion?: string;
+  consentIp?: string | null;
 }): Promise<UserRow> {
   const existing = await getUserByEmail(args.email);
   if (existing) {
@@ -139,18 +142,33 @@ export async function upsertUserForRegistration(args: {
          password_hash = $3,
          email_verified = false,
          verify_token = $4,
-         verify_expires = $5
+         verify_expires = $5,
+         terms_agreed_at = coalesce($6, terms_agreed_at),
+         terms_version = coalesce($7, terms_version),
+         consent_ip = coalesce($8, consent_ip)
        where id = $1
        returning *`,
-      [existing.id, args.email, args.passwordHash, args.verifyToken, args.verifyExpires.toISOString()],
+      [existing.id, args.email, args.passwordHash, args.verifyToken, args.verifyExpires.toISOString(),
+       args.termsAgreedAt?.toISOString() ?? null, args.termsVersion ?? null, args.consentIp ?? null],
     ))!;
   }
   return (await q1<UserRow>(
-    `insert into users (id, email, password_hash, email_verified, verify_token, verify_expires)
-     values ($1, $2, $3, false, $4, $5)
+    `insert into users (id, email, password_hash, email_verified, verify_token, verify_expires,
+                        terms_agreed_at, terms_version, consent_ip)
+     values ($1, $2, $3, false, $4, $5, $6, $7, $8)
      returning *`,
-    [args.newUserId, args.email, args.passwordHash, args.verifyToken, args.verifyExpires.toISOString()],
+    [args.newUserId, args.email, args.passwordHash, args.verifyToken, args.verifyExpires.toISOString(),
+     args.termsAgreedAt?.toISOString() ?? null, args.termsVersion ?? null, args.consentIp ?? null],
   ))!;
+}
+
+/** Return a user's role within a company, or null if they are not a member. */
+export async function getMemberRole(userId: string, companyId: string): Promise<string | null> {
+  const row = await q1<{ role: string }>(
+    `select role from company_members where user_id = $1 and company_id = $2`,
+    [userId, companyId],
+  );
+  return row?.role ?? null;
 }
 
 /** Mark a user verified and clear the verify token. */
@@ -890,14 +908,49 @@ export async function setFeatureFlagAudience(key: string, audience: string) {
 // DOCUMENTS (metadata; file bytes handled by storage.ts)
 // ===========================================================================
 
-export async function getDocuments(_userId: string, opts: { packageId?: string; buildingId?: string }) {
+export async function getDocuments(userId: string, opts: { packageId?: string; buildingId?: string }) {
   if (opts.packageId) {
+    // IDOR fix: verify the user is a member of the company that owns the package.
+    const pkg = await q1<{ company_id: string }>(
+      `select b.company_id
+         from packages p
+         join buildings b on b.id = p.building_id
+        where p.id = $1`,
+      [opts.packageId],
+    );
+    if (!pkg) return [];
+    const member = await q1(
+      `select 1 from company_members where user_id = $1 and company_id = $2`,
+      [userId, pkg.company_id],
+    );
+    if (!member) throw new ForbiddenError("not a member of the company that owns this package");
     return q(`select * from documents where package_id = $1 order by created_at desc`, [opts.packageId]);
   }
   if (opts.buildingId) {
+    // IDOR fix: verify the user is a member of the company that owns the building.
+    const bld = await q1<{ company_id: string }>(
+      `select company_id from buildings where id = $1`,
+      [opts.buildingId],
+    );
+    if (!bld) return [];
+    const member = await q1(
+      `select 1 from company_members where user_id = $1 and company_id = $2`,
+      [userId, bld.company_id],
+    );
+    if (!member) throw new ForbiddenError("not a member of the company that owns this building");
     return q(`select * from documents where building_id = $1 order by created_at desc`, [opts.buildingId]);
   }
-  return q(`select * from documents order by created_at desc`);
+  // No filter: return only documents belonging to the user's own company.
+  const myCompanies = await q<{ company_id: string }>(
+    `select company_id from company_members where user_id = $1`,
+    [userId],
+  );
+  if (myCompanies.length === 0) return [];
+  const ids = myCompanies.map((r) => r.company_id);
+  return q(
+    `select * from documents where company_id = ANY($1::text[]) order by created_at desc`,
+    [ids],
+  );
 }
 
 export async function insertDocument(

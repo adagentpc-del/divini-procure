@@ -41,7 +41,7 @@ import fs from "node:fs";
 import { getAuth, requireUser, requireAdmin } from "./auth.js";
 import * as db from "./db.js";
 import { ForbiddenError, NotFoundError } from "./db.js";
-import { q1 } from "./pool.js";
+import { q1, pool } from "./pool.js";
 import {
   buildStorageKey,
   writeFile,
@@ -199,8 +199,14 @@ router.use(progressPhotosRouter);
 router.use(paymentEtaRouter);
 
 // ---- health ----------------------------------------------------------------
-router.get("/healthz", (_req, res) => {
-  res.json({ ok: true, service: "divini-procure", ts: Date.now() });
+router.get("/healthz", async (_req, res) => {
+  // DB liveness: a cheap query that returns quickly even under load.
+  try {
+    await pool.query("select 1");
+    res.json({ ok: true, service: "divini-procure", ts: Date.now(), db: "ok" });
+  } catch (e: any) {
+    res.status(503).json({ ok: false, service: "divini-procure", ts: Date.now(), db: "error", error: e?.message });
+  }
 });
 
 // ---- identity / company ----------------------------------------------------
@@ -642,11 +648,21 @@ router.get(
 );
 
 // ---- error handler (must be after routes) ----------------------------------
-export function errorHandler(err: any, _req: Request, res: Response, _next: NextFunction) {
+export function errorHandler(err: any, req: Request, res: Response, _next: NextFunction) {
   if (err instanceof ForbiddenError) return res.status(403).json({ error: err.message });
   if (err instanceof NotFoundError) return res.status(404).json({ error: err.message });
+  // Log the full stack trace (never returned to the client) for debugging.
   // eslint-disable-next-line no-console
-  console.error("[api error]", err?.message || err);
+  console.error(
+    "[api error]",
+    JSON.stringify({
+      correlationId: (req as any).correlationId,
+      method: req.method,
+      path: req.path,
+      message: err?.message || String(err),
+      stack: err?.stack,
+    }),
+  );
   res.status(500).json({ error: "internal error" });
 }
 

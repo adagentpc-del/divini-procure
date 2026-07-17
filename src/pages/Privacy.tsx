@@ -9,21 +9,22 @@ export default function Privacy() {
       </div>
 
       <h1 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 36, color: '#1f3d31', marginBottom: 6 }}>Privacy Policy</h1>
-      <div style={{ color: '#6b7a72', marginBottom: 28 }}>Effective June 8, 2026</div>
+      <div style={{ color: '#6b7a72', marginBottom: 28 }}>Effective June 8, 2026 — Updated July 2026</div>
 
       <p>
-        Divini Procure (“we,” “us”) operates a procurement marketplace that connects real estate
+        Divini Procure ("we," "us," "our") operates a procurement marketplace that connects real estate
         developers with construction vendors. This policy explains what we collect, how we use it,
-        and the choices you have. By using the app or website you agree to this policy.
+        and the rights you have. By using the app or website you agree to this policy.
       </p>
 
       <h2 style={h2}>Information we collect</h2>
       <p>We collect only what we need to run the marketplace:</p>
       <ul>
-        <li><strong>Account &amp; contact details</strong> - your email, name, phone, company name, role, and city.</li>
-        <li><strong>Company &amp; marketplace data</strong> - projects, bid packages, bids, line items, messages, reviews, and subscription/plan status.</li>
-        <li><strong>Uploaded content</strong> - documents and images you upload (e.g. drawings, credentials).</li>
-        <li><strong>Technical data</strong> - basic, standard log and device information needed to operate and secure the service.</li>
+        <li><strong>Account &amp; contact details</strong> – your email, name, phone, company name, role, and city.</li>
+        <li><strong>Company &amp; marketplace data</strong> – projects, bid packages, bids, line items, messages, reviews, and subscription/plan status.</li>
+        <li><strong>Uploaded content</strong> – documents and images you upload (e.g. drawings, credentials).</li>
+        <li><strong>Consent records</strong> – when you agreed to our Terms of Service, the version you agreed to, and the IP address used at registration (Florida E-SIGN Act compliance).</li>
+        <li><strong>Technical data</strong> – standard log and device information needed to operate and secure the service.</li>
       </ul>
 
       <h2 style={h2}>How we use it</h2>
@@ -32,19 +33,20 @@ export default function Privacy() {
         <li>To run core features: posting packages, submitting and comparing bids, messaging, and reviews.</li>
         <li>To process vendor subscriptions and related billing.</li>
         <li>To secure the service, prevent abuse, and meet legal obligations.</li>
+        <li>To send transactional emails (verification, password reset, purchase confirmation). Marketing emails include an unsubscribe link.</li>
       </ul>
 
-      <h2 style={h2}>How it’s stored and who processes it</h2>
+      <h2 style={h2}>How it's stored and who processes it</h2>
       <p>
         Your data is stored with our infrastructure providers, who process it on our behalf:
-        <strong> Supabase</strong> (database, authentication, and file storage), <strong>Vercel</strong> (web hosting),
-        and <strong>an independent third-party payment processor</strong> (subscription and platform payments - we do not store full card details). We do not sell your
-        personal information, and we do not share it with third parties for their own marketing.
+        <strong> Supabase</strong> (database and file storage), <strong>Vercel</strong> (web hosting),
+        and <strong>PayPal</strong> (subscription and platform payments — we do not store full card or bank details).
+        We do not sell your personal information. We do not share it with third parties for their own marketing.
       </p>
 
       <h2 style={h2}>Visibility within the marketplace</h2>
       <p>
-        Some information is shared with other users to make the marketplace work - for example, a vendor’s
+        Some information is shared with other users to make the marketplace work — for example, a vendor's
         company name and submitted bids are visible to the developer who posted the package, and posted
         packages are visible to matching vendors. Uploaded documents are shared only with the counterparties
         of the relevant package or bid.
@@ -57,11 +59,68 @@ export default function Privacy() {
         data (projects, packages, bids, files). You may also email us to request deletion.
       </p>
 
+      {/* ------------------------------------------------------------------ */}
+      <h2 style={h2}>Your privacy rights (CCPA / U.S. state law)</h2>
+      <p>
+        Depending on your state of residence, you may have the following rights regarding your personal information:
+      </p>
+      <ul>
+        <li>
+          <strong>Right to know</strong> – You may request a copy of the categories and specific pieces of personal
+          information we have collected about you, the sources, the business purposes, and the categories of third
+          parties with whom it is shared.
+        </li>
+        <li>
+          <strong>Right to delete</strong> – You may request that we delete personal information we have collected
+          from you (subject to certain exceptions, such as records we are required to retain by law).
+        </li>
+        <li>
+          <strong>Right to correct</strong> – You may request that we correct inaccurate personal information.
+        </li>
+        <li>
+          <strong>Right to opt out of sale or sharing</strong> – We do not sell personal information and do not
+          share it for cross-context behavioral advertising. You do not need to opt out.
+        </li>
+        <li>
+          <strong>Right to non-discrimination</strong> – We will not discriminate against you for exercising any
+          of these rights.
+        </li>
+      </ul>
+      <p>
+        To exercise any of these rights, please contact us at{' '}
+        <a href="mailto:privacy@diviniprocure.com" style={{ color: '#1f6f50' }}>privacy@diviniprocure.com</a>{' '}
+        or <a href="mailto:support@diviniprocure.com" style={{ color: '#1f6f50' }}>support@diviniprocure.com</a>.
+        We will respond within 45 days. We may need to verify your identity before fulfilling certain requests.
+      </p>
+
+      {/* ------------------------------------------------------------------ */}
+      <h2 style={h2}>Florida Data Breach Notification (s.&nbsp;501.171, Fla. Stat.)</h2>
+      <p>
+        Divini Procure complies with Florida's data breach notification law (Florida Statute § 501.171).
+        In the event of a security breach affecting Florida residents' personal information, we will:
+      </p>
+      <ul>
+        <li>Investigate and remediate the breach as quickly as reasonably practicable.</li>
+        <li>
+          Notify affected Florida residents within <strong>30 days</strong> of determining that a breach has occurred
+          (or within 30 days of the breach being reported to us by a third-party agent), unless a law enforcement
+          agency advises that notification would impede an investigation.
+        </li>
+        <li>Notify the Florida Department of Legal Affairs if the breach affects 500 or more Florida residents.</li>
+        <li>Provide notice via the method required by the statute (direct notice by email, written notice, or substitute notice).</li>
+      </ul>
+      <p>
+        To report a suspected security issue, please email{' '}
+        <a href="mailto:security@diviniprocure.com" style={{ color: '#1f6f50' }}>security@diviniprocure.com</a>.
+      </p>
+
+      {/* ------------------------------------------------------------------ */}
       <h2 style={h2}>Security</h2>
       <p>
-        We use industry-standard measures including encrypted connections and database row-level security to
-        protect your data. No method of transmission or storage is 100% secure, but we work to protect your
-        information and limit access to it.
+        We use industry-standard measures including encrypted connections (HTTPS/TLS), hashed passwords
+        (scrypt), httpOnly session cookies, and access controls to protect your data. No method of
+        transmission or storage is 100% secure, but we work continuously to protect your information
+        and limit access to it.
       </p>
 
       <h2 style={h2}>Children</h2>
@@ -72,7 +131,8 @@ export default function Privacy() {
 
       <h2 style={h2}>Contact</h2>
       <p>
-        Questions or deletion requests: <a href="mailto:support@diviniprocure.com" style={{ color: '#1f6f50' }}>support@diviniprocure.com</a>.
+        Privacy requests: <a href="mailto:privacy@diviniprocure.com" style={{ color: '#1f6f50' }}>privacy@diviniprocure.com</a><br />
+        General support: <a href="mailto:support@diviniprocure.com" style={{ color: '#1f6f50' }}>support@diviniprocure.com</a>
       </p>
 
       <div style={{ marginTop: 40 }}>
@@ -86,6 +146,6 @@ const h2: React.CSSProperties = {
   fontFamily: "'Cormorant Garamond', serif",
   fontSize: 24,
   color: '#1f3d31',
-  marginTop: 30,
+  marginTop: 36,
   marginBottom: 8,
 };

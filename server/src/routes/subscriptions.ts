@@ -446,11 +446,21 @@ router.post(
     if (!auth.isAdmin && !(await callerIsMember(auth.userId!, companyId))) {
       return res.status(403).json({ error: "not a member of this company" });
     }
+    let capturedReferenceId: string | null = null;
     try {
       const cap = await paypal.captureOrder(orderId);
       if (!cap.ok) return res.status(402).json({ error: "payment not completed", status: cap.status });
+      capturedReferenceId = cap.referenceId ?? null;
     } catch (e: any) {
       return res.status(502).json({ error: e?.message || "PayPal capture failed" });
+    }
+    // Verify the order's reference_id matches the claimed companyId:tierKey to
+    // prevent a buyer from swapping tierKey after approval to claim a higher plan.
+    const expectedRef = `${companyId}:${tierKey}`;
+    if (capturedReferenceId && capturedReferenceId !== expectedRef) {
+      return res.status(400).json({
+        error: "Order mismatch: the approved PayPal order does not match the requested tier.",
+      });
     }
     const tier = await q1<Tier>("select * from subscription_tiers where key = $1", [tierKey]);
     if (!tier) return res.status(404).json({ error: "tier not found" });
@@ -651,6 +661,8 @@ router.post(
     if (!verified) return res.status(200).json({ received: true, verified: false });
     const type = String(event?.event_type || "");
     const subId = event?.resource?.id as string | undefined;
+
+    // Recurring subscription lifecycle events.
     if (
       subId &&
       ["BILLING.SUBSCRIPTION.CANCELLED", "BILLING.SUBSCRIPTION.EXPIRED", "BILLING.SUBSCRIPTION.SUSPENDED"].includes(type)
@@ -661,6 +673,41 @@ router.post(
       );
       if (ent?.company_id) await assignFreeTier(ent.company_id);
     }
+
+    // One-time capture completed (browser closed before /capture was called).
+    // The reference_id encodes `companyId:tierKey` so we can assign the tier here.
+    if (type === "PAYMENT.CAPTURE.COMPLETED") {
+      const referenceId =
+        (event?.resource?.supplementary_data?.related_ids?.order_id as string | undefined) ??
+        (event?.resource?.custom_id as string | undefined);
+      // PayPal also passes the reference_id on the purchase_unit level via the
+      // linked order. Try to derive companyId:tierKey from custom_id or supplementary.
+      // The safer signal is the order resource; look it up if we have the orderId.
+      const orderId = event?.resource?.supplementary_data?.related_ids?.order_id as string | undefined;
+      if (orderId && PROCURE_MONETIZATION_V2) {
+        // Look up pending entitlement by matching the order; we stored referenceId
+        // `companyId:tierKey` at order creation. Parse it from the capture resource.
+        const captureRef = event?.resource?.purchase_units?.[0]?.reference_id as string | undefined;
+        const ref = captureRef ?? referenceId;
+        if (ref && ref.includes(":")) {
+          const [companyId, tierKey] = ref.split(":");
+          if (companyId && tierKey) {
+            const tier = await q1<Tier>("select * from subscription_tiers where key = $1", [tierKey]);
+            if (tier) {
+              // Only assign if the company exists and doesn't already have this tier.
+              const existing = await q1<{ tier_key: string }>(
+                "select tier_key from subscription_entitlements where company_id = $1",
+                [companyId],
+              );
+              if (!existing || existing.tier_key !== tierKey) {
+                await assignTierToCompany(companyId, tier);
+              }
+            }
+          }
+        }
+      }
+    }
+
     res.json({ received: true });
   }),
 );

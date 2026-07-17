@@ -59,7 +59,7 @@ type AuthState = {
   loading: boolean;
   refreshCompany: () => Promise<void>;
   // Native auth actions.
-  createAccount: (email: string, password: string, passwordConfirm: string) => Promise<RegisterResult>;
+  createAccount: (email: string, password: string, passwordConfirm: string, agreed?: boolean) => Promise<RegisterResult>;
   signIn: (email: string, password: string) => Promise<void>;
   verifyEmail: (token: string) => Promise<void>;
   forgotPassword: (email: string) => Promise<void>;
@@ -120,8 +120,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     email: string,
     password: string,
     passwordConfirm: string,
+    agreed = false,
   ): Promise<RegisterResult> => {
-    return apiSend<RegisterResult>('POST', '/auth/register', { email, password, passwordConfirm });
+    return apiSend<RegisterResult>('POST', '/auth/register', { email, password, passwordConfirm, agreed });
   };
 
   const signIn = async (email: string, password: string): Promise<void> => {

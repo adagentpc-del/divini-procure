@@ -38,7 +38,7 @@ export default function Register() {
     if (!agreed) { setErr('Please agree to the Terms, Privacy, Payment, and Non-Circumvention policies to continue.'); return; }
     setBusy(true);
     try {
-      await createAccount(email.trim(), password, confirm);
+      await createAccount(email.trim(), password, confirm, agreed);
       setSent(true);
     } catch (e: any) {
       setErr(e?.message ?? 'Could not create your account.');
@@ -86,26 +86,27 @@ export default function Register() {
 
         <form onSubmit={submit}>
           <div className="field">
-            <label>Email</label>
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required placeholder="you@company.com" autoComplete="email" />
+            <label htmlFor="reg-email">Email</label>
+            <input id="reg-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required placeholder="you@company.com" autoComplete="email" />
           </div>
           <div className="field">
-            <label>Password</label>
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required placeholder="At least 8 characters" autoComplete="new-password" />
+            <label htmlFor="reg-password">Password</label>
+            <input id="reg-password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required placeholder="At least 8 characters" autoComplete="new-password" maxLength={128} />
           </div>
           <div className="field">
-            <label>Confirm password</label>
-            <input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} required placeholder="Re-enter your password" autoComplete="new-password" />
+            <label htmlFor="reg-confirm">Confirm password</label>
+            <input id="reg-confirm" type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} required placeholder="Re-enter your password" autoComplete="new-password" maxLength={128} />
           </div>
-          <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginTop: 4, marginBottom: 12, fontSize: 13, lineHeight: 1.5, cursor: 'pointer' }}>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginTop: 4, marginBottom: 12 }}>
             <input
+              id="reg-agreed"
               type="checkbox"
               checked={agreed}
               onChange={(e) => setAgreed(e.target.checked)}
-              style={{ width: 'auto', marginTop: 3, flexShrink: 0 }}
-              aria-label="Agree to the Terms of Service, Privacy Policy, Payment Policy, and Non-Circumvention Policy"
+              style={{ width: 'auto', marginTop: 3, flexShrink: 0, cursor: 'pointer' }}
+              aria-describedby="reg-agreed-desc"
             />
-            <span className="note" style={{ fontSize: 13, lineHeight: 1.5 }}>
+            <label htmlFor="reg-agreed" id="reg-agreed-desc" style={{ fontSize: 13, lineHeight: 1.5, cursor: 'pointer' }}>
               I agree to the{' '}
               <Link to="/terms" style={{ color: 'var(--emerald)', fontWeight: 600 }}>Terms of Service</Link>,{' '}
               <Link to="/privacy" style={{ color: 'var(--emerald)', fontWeight: 600 }}>Privacy Policy</Link>,{' '}
@@ -113,8 +114,8 @@ export default function Register() {
               <Link to="/non-circumvention" style={{ color: 'var(--emerald)', fontWeight: 600 }}>Non-Circumvention Policy</Link>. Divini Procure
               is a lead-generation and networking platform, is not a party to transactions between users, and payments are
               handled by independent third-party processors.
-            </span>
-          </label>
+            </label>
+          </div>
           <button className="btn primary block lg" disabled={busy || !agreed}>{busy ? 'Creating...' : 'Create account'}</button>
         </form>
 

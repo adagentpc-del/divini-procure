@@ -23,7 +23,7 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { randomUUID } from "node:crypto";
 import { getAuth, requireUser } from "../auth.js";
-import { loginRateLimit, registerRateLimit } from "../lib/rateLimit.js";
+import { loginRateLimit, registerRateLimit, forgotRateLimit, resendVerifyRateLimit } from "../lib/rateLimit.js";
 import * as db from "../db.js";
 import { sendEmail } from "../lib/email.js";
 import {
@@ -165,8 +165,17 @@ router.post(
     if (typeof password !== "string" || password.length < 8) {
       return res.status(400).json({ error: "Password must be at least 8 characters." });
     }
+    if (password.length > 128) {
+      return res.status(400).json({ error: "Password must be 128 characters or fewer." });
+    }
     if (password !== passwordConfirm) {
       return res.status(400).json({ error: "Passwords do not match." });
+    }
+
+    // Florida E-SIGN Act: require explicit agreement to Terms of Service.
+    const agreed = (req.body as Record<string, unknown>)?.agreed;
+    if (!agreed) {
+      return res.status(400).json({ error: "You must agree to the Terms of Service and Privacy Policy to register." });
     }
 
     const normEmail = normalizeEmail(email);
@@ -174,12 +183,19 @@ router.post(
     const verifyToken = randomToken();
     const verifyExpires = new Date(Date.now() + VERIFY_TTL_MS);
 
+    const termsAgreedAt = new Date();
+    const termsVersion = "2025-01";
+    const consentIp = req.ip ?? req.socket?.remoteAddress ?? null;
+
     await db.upsertUserForRegistration({
       newUserId: randomUUID(),
       email: normEmail,
       passwordHash,
       verifyToken,
       verifyExpires,
+      termsAgreedAt,
+      termsVersion,
+      consentIp,
     });
 
     await sendVerifyEmail(normEmail, verifyToken);
@@ -220,6 +236,7 @@ router.post("/auth/verify", h(handleVerify));
 // ===========================================================================
 router.post(
   "/auth/resend-verification",
+  resendVerifyRateLimit,
   h(async (req, res) => {
     const { email } = (req.body ?? {}) as { email?: string };
     if (isValidEmail(email)) {
@@ -297,6 +314,7 @@ router.get(
 // ===========================================================================
 router.post(
   "/auth/forgot",
+  forgotRateLimit,
   h(async (req, res) => {
     const { email } = (req.body ?? {}) as { email?: string };
     if (isValidEmail(email)) {
@@ -328,6 +346,9 @@ router.post(
     if (typeof password !== "string" || password.length < 8) {
       return res.status(400).json({ error: "Password must be at least 8 characters." });
     }
+    if (password.length > 128) {
+      return res.status(400).json({ error: "Password must be 128 characters or fewer." });
+    }
     if (password !== passwordConfirm) {
       return res.status(400).json({ error: "Passwords do not match." });
     }
@@ -337,6 +358,9 @@ router.post(
     }
     const passwordHash = await hashPassword(password);
     await db.applyPasswordReset(user.id, passwordHash);
+    // Revoke all existing sessions so stolen cookies cannot be replayed after a
+    // password reset. The user will get a fresh session immediately below.
+    await db.revokeAllSessions(user.id);
     // Resetting the password also confirms control of the inbox, so a never
     // verified account becomes verified here and is logged straight in.
     let fresh = await db.getUserById(user.id);
@@ -361,6 +385,13 @@ router.post(
     }
     if (!isValidEmail(newEmail)) {
       return res.status(400).json({ error: "Enter a valid new owner email address." });
+    }
+    // Only the company OWNER (or a platform admin) may transfer ownership.
+    if (!auth.isAdmin) {
+      const membership = await db.getMemberRole(auth.userId!, companyId);
+      if (membership !== "owner") {
+        return res.status(403).json({ error: "Only the company owner may transfer ownership." });
+      }
     }
     const company = await db.getMyCompany(auth.userId!);
     const verifyToken = randomToken();
