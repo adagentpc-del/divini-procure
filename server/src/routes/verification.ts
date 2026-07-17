@@ -577,6 +577,15 @@ router.post(
     }
     const companyId = companyIds[0];
 
+    // Ownership check: fileKey must start with the caller's own companyId
+    // directory so a vendor cannot register another company's storage path as
+    // their own credential. Storage keys are written client-side as
+    // `<companyId>/<filename>` before this endpoint is called.
+    if (!fileKey.startsWith(`${companyId}/`)) {
+      res.status(403).json({ error: "fileKey must belong to your own company directory." });
+      return;
+    }
+
     const fileName = body.fileName ? String(body.fileName) : null;
     const expiresAt = body.expiresAt ? String(body.expiresAt) : null;
 

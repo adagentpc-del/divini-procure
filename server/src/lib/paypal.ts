@@ -18,7 +18,18 @@
  */
 
 function apiBase(): string {
-  return (process.env.PAYPAL_ENV || "sandbox").toLowerCase() === "live"
+  const env = (process.env.PAYPAL_ENV || "sandbox").toLowerCase();
+  // FAIL-LOUD in production: if PAYPAL_ENV is not explicitly set to "live",
+  // payments will silently hit the sandbox and no real money will be collected.
+  if (process.env.NODE_ENV === "production" && env !== "live") {
+    // eslint-disable-next-line no-console
+    console.warn(
+      "[paypal] WARNING: PAYPAL_ENV is not set to 'live' in production. " +
+        "All PayPal orders will be routed to the SANDBOX and no real money will be captured. " +
+        "Set PAYPAL_ENV=live to enable real payments.",
+    );
+  }
+  return env === "live"
     ? "https://api-m.paypal.com"
     : "https://api-m.sandbox.paypal.com";
 }
