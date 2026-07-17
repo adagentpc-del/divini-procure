@@ -17,6 +17,7 @@
 import type { Request, Response, NextFunction, RequestHandler } from "express";
 import { getAdminAllowedEmails, SESSION_COOKIE } from "./config.js";
 import { verifySession, type SessionClaims } from "./lib/native-auth.js";
+import { isSessionActive } from "./db.js";
 
 export interface AuthResult {
   userId: string | null;
@@ -65,6 +66,10 @@ function computeIsAdmin(email: string | null): boolean {
 async function verify(token: string | null): Promise<AuthResult> {
   const claims = await verifySession(token);
   if (!claims) return EMPTY_AUTH;
+  // Server-side revocation check: the jti must exist in user_sessions.
+  // If the user logged out, revokeSession() deleted the row and this returns false.
+  const active = await isSessionActive(claims.jti);
+  if (!active) return EMPTY_AUTH;
   return {
     userId: claims.sub,
     email: claims.email,

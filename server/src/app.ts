@@ -10,7 +10,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { authMiddleware } from "./auth.js";
 import router, { errorHandler } from "./routes.js";
-import { getAllowedOrigins, IS_PROD } from "./config.js";
+import { getAllowedOrigins, IS_PROD, PUBLIC_APP_URL } from "./config.js";
 import { authRateLimit } from "./lib/rateLimit.js";
 
 const app: Express = express();
@@ -28,7 +28,18 @@ app.use(
         styleSrc: ["'self'", "'unsafe-inline'"], // allow CSS-in-JS / inline styles from React
         imgSrc: ["'self'", "data:", "blob:"],
         fontSrc: ["'self'"],
-        connectSrc: ["'self'"],
+        // Allow calls to the Supabase project URL (auth, storage, realtime).
+        // VITE_SUPABASE_URL is available server-side only as SUPABASE_URL.
+        // Without this the browser blocks all fetch() to *.supabase.co.
+        connectSrc: [
+          "'self'",
+          ...(process.env.VITE_SUPABASE_URL ? [process.env.VITE_SUPABASE_URL] : []),
+          ...(process.env.SUPABASE_URL ? [process.env.SUPABASE_URL] : []),
+          // Allow wss:// for Supabase Realtime (same host, different scheme).
+          ...(process.env.VITE_SUPABASE_URL
+            ? [process.env.VITE_SUPABASE_URL.replace(/^https?:/, "wss:")]
+            : []),
+        ],
         objectSrc: ["'none'"],
         baseUri: ["'self'"],
         formAction: ["'self'"],

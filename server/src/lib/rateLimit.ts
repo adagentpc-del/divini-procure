@@ -55,7 +55,20 @@ export function rateLimit(opts: { windowMs: number; max: number }) {
 }
 
 /**
- * Tight limiter for the auth surface (login, register, forgot, resend, verify):
- * 20 requests per IP per minute. Applied ahead of the auth router in app.ts.
+ * Global auth-surface limiter: 20 requests per IP per minute.
+ * Applied ahead of the entire auth router in app.ts.
  */
 export const authRateLimit = rateLimit({ windowMs: 60_000, max: 20 });
+
+/**
+ * Strict limiter for login: 5 attempts per IP per 15 minutes.
+ * Prevents credential-stuffing without a full account-lockout mechanism.
+ * Apply per-route, BEFORE the handler.
+ */
+export const loginRateLimit = rateLimit({ windowMs: 15 * 60_000, max: 5 });
+
+/**
+ * Strict limiter for register: 10 attempts per IP per 15 minutes.
+ * Prevents an attacker from repeatedly overwriting a victim's verify token.
+ */
+export const registerRateLimit = rateLimit({ windowMs: 15 * 60_000, max: 10 });

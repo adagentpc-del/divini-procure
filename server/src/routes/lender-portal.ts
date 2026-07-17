@@ -74,6 +74,17 @@ router.post(
       return res.status(400).json({ error: "buildingId and lenderEmail required" });
     }
 
+    // Verify the caller's company actually owns the building being shared.
+    // Without this check any authenticated user can grant lender access to a
+    // building that belongs to a different company.
+    const owns = await q1(
+      `select 1 from buildings where id = $1 and company_id = $2`,
+      [buildingId, companyId],
+    );
+    if (!owns && !auth.isAdmin) {
+      return res.status(403).json({ error: "you do not own this building" });
+    }
+
     const grant = await q1<any>(
       `INSERT INTO lender_project_access
          (building_id, developer_company_id, lender_email, lender_company_name, lender_contact_name, granted_by, notes)
@@ -363,8 +374,11 @@ router.patch(
 router.get(
   "/lender/portal/:token",
   h(async (req, res) => {
+    // Select only the fields needed for the portal view; omit access_token,
+    // granted_by, and internal notes so they are never sent to the lender.
     const access = await q1<any>(
-      `SELECT * FROM lender_project_access WHERE access_token = $1 AND status = 'active'`,
+      `SELECT building_id, lender_company_name, lender_contact_name, lender_email, status
+         FROM lender_project_access WHERE access_token = $1 AND status = 'active'`,
       [req.params.token],
     );
     if (!access) return res.status(404).json({ error: "invalid or expired link" });

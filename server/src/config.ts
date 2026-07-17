@@ -5,7 +5,18 @@
 
 export const PORT = Number(process.env.PORT || 8080);
 
-export const DATABASE_URL = process.env.DATABASE_URL || "";
+// FAIL CLOSED in production: the server cannot connect to the database without
+// this variable. An empty string would produce confusing connection errors at
+// runtime; throwing at startup makes the misconfiguration obvious immediately.
+export const DATABASE_URL = (() => {
+  const url = process.env.DATABASE_URL || "";
+  if (!url && process.env.NODE_ENV === "production") {
+    throw new Error(
+      "[config] DATABASE_URL must be set in production. Refusing to start.",
+    );
+  }
+  return url;
+})();
 
 export const IS_PROD = process.env.NODE_ENV === "production";
 

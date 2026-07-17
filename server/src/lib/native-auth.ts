@@ -12,6 +12,7 @@
  */
 import { randomBytes } from "node:crypto";
 import { SignJWT, jwtVerify } from "jose";
+import { randomUUID } from "node:crypto";
 import {
   getSessionSecret,
   SESSION_TTL_SECONDS,
@@ -31,32 +32,52 @@ export { hashPassword, verifyPassword } from "./passwordHash.js";
 // ---------------------------------------------------------------------------
 
 export interface SessionClaims {
-  sub: string; // userId
+  sub: string;   // userId
   email: string | null;
+  jti: string;   // JWT ID -- used for server-side revocation
 }
 
 function secretKey(): Uint8Array {
   return new TextEncoder().encode(getSessionSecret());
 }
 
-/** Sign a 30-day session token for a user. */
-export async function signSession(userId: string, email: string | null): Promise<string> {
-  return new SignJWT({ email: email ?? null })
+/**
+ * Sign a 30-day session token for a user.
+ * Returns both the signed JWT and the jti so callers can persist the session.
+ */
+export async function signSession(
+  userId: string,
+  email: string | null,
+): Promise<{ token: string; jti: string }> {
+  const jti = randomUUID();
+  const token = await new SignJWT({ email: email ?? null })
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setSubject(userId)
+    .setJti(jti)
     .setIssuedAt()
     .setExpirationTime(`${SESSION_TTL_SECONDS}s`)
     .sign(secretKey());
+  return { token, jti };
 }
 
-/** Verify a session token; returns its claims or null when invalid/expired. */
+/**
+ * Verify a session token cryptographically; returns its claims or null.
+ * NOTE: callers must also check user_sessions to confirm the session has not
+ * been revoked server-side (i.e. the user has not logged out).
+ */
 export async function verifySession(token: string | null): Promise<SessionClaims | null> {
   if (!token) return null;
   try {
     const { payload } = await jwtVerify(token, secretKey(), { algorithms: ["HS256"] });
     if (!payload.sub) return null;
     const email = (payload.email as string | undefined) ?? null;
-    return { sub: String(payload.sub), email: email ? email.toLowerCase() : null };
+    const jti = payload.jti;
+    if (!jti) return null; // reject legacy tokens without jti
+    return {
+      sub: String(payload.sub),
+      email: email ? email.toLowerCase() : null,
+      jti: String(jti),
+    };
   } catch {
     return null;
   }

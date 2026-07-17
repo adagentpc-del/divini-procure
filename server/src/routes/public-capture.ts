@@ -51,7 +51,8 @@ router.get(
     if (!row) return res.json({ found: false });
     res.json({
       found: true,
-      email: row.email ?? null,
+      // email is intentionally omitted: returning it lets anyone with a valid
+      // code (or who brute-forces one) discover the address an admin sent it to.
       companyKind: row.company_kind ?? null,
       status: row.status ?? "pending",
       companyName: row.company_name ?? null,

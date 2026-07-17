@@ -609,8 +609,15 @@ router.get(
     if (!path) return res.status(400).json({ error: "path required" });
     const doc = await db.getDocumentByPath(path);
     if (!doc) throw new NotFoundError("document not found");
-    // docs_read is public-to-authed; ensureUser handled by /me. Just confirm authed.
-    void auth;
+    // Verify the requesting user is a member of the document's company.
+    // Without this check any authenticated user could obtain a signed URL for
+    // any document by knowing (or guessing) its storage path (IDOR).
+    if (doc.company_id && auth.userId) {
+      const ids = await db.userCompanyIds(auth.userId);
+      if (!ids.includes(doc.company_id) && !auth.isAdmin) {
+        return res.status(403).json({ error: "access denied" });
+      }
+    }
     res.json({ signedUrl: signDownloadUrl(path) });
   }),
 );

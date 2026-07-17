@@ -23,6 +23,7 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { randomUUID } from "node:crypto";
 import { getAuth, requireUser } from "../auth.js";
+import { loginRateLimit, registerRateLimit } from "../lib/rateLimit.js";
 import * as db from "../db.js";
 import { sendEmail } from "../lib/email.js";
 import {
@@ -41,6 +42,7 @@ import {
   PUBLIC_APP_URL,
   IS_PROD,
 } from "../config.js";
+import { createSession, revokeSession } from "../db.js";
 
 const h =
   (fn: (req: Request, res: Response) => Promise<unknown>) =>
@@ -130,7 +132,9 @@ async function sendResetEmail(email: string, token: string): Promise<void> {
 // shared: issue a session for a user + return the standard payload
 // ---------------------------------------------------------------------------
 async function issueSessionResponse(res: Response, user: db.UserRow): Promise<void> {
-  const token = await signSession(user.id, user.email);
+  const { token, jti } = await signSession(user.id, user.email);
+  // Persist the session so it can be truly revoked on logout.
+  await createSession(jti, user.id, user.email, SESSION_TTL_SECONDS);
   setSessionCookie(res, token);
   const company = await db.getMyCompany(user.id);
   const isAdmin = db.isAdminEmail(user.email);
@@ -148,6 +152,7 @@ async function issueSessionResponse(res: Response, user: db.UserRow): Promise<vo
 // ===========================================================================
 router.post(
   "/auth/register",
+  registerRateLimit,
   h(async (req, res) => {
     const { email, password, passwordConfirm } = (req.body ?? {}) as {
       email?: string;
@@ -234,6 +239,7 @@ router.post(
 // ===========================================================================
 router.post(
   "/auth/login",
+  loginRateLimit,
   h(async (req, res) => {
     const { email, password } = (req.body ?? {}) as { email?: string; password?: string };
     const GENERIC = "Incorrect email or password.";
@@ -256,7 +262,13 @@ router.post(
 // ===========================================================================
 router.post(
   "/auth/logout",
-  h(async (_req, res) => {
+  h(async (req, res) => {
+    // Revoke the server-side session so the JWT cannot be replayed.
+    const { getAuth } = await import("../auth.js");
+    const auth = getAuth(req);
+    if (auth.claims?.jti) {
+      await revokeSession(auth.claims.jti);
+    }
     clearSessionCookie(res);
     res.json({ ok: true });
   }),

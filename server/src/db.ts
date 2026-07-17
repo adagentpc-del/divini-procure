@@ -976,3 +976,47 @@ export async function adminOverview() {
   );
   return { counts, companies, packages, bids };
 }
+
+// ===========================================================================
+// SESSION MANAGEMENT (server-side revocation)
+// ===========================================================================
+
+/** Record a newly issued session so it can be revoked on logout. */
+export async function createSession(
+  jti: string,
+  userId: string,
+  email: string | null,
+  ttlSeconds: number,
+): Promise<void> {
+  const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
+  await q(
+    `insert into user_sessions (jti, user_id, email, expires_at)
+     values ($1, $2, $3, $4)
+     on conflict (jti) do nothing`,
+    [jti, userId, email, expiresAt],
+  );
+}
+
+/** Returns true when the session jti is still active (not revoked, not expired). */
+export async function isSessionActive(jti: string): Promise<boolean> {
+  const row = await q1(
+    `select 1 from user_sessions where jti = $1 and expires_at > now()`,
+    [jti],
+  );
+  return !!row;
+}
+
+/** Revoke a session (called on logout). */
+export async function revokeSession(jti: string): Promise<void> {
+  await q(`delete from user_sessions where jti = $1`, [jti]);
+}
+
+/** Revoke all sessions for a user (password change, account compromise). */
+export async function revokeAllSessions(userId: string): Promise<void> {
+  await q(`delete from user_sessions where user_id = $1`, [userId]);
+}
+
+/** Purge expired session rows (run periodically or at startup). */
+export async function purgeExpiredSessions(): Promise<void> {
+  await q(`delete from user_sessions where expires_at <= now()`);
+}

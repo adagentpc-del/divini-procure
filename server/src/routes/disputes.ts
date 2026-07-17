@@ -97,8 +97,12 @@ router.post(
       amountInDisputeCents,
     } = (req.body ?? {}) as Record<string, unknown>;
 
+    const DISPUTE_TYPES = new Set(["non_payment", "scope", "defective_work", "delay", "lien", "other"]);
     if (!againstCompanyId || !disputeType || !title || !description) {
       return res.status(400).json({ error: "againstCompanyId, disputeType, title, and description are required" });
+    }
+    if (!DISPUTE_TYPES.has(String(disputeType))) {
+      return res.status(400).json({ error: `disputeType must be one of: ${[...DISPUTE_TYPES].join(", ")}` });
     }
 
     const dispute = await q1<any>(

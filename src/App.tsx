@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import NotFound from './pages/NotFound';
 import { AuthProvider, useAuth } from './lib/auth';
 import { FeaturesProvider, useFeatures } from './lib/features';
 import Shell from './components/Shell';
@@ -211,7 +212,7 @@ function Routed() {
       <Route path="/package/:id/rfq-assist" element={<Gate><RfqAssist /></Gate>} />
       <Route path="/package/:id/submittals" element={<Gate><Submittals /></Gate>} />
       <Route path="/package/:id/delivery" element={<Gate><DeliveryTracking /></Gate>} />
-      <Route path="*" element={<Navigate to="/" replace />} />
+      <Route path="*" element={<NotFound />} />
     </Routes>
   );
 }
