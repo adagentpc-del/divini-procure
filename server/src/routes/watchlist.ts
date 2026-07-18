@@ -75,17 +75,23 @@ router.get(
   }),
 );
 
-// GET /watchlist
+// GET /watchlist  (#62: paginated via ?limit=&offset= to avoid unbounded result sets)
 router.get(
   "/watchlist",
   requireUser,
   h(async (req, res) => {
     const { userId } = getAuth(req);
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 50));
+    const offset = Math.max(0, Number(req.query.offset) || 0);
     const items = await q<any>(
-      `SELECT * FROM investor_watchlist WHERE user_id = $1 ORDER BY created_at DESC`,
+      `SELECT * FROM investor_watchlist WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
+      [userId, limit, offset],
+    );
+    const countRow = await q1<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM investor_watchlist WHERE user_id = $1`,
       [userId],
     );
-    res.json({ items });
+    res.json({ items, total: countRow?.n ?? 0, limit, offset });
   }),
 );
 

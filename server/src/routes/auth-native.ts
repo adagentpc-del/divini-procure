@@ -265,6 +265,9 @@ router.post(
     }
     const user = await db.getUserByEmail(normalizeEmail(email));
     if (!user || !(await verifyPassword(password, user.password_hash))) {
+      // #30 Log failed login attempts (email only, never the password).
+      // eslint-disable-next-line no-console
+      console.warn(`[auth] failed-login email=${normalizeEmail(email as string)} ip=${req.ip} ua="${req.headers["user-agent"] ?? ""}"`);
       return res.status(401).json({ error: GENERIC });
     }
     if (!user.email_verified) {
@@ -405,6 +408,9 @@ router.post(
       verifyExpires,
     });
     await sendClaimEmail(normalizeEmail(newEmail), verifyToken, company?.name ?? null);
+    // #31 Audit-log the ownership transfer so there is a server-side record.
+    // eslint-disable-next-line no-console
+    console.info(`[audit] ownership-transfer companyId=${companyId} actingUserId=${auth.userId} newEmail=${normalizeEmail(newEmail)} ip=${req.ip}`);
     res.json({ ok: true, newOwner: { id: user.id, email: user.email } });
   }),
 );

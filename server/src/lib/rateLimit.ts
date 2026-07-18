@@ -85,6 +85,19 @@ export const forgotRateLimit = rateLimit({ windowMs: 60 * 60_000, max: 5 });
 export const resendVerifyRateLimit = rateLimit({ windowMs: 60 * 60_000, max: 5 });
 
 /**
+ * Invite and referral code public lookup rate limit (#27).
+ * 20 lookups per IP per 10 minutes prevents brute-force enumeration of short
+ * codes while still allowing legitimate page refreshes and mobile retries.
+ */
+export const inviteLookupRateLimit = rateLimit({ windowMs: 10 * 60_000, max: 20 });
+
+/**
+ * Score refresh rate limit (#63).
+ * 5 manual refreshes per IP per 15 minutes prevents runaway recompute.
+ */
+export const scoreRefreshRateLimit = rateLimit({ windowMs: 15 * 60_000, max: 5 });
+
+/**
  * LLM endpoint limiter: 30 requests per authenticated user per hour.
  *
  * Each LLM call can take 15-20 seconds and costs real compute. This prevents

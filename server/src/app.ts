@@ -106,7 +106,16 @@ app.use(
   }),
 );
 
-// JSON bodies (file bytes travel via multipart, not JSON).
+// Stripe webhook signature verification requires the RAW body buffer BEFORE
+// express.json() consumes and discards it. Mount express.raw() only on the
+// webhook path so every other route still gets parsed JSON. The handler reads
+// req.body as a Buffer when Content-Type is application/json on this path.
+app.use(
+  "/api/webhooks/stripe",
+  express.raw({ type: "application/json", limit: "2mb" }),
+);
+
+// JSON bodies for all other routes (file bytes travel via multipart, not JSON).
 app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 

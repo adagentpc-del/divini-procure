@@ -10,16 +10,27 @@
  *   POST  /admin/subscriptions/tiers          (admin) upsert a tier (by key)
  *   PATCH /admin/subscriptions/entitlement    (admin) assign a tier to a company
  *   GET   /admin/subscriptions                (admin) all entitlements + company name
+ *   POST  /admin/stripe/sync-prices           (admin) create Stripe Products/Prices for paid tiers
  *
  * Vendor self-serve (PROCURE_MONETIZATION_V2 only):
- *   POST  /subscriptions/subscribe { tierKey }  (vendor member) upgrade to Pro /
- *                                                buy Verified+ / Featured tier
- *   POST  /subscriptions/cancel                 (vendor member) back to vendor_free
+ *   POST  /subscriptions/checkout { companyId, tierKey, successUrl, cancelUrl }
+ *         -> Stripe Checkout Session; returns { recordOnly, sessionId, url }
+ *         -> Free tiers assigned immediately (record-only).
+ *   GET   /subscriptions/session?sessionId=   -> verify a Checkout Session, assign tier
+ *   POST  /subscriptions/cancel               (vendor member) cancel + downgrade to free
  *
- * Self-serve is RECORD-ONLY (Stripe-ready): it writes subscription_entitlements
- * exactly like the admin assign path, but never charges a card or moves money.
+ * Webhook (Stripe only):
+ *   POST  /webhooks/stripe                    -> checkout.session.completed,
+ *                                                customer.subscription.deleted,
+ *                                                customer.subscription.updated,
+ *                                                invoice.payment_failed
  *
- * Membership scoping mirrors the rest of the app: a non-admin caller must be a
+ * Splits: the Stripe Connect payout engine (split-engine.ts + stripe-connect.ts)
+ * is separate. Subscription billing COLLECTS money from buyers; the split engine
+ * DISTRIBUTES referral partner shares from platform_revenue rows. The two are
+ * intentionally decoupled so subscription billing never blocks on payout logic.
+ *
+ * Authorization mirrors the rest of the app: a non-admin caller must be a
  * member of the companyId they read. Zero em dashes by convention.
  */
 import { Router, type Request, type Response, type NextFunction } from "express";
@@ -27,7 +38,7 @@ import { getAuth, requireUser, requireAdmin } from "../auth.js";
 import { ForbiddenError } from "../db.js";
 import { q, q1 } from "../pool.js";
 import { PROCURE_MONETIZATION_V2 } from "../config.js";
-import * as paypal from "../lib/paypal.js";
+import * as stripe from "../lib/stripe.js";
 import {
   listTiers,
   getEntitlement,
@@ -37,11 +48,7 @@ import {
 } from "../lib/entitlements.js";
 
 /** Vendor-facing self-serve tiers (the "upgrade to Pro / buy Verified+" set). */
-const SELF_SERVE_TIER_KEYS = new Set([
-  "vendor_pro",
-  "verified_plus",
-  "vendor_featured",
-]);
+const SELF_SERVE_TIER_KEYS = new Set(["vendor_pro", "verified_plus", "vendor_featured"]);
 const VENDOR_FREE_TIER_KEY = "vendor_free";
 
 const h =
@@ -51,21 +58,35 @@ const h =
 
 const router = Router();
 
-/** Throw ForbiddenError unless caller is admin or a member of companyId. */
+// ---------------------------------------------------------------------------
+// Authorization helpers
+// ---------------------------------------------------------------------------
+
 async function assertMember(req: Request, companyId: string): Promise<void> {
   const auth = getAuth(req);
   if (auth.isAdmin) return;
-  const ok = await q1("select 1 from company_members where user_id = $1 and company_id = $2", [
-    auth.userId,
-    companyId,
-  ]);
+  const ok = await q1(
+    "select 1 from company_members where user_id = $1 and company_id = $2",
+    [auth.userId, companyId],
+  );
   if (!ok) throw new ForbiddenError("not a member of this company");
 }
 
+async function callerIsMember(userId: string, companyId: string): Promise<boolean> {
+  const row = await q1(
+    "select 1 from company_members where user_id = $1 and company_id = $2",
+    [userId, companyId],
+  );
+  return !!row;
+}
+
+// ---------------------------------------------------------------------------
+// Tier assignment (payment-method agnostic; used by webhook + admin routes)
+// ---------------------------------------------------------------------------
+
 /**
  * Assign a tier to a company by copying the tier defaults onto
- * subscription_entitlements (the same effective-limit write the admin assign
- * path uses). Record-only: no payment is taken. Returns the stored row.
+ * subscription_entitlements. Record-only: no payment is taken. Returns the row.
  */
 async function assignTierToCompany(companyId: string, tier: Tier): Promise<unknown> {
   return q1(
@@ -106,9 +127,96 @@ async function assignTierToCompany(companyId: string, tier: Tier): Promise<unkno
   );
 }
 
+/** Downgrade a company to the free tier and clear its Stripe subscription id. */
+async function assignFreeTier(companyId: string): Promise<void> {
+  const ent = await q1<{ audience: string | null }>(
+    "select audience from subscription_entitlements where company_id = $1",
+    [companyId],
+  );
+  const audience = ent?.audience || "developer";
+  const freeKey = audience === "vendor" ? "vendor_free" : "developer_free";
+  const tier = await q1<Tier>("select * from subscription_tiers where key = $1", [freeKey]);
+  if (tier) await assignTierToCompany(companyId, tier);
+  await q(
+    `update subscription_entitlements
+        set stripe_subscription_id = null,
+            subscription_status = 'cancelled',
+            updated_at = now()
+      where company_id = $1`,
+    [companyId],
+  );
+}
+
+/**
+ * Resolve the Stripe Customer for a company. Returns an existing id or creates
+ * a new Stripe Customer and caches it. Uses the subscription_entitlements row
+ * as the cache. The user's email is used so the Stripe dashboard is readable.
+ */
+async function resolveStripeCustomer(
+  companyId: string,
+  userEmail: string | null,
+): Promise<string | null> {
+  if (!stripe.isConfigured()) return null;
+  const existing = await q1<{ stripe_customer_id: string | null }>(
+    "select stripe_customer_id from subscription_entitlements where company_id = $1",
+    [companyId],
+  );
+  if (existing?.stripe_customer_id) return existing.stripe_customer_id;
+  const company = await q1<{ name: string | null }>("select name from companies where id = $1", [companyId]);
+  try {
+    const { customerId } = await stripe.createCustomer({
+      email: userEmail,
+      name: company?.name ?? undefined,
+      metadata: { company_id: companyId },
+    });
+    // Cache the customer id immediately.
+    await q(
+      `insert into subscription_entitlements (company_id, stripe_customer_id, updated_at)
+       values ($1, $2, now())
+       on conflict (company_id) do update set stripe_customer_id = $2, updated_at = now()`,
+      [companyId, customerId],
+    );
+    return customerId;
+  } catch {
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
-// GET /subscriptions/tiers  -> the full catalogue (any signed-in user).
+// Resolve and authorize the acting vendor company for self-serve actions.
 // ---------------------------------------------------------------------------
+async function resolveVendorCompany(
+  req: Request,
+  res: Response,
+): Promise<string | null> {
+  const companyId = String(
+    (req.body && req.body.companyId) || req.query.companyId || "",
+  ).trim();
+  if (!companyId) {
+    res.status(400).json({ error: "companyId required" });
+    return null;
+  }
+  await assertMember(req, companyId);
+  const company = await q1<{ kind: string | null }>(
+    "select kind from companies where id = $1",
+    [companyId],
+  );
+  if (!company) {
+    res.status(404).json({ error: "company not found" });
+    return null;
+  }
+  if (company.kind !== "vendor") {
+    res.status(403).json({ error: "self-serve subscriptions are for vendor companies" });
+    return null;
+  }
+  return companyId;
+}
+
+// ===========================================================================
+// READ ROUTES
+// ===========================================================================
+
+// GET /subscriptions/tiers -> the full catalogue (any signed-in user).
 router.get(
   "/subscriptions/tiers",
   requireUser,
@@ -117,9 +225,7 @@ router.get(
   }),
 );
 
-// ---------------------------------------------------------------------------
-// GET /subscriptions/mine?companyId=  -> entitlement + usage + per-key limits.
-// ---------------------------------------------------------------------------
+// GET /subscriptions/mine?companyId= -> entitlement + usage + per-key limits.
 router.get(
   "/subscriptions/mine",
   requireUser,
@@ -136,9 +242,11 @@ router.get(
   }),
 );
 
-// ---------------------------------------------------------------------------
-// POST /admin/subscriptions/tiers  -> upsert a tier by key (admin).
-// ---------------------------------------------------------------------------
+// ===========================================================================
+// ADMIN ROUTES (tier + entitlement management)
+// ===========================================================================
+
+// POST /admin/subscriptions/tiers -> upsert a tier by key (admin).
 router.post(
   "/admin/subscriptions/tiers",
   requireAdmin,
@@ -146,7 +254,8 @@ router.post(
     const b = (req.body ?? {}) as Partial<Tier>;
     const key = (b.key ?? "").trim();
     if (!key) return res.status(400).json({ error: "key required" });
-    const audience = b.audience === "vendor" || b.audience === "investor" ? b.audience : "developer";
+    const audience =
+      b.audience === "vendor" || b.audience === "investor" ? b.audience : "developer";
 
     const row = await q1<Tier>(
       `insert into subscription_tiers
@@ -191,11 +300,7 @@ router.post(
   }),
 );
 
-// ---------------------------------------------------------------------------
-// PATCH /admin/subscriptions/entitlement  -> assign a tier to a company (admin).
-// Copies the tier limits onto subscription_entitlements as the effective limits;
-// any per-key override supplied in the body wins over the tier value.
-// ---------------------------------------------------------------------------
+// PATCH /admin/subscriptions/entitlement -> assign a tier to a company (admin).
 router.patch(
   "/admin/subscriptions/entitlement",
   requireAdmin,
@@ -209,7 +314,6 @@ router.patch(
     const tier = await q1<Tier>("select * from subscription_tiers where key = $1", [tierKey]);
     if (!tier) return res.status(404).json({ error: "tier not found" });
 
-    // override wins when supplied (not undefined); else copy the tier value.
     const ov = (k: string, tierVal: number | null) =>
       b[k] === undefined || b[k] === null || b[k] === "" ? tierVal : Number(b[k]);
     const ovBool = (k: string, tierVal: boolean) =>
@@ -255,9 +359,7 @@ router.patch(
   }),
 );
 
-// ---------------------------------------------------------------------------
-// GET /admin/subscriptions  -> all entitlements with the company name (admin).
-// ---------------------------------------------------------------------------
+// GET /admin/subscriptions -> all entitlements with company name (admin).
 router.get(
   "/admin/subscriptions",
   requireAdmin,
@@ -278,6 +380,9 @@ router.get(
               e.ai_features,
               e.reporting_access,
               e.white_glove,
+              e.stripe_subscription_id,
+              e.stripe_customer_id,
+              e.subscription_status,
               e.updated_at
          from subscription_entitlements e
          left join companies c on c.id = e.company_id
@@ -285,187 +390,6 @@ router.get(
         order by c.name asc nulls last`,
     );
     res.json({ entitlements: rows });
-  }),
-);
-
-// ---------------------------------------------------------------------------
-// VENDOR SELF-SERVE (PROCURE_MONETIZATION_V2 only). Record-only, Stripe-ready.
-// ---------------------------------------------------------------------------
-
-/**
- * Resolve and authorize the acting vendor company for a self-serve action. The
- * caller must be admin or a member of companyId, and the company must be
- * vendor-kind. Returns the companyId, or null after writing the error response.
- */
-async function resolveVendorCompany(
-  req: Request,
-  res: Response,
-): Promise<string | null> {
-  const companyId = String(
-    (req.body && req.body.companyId) || req.query.companyId || "",
-  ).trim();
-  if (!companyId) {
-    res.status(400).json({ error: "companyId required" });
-    return null;
-  }
-  await assertMember(req, companyId);
-  const company = await q1<{ kind: string | null }>(
-    "select kind from companies where id = $1",
-    [companyId],
-  );
-  if (!company) {
-    res.status(404).json({ error: "company not found" });
-    return null;
-  }
-  if (company.kind !== "vendor") {
-    res.status(403).json({ error: "self-serve subscriptions are for vendor companies" });
-    return null;
-  }
-  return companyId;
-}
-
-// POST /subscriptions/subscribe { companyId, tierKey } -> set the vendor's tier.
-// tierKey in { vendor_pro, verified_plus, vendor_featured }. Returns the
-// effective entitlement. Record-only: no charge is taken.
-router.post(
-  "/subscriptions/subscribe",
-  requireUser,
-  h(async (req, res) => {
-    if (!PROCURE_MONETIZATION_V2) {
-      return res.status(403).json({ error: "monetization not enabled" });
-    }
-    const b = (req.body ?? {}) as Record<string, any>;
-    const tierKey = String(b.tierKey ?? "").trim();
-    if (!SELF_SERVE_TIER_KEYS.has(tierKey)) {
-      return res.status(400).json({
-        error: "tierKey must be one of vendor_pro, verified_plus, vendor_featured",
-      });
-    }
-    const companyId = await resolveVendorCompany(req, res);
-    if (!companyId) return;
-
-    const tier = await q1<Tier>("select * from subscription_tiers where key = $1", [tierKey]);
-    if (!tier) return res.status(404).json({ error: "tier not found" });
-
-    const row = await assignTierToCompany(companyId, tier);
-    res.json({ ok: true, entitlement: row, effective: await getEntitlement(companyId) });
-  }),
-);
-
-// POST /subscriptions/cancel { companyId } -> return the vendor to vendor_free.
-router.post(
-  "/subscriptions/cancel",
-  requireUser,
-  h(async (req, res) => {
-    if (!PROCURE_MONETIZATION_V2) {
-      return res.status(403).json({ error: "monetization not enabled" });
-    }
-    const companyId = await resolveVendorCompany(req, res);
-    if (!companyId) return;
-
-    const tier = await q1<Tier>("select * from subscription_tiers where key = $1", [
-      VENDOR_FREE_TIER_KEY,
-    ]);
-    if (!tier) return res.status(404).json({ error: "vendor_free tier not found" });
-
-    const row = await assignTierToCompany(companyId, tier);
-    res.json({ ok: true, entitlement: row, effective: await getEntitlement(companyId) });
-  }),
-);
-
-// ---------------------------------------------------------------------------
-// PayPal checkout for access-based subscriptions. Record-only fallback when
-// PayPal is not configured, so nothing breaks before keys are set. Charges the
-// first period; assign the tier on a COMPLETED capture. (Recurring billing plans
-// are a later step - see the apply doc.)
-// ---------------------------------------------------------------------------
-async function callerIsMember(userId: string, companyId: string): Promise<boolean> {
-  const row = await q1(`select 1 from company_members where user_id = $1 and company_id = $2`, [userId, companyId]);
-  return !!row;
-}
-
-// POST /subscriptions/checkout { companyId, tierKey, returnUrl, cancelUrl }
-router.post(
-  "/subscriptions/checkout",
-  requireUser,
-  h(async (req, res) => {
-    if (!PROCURE_MONETIZATION_V2) return res.status(403).json({ error: "monetization not enabled" });
-    const auth = getAuth(req);
-    const b = (req.body ?? {}) as Record<string, any>;
-    const companyId = String(b.companyId ?? "").trim();
-    const tierKey = String(b.tierKey ?? "").trim();
-    if (!companyId || !tierKey) return res.status(400).json({ error: "companyId and tierKey required" });
-    if (!auth.isAdmin && !(await callerIsMember(auth.userId!, companyId))) {
-      return res.status(403).json({ error: "not a member of this company" });
-    }
-    const tier = await q1<Tier>("select * from subscription_tiers where key = $1", [tierKey]);
-    if (!tier) return res.status(404).json({ error: "tier not found" });
-
-    // Free tier or PayPal not configured -> record-only assignment (payment-ready).
-    if (Number(tier.price_cents) <= 0 || !paypal.isConfigured()) {
-      const row = await assignTierToCompany(companyId, tier);
-      return res.json({
-        recordOnly: true,
-        entitlement: row,
-        note: paypal.isConfigured() ? "free tier" : "PayPal not configured; tier assigned record-only",
-      });
-    }
-    try {
-      const order = await paypal.createOrder({
-        amountCents: Number(tier.price_cents),
-        description: `Divini Procure ${tier.name} (first period)`,
-        referenceId: `${companyId}:${tierKey}`,
-        returnUrl: String(b.returnUrl || ""),
-        cancelUrl: String(b.cancelUrl || ""),
-      });
-      res.json({ recordOnly: false, orderId: order.orderId, approveUrl: order.approveUrl });
-    } catch (e: any) {
-      if (e instanceof paypal.PaypalNotConfigured) {
-        const row = await assignTierToCompany(companyId, tier);
-        return res.json({ recordOnly: true, entitlement: row, note: "PayPal not configured; tier assigned record-only" });
-      }
-      return res.status(502).json({ error: e?.message || "PayPal checkout failed" });
-    }
-  }),
-);
-
-// POST /subscriptions/capture { companyId, tierKey, orderId } -> capture + assign tier.
-router.post(
-  "/subscriptions/capture",
-  requireUser,
-  h(async (req, res) => {
-    if (!PROCURE_MONETIZATION_V2) return res.status(403).json({ error: "monetization not enabled" });
-    const auth = getAuth(req);
-    const b = (req.body ?? {}) as Record<string, any>;
-    const companyId = String(b.companyId ?? "").trim();
-    const tierKey = String(b.tierKey ?? "").trim();
-    const orderId = String(b.orderId ?? "").trim();
-    if (!companyId || !tierKey || !orderId) {
-      return res.status(400).json({ error: "companyId, tierKey and orderId required" });
-    }
-    if (!auth.isAdmin && !(await callerIsMember(auth.userId!, companyId))) {
-      return res.status(403).json({ error: "not a member of this company" });
-    }
-    let capturedReferenceId: string | null = null;
-    try {
-      const cap = await paypal.captureOrder(orderId);
-      if (!cap.ok) return res.status(402).json({ error: "payment not completed", status: cap.status });
-      capturedReferenceId = cap.referenceId ?? null;
-    } catch (e: any) {
-      return res.status(502).json({ error: e?.message || "PayPal capture failed" });
-    }
-    // Verify the order's reference_id matches the claimed companyId:tierKey to
-    // prevent a buyer from swapping tierKey after approval to claim a higher plan.
-    const expectedRef = `${companyId}:${tierKey}`;
-    if (capturedReferenceId && capturedReferenceId !== expectedRef) {
-      return res.status(400).json({
-        error: "Order mismatch: the approved PayPal order does not match the requested tier.",
-      });
-    }
-    const tier = await q1<Tier>("select * from subscription_tiers where key = $1", [tierKey]);
-    if (!tier) return res.status(404).json({ error: "tier not found" });
-    const row = await assignTierToCompany(companyId, tier);
-    res.json({ ok: true, entitlement: row, effective: await getEntitlement(companyId) });
   }),
 );
 
@@ -501,7 +425,8 @@ router.patch(
     const userId = String(b.userId ?? "").trim();
     const plan = String(b.plan ?? "").trim().toLowerCase();
     if (!userId) return res.status(400).json({ error: "userId required" });
-    if (!INVESTOR_PLANS.has(plan)) return res.status(400).json({ error: "plan must be free, premium or concierge" });
+    if (!INVESTOR_PLANS.has(plan))
+      return res.status(400).json({ error: "plan must be free, premium or concierge" });
     const row = await q1(
       `update investor_profiles set plan = $2, updated_at = now() where user_id = $1
        returning id, user_id, email, full_name, plan`,
@@ -513,92 +438,62 @@ router.patch(
 );
 
 // ===========================================================================
-// RECURRING BILLING (PayPal Subscriptions / auto-renewal)
+// ADMIN: STRIPE PRICE SYNC
+// Creates a Stripe Product and a monthly recurring Price for each paid tier.
+// Safe to re-run: only creates when stripe_price_id is not yet set.
 // ===========================================================================
 
-/** Ensure a single PayPal catalog product exists; cache its id in app_config. */
-async function ensurePaypalProduct(): Promise<string> {
-  const row = await q1<{ v: string | null }>(`select v from app_config where k = 'paypal_product_id'`);
-  if (row?.v) return row.v;
-  const id = await paypal.createProduct("Divini Procure Access");
-  await q(
-    `insert into app_config (k, v) values ('paypal_product_id', $1)
-     on conflict (k) do update set v = excluded.v, updated_at = now()`,
-    [id],
-  );
-  return id;
-}
-
-/** Downgrade a company to the free tier of its audience and clear its subscription. */
-async function assignFreeTier(companyId: string): Promise<void> {
-  const ent = await q1<{ audience: string | null }>(`select audience from subscription_entitlements where company_id = $1`, [companyId]);
-  const audience = ent?.audience || "developer";
-  const freeKey = audience === "vendor" ? "vendor_free" : "developer_free";
-  const tier = await q1<Tier>(`select * from subscription_tiers where key = $1`, [freeKey]);
-  if (tier) await assignTierToCompany(companyId, tier);
-  await q(
-    `update subscription_entitlements set paypal_subscription_id = null, subscription_status = 'cancelled', updated_at = now() where company_id = $1`,
-    [companyId],
-  );
-}
-
-// POST /admin/paypal/sync-plans -> create a billing plan for each paid tier (admin).
 router.post(
-  "/admin/paypal/sync-plans",
+  "/admin/stripe/sync-prices",
   requireAdmin,
   h(async (req, res) => {
-    if (!paypal.isConfigured()) return res.status(400).json({ error: "PayPal not configured" });
-    const productId = await ensurePaypalProduct();
-    const paid = await q<Tier & { paypal_plan_id: string | null }>(
-      `select * from subscription_tiers where price_cents > 0 order by price_cents asc`,
+    if (!stripe.isConfigured()) return res.status(400).json({ error: "Stripe not configured" });
+    const paid = await q<Tier & { stripe_price_id: string | null; stripe_product_id: string | null }>(
+      "select * from subscription_tiers where price_cents > 0 order by price_cents asc",
     );
-    const plans: { key: string; planId: string; created: boolean }[] = [];
+    const results: { key: string; priceId: string; created: boolean }[] = [];
     for (const t of paid) {
-      if (t.paypal_plan_id) { plans.push({ key: t.key, planId: t.paypal_plan_id, created: false }); continue; }
-      const planId = await paypal.createMonthlyPlan({ productId, name: `Divini ${t.name}`, amountCents: Number(t.price_cents) });
-      await q(`update subscription_tiers set paypal_plan_id = $2 where key = $1`, [t.key, planId]);
-      plans.push({ key: t.key, planId, created: true });
-    }
-    res.json({ productId, plans });
-  }),
-);
-
-// POST /subscriptions/checkout-recurring { companyId, tierKey, returnUrl, cancelUrl }
-router.post(
-  "/subscriptions/checkout-recurring",
-  requireUser,
-  h(async (req, res) => {
-    if (!PROCURE_MONETIZATION_V2) return res.status(403).json({ error: "monetization not enabled" });
-    const auth = getAuth(req);
-    const b = (req.body ?? {}) as Record<string, any>;
-    const companyId = String(b.companyId ?? "").trim();
-    const tierKey = String(b.tierKey ?? "").trim();
-    if (!companyId || !tierKey) return res.status(400).json({ error: "companyId and tierKey required" });
-    if (!auth.isAdmin && !(await callerIsMember(auth.userId!, companyId))) {
-      return res.status(403).json({ error: "not a member of this company" });
-    }
-    const tier = await q1<Tier & { paypal_plan_id: string | null }>("select * from subscription_tiers where key = $1", [tierKey]);
-    if (!tier) return res.status(404).json({ error: "tier not found" });
-    if (!tier.paypal_plan_id) {
-      return res.status(400).json({ error: "No billing plan for this tier yet. Run plan sync first.", needsSync: true });
-    }
-    try {
-      const sub = await paypal.createSubscription({
-        planId: tier.paypal_plan_id,
-        customId: `${companyId}:${tierKey}`,
-        returnUrl: String(b.returnUrl || ""),
-        cancelUrl: String(b.cancelUrl || ""),
+      if (t.stripe_price_id) {
+        results.push({ key: t.key, priceId: t.stripe_price_id, created: false });
+        continue;
+      }
+      const { priceId, productId } = await stripe.ensurePrice({
+        tierKey: t.key,
+        tierName: t.name ?? t.key,
+        amountCents: Number(t.price_cents),
+        existingProductId: t.stripe_product_id,
       });
-      res.json({ subscriptionId: sub.subscriptionId, approveUrl: sub.approveUrl });
-    } catch (e: any) {
-      return res.status(502).json({ error: e?.message || "PayPal subscription failed" });
+      await q(
+        `update subscription_tiers
+            set stripe_price_id = $2, stripe_product_id = $3
+          where key = $1`,
+        [t.key, priceId, productId],
+      );
+      results.push({ key: t.key, priceId, created: true });
     }
+    res.json({ synced: results });
   }),
 );
 
-// POST /subscriptions/activate { companyId, tierKey, subscriptionId } -> verify + assign.
+// ===========================================================================
+// VENDOR SELF-SERVE (PROCURE_MONETIZATION_V2 only) - Stripe Checkout
+// ===========================================================================
+
+/**
+ * POST /subscriptions/checkout { companyId, tierKey, successUrl, cancelUrl }
+ *
+ * For free tiers or when Stripe is not configured: record-only assignment.
+ * For paid tiers with Stripe configured: creates a Checkout Session and
+ * returns { sessionId, url } for the frontend to redirect to.
+ *
+ * The successUrl should include {CHECKOUT_SESSION_ID} which Stripe fills in:
+ *   /subscription?session_id={CHECKOUT_SESSION_ID}
+ *
+ * Idempotency: if a session for this companyId+tierKey is already 'complete',
+ * the tier has already been assigned by the webhook. We return ok=true.
+ */
 router.post(
-  "/subscriptions/activate",
+  "/subscriptions/checkout",
   requireUser,
   h(async (req, res) => {
     if (!PROCURE_MONETIZATION_V2) return res.status(403).json({ error: "monetization not enabled" });
@@ -606,106 +501,291 @@ router.post(
     const b = (req.body ?? {}) as Record<string, any>;
     const companyId = String(b.companyId ?? "").trim();
     const tierKey = String(b.tierKey ?? "").trim();
-    const subscriptionId = String(b.subscriptionId ?? "").trim();
-    if (!companyId || !tierKey || !subscriptionId) return res.status(400).json({ error: "companyId, tierKey and subscriptionId required" });
+    if (!companyId || !tierKey) {
+      return res.status(400).json({ error: "companyId and tierKey required" });
+    }
     if (!auth.isAdmin && !(await callerIsMember(auth.userId!, companyId))) {
       return res.status(403).json({ error: "not a member of this company" });
     }
-    const sub = await paypal.getSubscription(subscriptionId).catch(() => null);
-    if (!sub || !["ACTIVE", "APPROVED"].includes(sub.status)) {
-      return res.status(402).json({ error: "subscription not active", status: sub?.status });
+    const tier = await q1<Tier & { stripe_price_id: string | null }>(
+      "select * from subscription_tiers where key = $1",
+      [tierKey],
+    );
+    if (!tier) return res.status(404).json({ error: "tier not found" });
+
+    // Free tier or Stripe not configured: assign immediately.
+    if (Number(tier.price_cents) <= 0 || !stripe.isConfigured()) {
+      const row = await assignTierToCompany(companyId, tier);
+      return res.json({
+        recordOnly: true,
+        entitlement: row,
+        note: stripe.isConfigured() ? "free tier" : "Stripe not configured; tier assigned record-only",
+      });
     }
+
+    // Paid tier: must have a stripe_price_id (run /admin/stripe/sync-prices first).
+    if (!tier.stripe_price_id) {
+      return res.status(400).json({
+        error: "No Stripe price for this tier. Run /admin/stripe/sync-prices first.",
+        needsSync: true,
+      });
+    }
+
+    const customerId = await resolveStripeCustomer(companyId, auth.email ?? null);
+    const successUrl =
+      String(b.successUrl || "") ||
+      `${process.env.PUBLIC_APP_URL || "https://diviniprocure.com"}/subscription?session_id={CHECKOUT_SESSION_ID}`;
+    const cancelUrl =
+      String(b.cancelUrl || "") ||
+      `${process.env.PUBLIC_APP_URL || "https://diviniprocure.com"}/subscription`;
+
+    try {
+      const session = await stripe.createCheckoutSession({
+        priceId: tier.stripe_price_id,
+        customerId,
+        customerEmail: customerId ? undefined : (auth.email ?? undefined),
+        companyId,
+        tierKey,
+        successUrl,
+        cancelUrl,
+        mode: "subscription",
+      });
+      res.json({ recordOnly: false, sessionId: session.sessionId, url: session.url });
+    } catch (e: any) {
+      if (e instanceof stripe.StripeNotConfigured) {
+        const row = await assignTierToCompany(companyId, tier);
+        return res.json({ recordOnly: true, entitlement: row, note: "Stripe not configured; tier assigned record-only" });
+      }
+      return res.status(502).json({ error: e?.message || "Stripe checkout failed" });
+    }
+  }),
+);
+
+/**
+ * GET /subscriptions/session?sessionId= -> verify session and assign tier.
+ *
+ * Called from the success URL after Stripe redirects back. Looks up the session
+ * to confirm status=complete and payment_status=paid, then assigns the tier.
+ * Idempotent: safe to call multiple times for the same session_id.
+ *
+ * We also process via webhook (checkout.session.completed) for reliability, so
+ * this endpoint is a belt-and-suspenders confirmation for the user's browser.
+ */
+router.get(
+  "/subscriptions/session",
+  requireUser,
+  h(async (req, res) => {
+    if (!PROCURE_MONETIZATION_V2) return res.status(403).json({ error: "monetization not enabled" });
+    const sessionId = String(req.query.sessionId ?? "").trim();
+    if (!sessionId) return res.status(400).json({ error: "sessionId required" });
+    if (!stripe.isConfigured()) return res.status(400).json({ error: "Stripe not configured" });
+
+    let session: Awaited<ReturnType<typeof stripe.getCheckoutSession>>;
+    try {
+      session = await stripe.getCheckoutSession(sessionId);
+    } catch (e: any) {
+      return res.status(502).json({ error: e?.message || "Could not retrieve Stripe session" });
+    }
+
+    if (session.status !== "complete" || session.paymentStatus !== "paid") {
+      return res.status(402).json({
+        error: "Payment not completed",
+        status: session.status,
+        paymentStatus: session.paymentStatus,
+      });
+    }
+
+    const companyId = session.metadata.company_id;
+    const tierKey = session.metadata.tier_key;
+    if (!companyId || !tierKey) {
+      return res.status(400).json({ error: "Session metadata missing company_id or tier_key" });
+    }
+
+    // Auth check: the calling user must be a member of the company in the session.
+    const auth = getAuth(req);
+    if (!auth.isAdmin && !(await callerIsMember(auth.userId!, companyId))) {
+      return res.status(403).json({ error: "not a member of this company" });
+    }
+
     const tier = await q1<Tier>("select * from subscription_tiers where key = $1", [tierKey]);
     if (!tier) return res.status(404).json({ error: "tier not found" });
-    await assignTierToCompany(companyId, tier);
-    await q(
-      `update subscription_entitlements set paypal_subscription_id = $2, subscription_status = 'active', updated_at = now() where company_id = $1`,
-      [companyId, subscriptionId],
-    );
-    res.json({ ok: true, effective: await getEntitlement(companyId) });
+
+    const row = await assignTierToCompany(companyId, tier);
+
+    // Cache the subscription id if available so we can cancel it later.
+    if (session.subscriptionId) {
+      await q(
+        `update subscription_entitlements
+            set stripe_subscription_id = $2,
+                stripe_customer_id = coalesce($3, stripe_customer_id),
+                subscription_status = 'active',
+                updated_at = now()
+          where company_id = $1`,
+        [companyId, session.subscriptionId, session.customerId],
+      );
+    }
+
+    res.json({ ok: true, entitlement: row, effective: await getEntitlement(companyId) });
   }),
 );
 
-// POST /subscriptions/cancel-recurring { companyId } -> cancel at PayPal + downgrade.
+/**
+ * POST /subscriptions/cancel { companyId } -> cancel Stripe subscription + downgrade.
+ */
 router.post(
-  "/subscriptions/cancel-recurring",
+  "/subscriptions/cancel",
   requireUser,
   h(async (req, res) => {
     if (!PROCURE_MONETIZATION_V2) return res.status(403).json({ error: "monetization not enabled" });
-    const auth = getAuth(req);
-    const b = (req.body ?? {}) as Record<string, any>;
-    const companyId = String(b.companyId ?? "").trim();
-    if (!companyId) return res.status(400).json({ error: "companyId required" });
-    if (!auth.isAdmin && !(await callerIsMember(auth.userId!, companyId))) {
-      return res.status(403).json({ error: "not a member of this company" });
-    }
-    const ent = await q1<{ paypal_subscription_id: string | null }>(
-      `select paypal_subscription_id from subscription_entitlements where company_id = $1`,
+    const companyId = await resolveVendorCompany(req, res);
+    if (!companyId) return;
+
+    const ent = await q1<{ stripe_subscription_id: string | null }>(
+      "select stripe_subscription_id from subscription_entitlements where company_id = $1",
       [companyId],
     );
-    if (ent?.paypal_subscription_id) {
-      try { await paypal.cancelSubscription(ent.paypal_subscription_id); } catch { /* already cancelled / gone */ }
+    if (ent?.stripe_subscription_id && stripe.isConfigured()) {
+      try {
+        // Cancel at period end so the user keeps access until the period they paid for.
+        await stripe.cancelSubscription(ent.stripe_subscription_id, true);
+      } catch {
+        // Already cancelled or expired - proceed to downgrade anyway.
+      }
     }
     await assignFreeTier(companyId);
     res.json({ ok: true, effective: await getEntitlement(companyId) });
   }),
 );
 
-// POST /webhooks/paypal -> lifecycle events. Public but signature-verified.
-router.post(
-  "/webhooks/paypal",
-  h(async (req, res) => {
-    const event = req.body as any;
-    const verified = await paypal.verifyWebhook(req.headers as Record<string, string | undefined>, event).catch(() => false);
-    // Always 200 so PayPal does not hammer retries; act only on verified events.
-    if (!verified) return res.status(200).json({ received: true, verified: false });
-    const type = String(event?.event_type || "");
-    const subId = event?.resource?.id as string | undefined;
+// ===========================================================================
+// STRIPE WEBHOOK
+// Raw body must be preserved for signature verification. In app.ts, mount this
+// BEFORE express.json() or use express.raw({ type: 'application/json' }) on
+// this specific path. The route is public but signature-guarded.
+// ===========================================================================
 
-    // Recurring subscription lifecycle events.
-    if (
-      subId &&
-      ["BILLING.SUBSCRIPTION.CANCELLED", "BILLING.SUBSCRIPTION.EXPIRED", "BILLING.SUBSCRIPTION.SUSPENDED"].includes(type)
-    ) {
-      const ent = await q1<{ company_id: string }>(
-        `select company_id from subscription_entitlements where paypal_subscription_id = $1`,
-        [subId],
-      );
-      if (ent?.company_id) await assignFreeTier(ent.company_id);
+router.post(
+  "/webhooks/stripe",
+  h(async (req, res) => {
+    // req.body is a Buffer when express.raw() is applied (configured in app.ts).
+    const sig = req.headers["stripe-signature"];
+    if (!sig || typeof sig !== "string") {
+      return res.status(400).json({ error: "Missing Stripe-Signature header" });
     }
 
-    // One-time capture completed (browser closed before /capture was called).
-    // The reference_id encodes `companyId:tierKey` so we can assign the tier here.
-    if (type === "PAYMENT.CAPTURE.COMPLETED") {
-      const referenceId =
-        (event?.resource?.supplementary_data?.related_ids?.order_id as string | undefined) ??
-        (event?.resource?.custom_id as string | undefined);
-      // PayPal also passes the reference_id on the purchase_unit level via the
-      // linked order. Try to derive companyId:tierKey from custom_id or supplementary.
-      // The safer signal is the order resource; look it up if we have the orderId.
-      const orderId = event?.resource?.supplementary_data?.related_ids?.order_id as string | undefined;
-      if (orderId && PROCURE_MONETIZATION_V2) {
-        // Look up pending entitlement by matching the order; we stored referenceId
-        // `companyId:tierKey` at order creation. Parse it from the capture resource.
-        const captureRef = event?.resource?.purchase_units?.[0]?.reference_id as string | undefined;
-        const ref = captureRef ?? referenceId;
-        if (ref && ref.includes(":")) {
-          const [companyId, tierKey] = ref.split(":");
-          if (companyId && tierKey) {
-            const tier = await q1<Tier>("select * from subscription_tiers where key = $1", [tierKey]);
-            if (tier) {
-              // Only assign if the company exists and doesn't already have this tier.
-              const existing = await q1<{ tier_key: string }>(
-                "select tier_key from subscription_entitlements where company_id = $1",
-                [companyId],
-              );
-              if (!existing || existing.tier_key !== tierKey) {
-                await assignTierToCompany(companyId, tier);
-              }
-            }
+    let event: { type: string; data: { object: Record<string, unknown> }; id: string };
+    try {
+      event = await stripe.constructWebhookEvent(req.body as Buffer, sig);
+    } catch (e: any) {
+      // Return 400 so Stripe retries only legitimate delivery failures, not bad signatures.
+      return res.status(400).json({ error: `Webhook error: ${e?.message}` });
+    }
+
+    const obj = event.data.object as Record<string, unknown>;
+
+    try {
+      switch (event.type) {
+        // -----------------------------------------------------------------
+        // Checkout completed: assign the tier.
+        // -----------------------------------------------------------------
+        case "checkout.session.completed": {
+          if (obj.payment_status !== "paid") break;
+          const meta = (obj.metadata as Record<string, string>) ?? {};
+          const companyId = meta.company_id;
+          const tierKey = meta.tier_key;
+          if (!companyId || !tierKey || !PROCURE_MONETIZATION_V2) break;
+
+          const tier = await q1<Tier>("select * from subscription_tiers where key = $1", [tierKey]);
+          if (!tier) break;
+          await assignTierToCompany(companyId, tier);
+
+          // Cache subscription + customer ids.
+          const subId = (obj.subscription as string | null) ?? null;
+          const custId = (obj.customer as string | null) ?? null;
+          if (subId || custId) {
+            await q(
+              `update subscription_entitlements
+                  set stripe_subscription_id = coalesce($2, stripe_subscription_id),
+                      stripe_customer_id = coalesce($3, stripe_customer_id),
+                      subscription_status = 'active',
+                      updated_at = now()
+                where company_id = $1`,
+              [companyId, subId, custId],
+            );
           }
+          break;
         }
+
+        // -----------------------------------------------------------------
+        // Subscription deleted or cancelled: downgrade to free.
+        // -----------------------------------------------------------------
+        case "customer.subscription.deleted": {
+          const subId = (obj.id as string | null) ?? null;
+          if (!subId) break;
+          const ent = await q1<{ company_id: string }>(
+            "select company_id from subscription_entitlements where stripe_subscription_id = $1",
+            [subId],
+          );
+          if (ent?.company_id) await assignFreeTier(ent.company_id);
+          break;
+        }
+
+        // -----------------------------------------------------------------
+        // Invoice payment failed: mark the subscription as past_due.
+        // Do NOT downgrade yet - Stripe will retry and eventually fire
+        // customer.subscription.deleted if all retries fail.
+        // -----------------------------------------------------------------
+        case "invoice.payment_failed": {
+          const custId = (obj.customer as string | null) ?? null;
+          if (!custId) break;
+          await q(
+            `update subscription_entitlements
+                set subscription_status = 'past_due', updated_at = now()
+              where stripe_customer_id = $1`,
+            [custId],
+          );
+          break;
+        }
+
+        // -----------------------------------------------------------------
+        // Subscription updated: sync status (handles reactivation etc.)
+        // -----------------------------------------------------------------
+        case "customer.subscription.updated": {
+          const subId = (obj.id as string | null) ?? null;
+          const status = (obj.status as string | null) ?? null;
+          if (!subId || !status) break;
+          if (["active", "trialing"].includes(status)) {
+            await q(
+              `update subscription_entitlements
+                  set subscription_status = 'active', updated_at = now()
+                where stripe_subscription_id = $1`,
+              [subId],
+            );
+          } else if (status === "past_due") {
+            await q(
+              `update subscription_entitlements
+                  set subscription_status = 'past_due', updated_at = now()
+                where stripe_subscription_id = $1`,
+              [subId],
+            );
+          } else if (["canceled", "unpaid"].includes(status)) {
+            const ent = await q1<{ company_id: string }>(
+              "select company_id from subscription_entitlements where stripe_subscription_id = $1",
+              [subId],
+            );
+            if (ent?.company_id) await assignFreeTier(ent.company_id);
+          }
+          break;
+        }
+
+        default:
+          // Unhandled event type - acknowledge but take no action.
+          break;
       }
+    } catch (e) {
+      // Log processing errors but always return 200 so Stripe doesn't retry
+      // events where processing would always fail (e.g. missing tier in DB).
+      console.error("[webhook:stripe] processing error", event.type, e);
     }
 
     res.json({ received: true });

@@ -41,7 +41,7 @@ import fs from "node:fs";
 import { getAuth, requireUser, requireAdmin } from "./auth.js";
 import * as db from "./db.js";
 import { ForbiddenError, NotFoundError } from "./db.js";
-import { q1, pool } from "./pool.js";
+import { q, q1, pool } from "./pool.js";
 import {
   buildStorageKey,
   writeFile,
@@ -253,6 +253,16 @@ router.post(
   requireUser,
   h(async (req, res) => {
     const auth = getAuth(req);
+    // CCPA / GDPR right-to-erasure (#13): delete any CRM records whose email
+    // matches the user's email before the user row is removed. crm_records are
+    // admin-owned records about a contact and are not cascade-deleted by the
+    // users table, so we delete them here explicitly.
+    if (auth.email) {
+      await q(
+        `delete from crm_records where lower(coalesce(email,'')) = lower($1)`,
+        [auth.email],
+      );
+    }
     await db.deleteMyAccount(auth.userId!);
     res.json({ ok: true });
   }),

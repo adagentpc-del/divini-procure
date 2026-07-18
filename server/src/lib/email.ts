@@ -54,11 +54,17 @@ function wrapHtml(subject: string, text: string): string {
         : `<p style="margin:0 0 10px">${escapeHtml(line)}</p>`,
     )
     .join("");
+  // CAN-SPAM Act compliance: every commercial email must include the sender's
+  // physical postal address. 15 U.S.C. 7704(a)(5)(A)(iii).
   return `<div style="font-family:Inter,Arial,sans-serif;color:#2c2a26;max-width:560px;margin:0 auto;padding:24px">
   <div style="font-family:Georgia,serif;font-size:22px;color:#123c2e;font-weight:700;margin-bottom:16px">Divini Procure</div>
   <h1 style="font-family:Georgia,serif;font-size:20px;color:#123c2e;font-weight:600;margin:0 0 14px">${escapeHtml(subject)}</h1>
   ${body}
-  <div style="margin-top:22px;border-top:1px solid #e7e1d6;padding-top:14px;font-size:12px;color:#7d776c">Divini Procure by Divini Group</div>
+  <div style="margin-top:22px;border-top:1px solid #e7e1d6;padding-top:14px;font-size:12px;color:#7d776c">
+    Divini Procure by Divini Group &bull; Miami, FL &bull; support@diviniprocure.com<br/>
+    You are receiving this email because you have an account on Divini Procure.
+    To unsubscribe from non-transactional emails, reply with "Unsubscribe" in the subject line.
+  </div>
 </div>`;
 }
 

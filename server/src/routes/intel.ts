@@ -530,15 +530,26 @@ router.get(
     // ---- OPTIONAL LLM narrative (never blocks; deterministic result stands) ----
     let narrative: string | null = null;
     if (llmEnabled()) {
+      // #52: Vendor names must NOT be included verbatim in the LLM prompt --
+      // they are user-controlled strings and could be used for prompt injection.
+      // Replace each vendor name with a stable anonymized label ("Vendor A",
+      // "Vendor B", ...) keyed by vendor_company_id so the LLM output remains
+      // useful without leaking or being influenced by the raw name.
+      const vendorLabel = (id: string): string => {
+        const idx = [...new Set(priced.map((b) => b.vendor_company_id))].indexOf(id);
+        return `Vendor ${String.fromCharCode(65 + Math.min(idx, 25))}`;
+      };
       const summaryInput = {
         category: ctx.category,
         budget: { min: ctx.budgetMin, max: ctx.budgetMax },
-        bids: priced.map((b) => ({ vendor: b.vendor_name, price: Number(b.price), days: b.days })),
+        bids: priced.map((b) => ({ vendor: vendorLabel(b.vendor_company_id), price: Number(b.price), days: b.days })),
         lowest: minP,
         highest: maxP,
         average: Math.round(avg),
         spread_pct: spreadPct,
-        recommended: recommended ? { vendor: recommended.vendor_name, price: Number(recommended.price) } : null,
+        recommended: recommended
+          ? { vendor: vendorLabel(recommended.vendor_company_id), price: Number(recommended.price) }
+          : null,
         savings_opportunity: savings,
       };
       const text = await llmText(

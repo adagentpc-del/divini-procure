@@ -21,6 +21,7 @@ import { getAuth, requireUser } from "../auth.js";
 import { ForbiddenError } from "../db.js";
 import { q1 } from "../pool.js";
 import { refreshCompanyScores } from "../lib/score-refresh.js";
+import { scoreRefreshRateLimit } from "../lib/rateLimit.js";
 
 const h =
   (fn: (req: Request, res: Response) => Promise<unknown>) =>
@@ -46,6 +47,7 @@ const router = Router();
 router.post(
   "/scores/refresh",
   requireUser,
+  scoreRefreshRateLimit,
   h(async (req, res) => {
     const auth = getAuth(req);
     const body = (req.body ?? {}) as Record<string, unknown>;

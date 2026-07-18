@@ -150,6 +150,24 @@ router.post(
       throw new ForbiddenError("only the developer may confirm this award");
     }
 
+    // #53: Validate bid amount against the package budget before confirming.
+    // If the bid price exceeds the package's budget_max, warn (do not block)
+    // so the developer sees a clear flag in the response. A hard block would be
+    // too restrictive (budgets are estimates; developers may approve overages),
+    // but a silent over-budget award is a data-quality gap that should be surfaced.
+    let budgetWarning: string | null = null;
+    const budgetRow = await q1<{ budget_max: number | null }>(
+      `select budget_max from packages where id = $1`,
+      [ctx.package_id],
+    );
+    if (
+      budgetRow?.budget_max != null &&
+      ctx.price != null &&
+      Number(ctx.price) > Number(budgetRow.budget_max)
+    ) {
+      budgetWarning = `Bid amount $${Number(ctx.price).toLocaleString()} exceeds package budget cap $${Number(budgetRow.budget_max).toLocaleString()}. Confirm to proceed or revise the budget.`;
+    }
+
     // Mark the bid awarded if it is not already.
     if (!ctx.awarded) {
       await q(`update bids set awarded = true, status = 'awarded' where id = $1`, [bidId]);
@@ -185,7 +203,7 @@ router.post(
         auth.userId,
       ],
     );
-    res.status(201).json({ purchaseOrder });
+    res.status(201).json({ purchaseOrder, ...(budgetWarning ? { budgetWarning } : {}) });
   }),
 );
 

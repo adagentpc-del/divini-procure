@@ -114,8 +114,15 @@ export async function getUserByVerifyToken(token: string): Promise<UserRow | nul
   return q1<UserRow>(`select * from users where verify_token = $1`, [token]);
 }
 
-export async function getUserByResetToken(token: string): Promise<UserRow | null> {
-  return q1<UserRow>(`select * from users where reset_token = $1`, [token]);
+/**
+ * Look up a user by a password-reset token. The token is SHA-256 hashed before
+ * storage so a database breach does not expose usable reset links.
+ * The raw token (sent in email) is hashed here before the lookup.
+ */
+export async function getUserByResetToken(rawToken: string): Promise<UserRow | null> {
+  const { createHash } = await import("node:crypto");
+  const hashed = createHash("sha256").update(rawToken).digest("hex");
+  return q1<UserRow>(`select * from users where reset_token = $1`, [hashed]);
 }
 
 /**
@@ -193,15 +200,21 @@ export async function setVerifyToken(
   ]);
 }
 
-/** Set a fresh password-reset token. */
+/**
+ * Set a fresh password-reset token. The raw token is SHA-256 hashed before
+ * storage so a database breach does not expose usable links. The raw token is
+ * sent to the user's inbox and never persisted.
+ */
 export async function setResetToken(
   userId: string,
-  token: string,
+  rawToken: string,
   expires: Date,
 ): Promise<void> {
+  const { createHash } = await import("node:crypto");
+  const hashed = createHash("sha256").update(rawToken).digest("hex");
   await q(`update users set reset_token = $2, reset_expires = $3 where id = $1`, [
     userId,
-    token,
+    hashed,
     expires.toISOString(),
   ]);
 }

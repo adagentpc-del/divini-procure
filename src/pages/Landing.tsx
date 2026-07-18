@@ -427,6 +427,29 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* ---------------- FAQ (#16) ---------------- */}
+      <section id="faq">
+        <div className="wrap">
+          <div className="kicker">FAQ</div>
+          <h2>Common questions</h2>
+          <div style={{maxWidth:680,margin:'0 auto',display:'grid',gap:20,textAlign:'left'}}>
+            {[
+              { q: 'Is Divini Procure free for developers?', a: 'Yes. Developers post projects, receive bids, and award contracts at no cost. There are no monthly fees or per-project charges for developers.' },
+              { q: 'How does the success fee work?', a: 'When a vendor wins an awarded contract through Divini Procure, a 2% success fee applies to the award amount, capped at $2,500. There is no fee to browse, bid, or post.' },
+              { q: 'How are vendors verified?', a: 'We confirm license, insurance, and certifications before a vendor can submit bids. Vendors who go further with bonding, financials, and references earn a Verified+ badge.' },
+              { q: 'Can vendors bid for free?', a: 'Yes. Vendors can build a profile and submit up to 5 bids per quarter at no cost. Vendor Pro ($149/month) unlocks unlimited bids, project alerts, and priority matching.' },
+              { q: 'Is my data secure?', a: 'Yes. All data is encrypted in transit and at rest. Role-based access controls ensure developers only see their own projects, and vendors only see their own bids.' },
+              { q: 'What markets does Divini Procure serve?', a: 'Divini Procure currently focuses on real estate development and construction projects. We match developers with verified trade vendors, specialty contractors, and suppliers.' },
+            ].map(({ q: fq, a }) => (
+              <div key={fq} style={{borderBottom:'1px solid rgba(255,255,255,.08)',paddingBottom:16}}>
+                <h3 style={{fontSize:15,fontWeight:600,marginBottom:6}}>{fq}</h3>
+                <p style={{fontSize:14,opacity:.78,margin:0,lineHeight:1.65}}>{a}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
       {/* ---------------- CLOSER ---------------- */}
       <section>
         <div className="wrap">

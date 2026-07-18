@@ -89,8 +89,27 @@ router.get(
       building: { id: _bid, name: _bname, location: _bloc, company_id: _bcompany },
     };
 
-    // All active bids on this package (buyer sees every vendor's bid). The
-    // comparison columns are nullable add-ons from schema-quote-compare.sql.
+    // #49: When this package has any bid_invites rows, ONLY invited vendors'
+    // bids are included in the comparison. Uninvited bids may result from a
+    // vendor finding an open package and submitting without an invite -- they
+    // must not appear in the buyer's comparison view when a curated invite list
+    // exists. When no invites exist (open bidding), all submitted bids appear.
+    const inviteCount = (
+      await q1<{ n: number }>(
+        `select count(*)::int as n from bid_invites where package_id = $1`,
+        [packageId],
+      )
+    )?.n ?? 0;
+
+    const inviteFilter = inviteCount > 0
+      ? `and exists (
+           select 1 from bid_invites bi
+            where bi.package_id = bd.package_id
+              and bi.vendor_company_id = bd.vendor_company_id
+         )`
+      : "";
+
+    // All active bids on this package (buyer sees every invited vendor's bid).
     // Withdrawn and rejected bids are excluded -- they represent vendor
     // retractions or disqualifications and must not influence the ranking.
     const bidRows = await q<any>(
@@ -103,6 +122,7 @@ router.get(
         where bd.package_id = $1
           and coalesce(bd.is_draft, false) = false
           and coalesce(bd.status, 'submitted') not in ('withdrawn', 'rejected')
+          ${inviteFilter}
         order by bd.created_at`,
       [packageId],
     );

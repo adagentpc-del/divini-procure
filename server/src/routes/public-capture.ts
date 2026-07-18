@@ -17,6 +17,7 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { getAuth, requireUser } from "../auth.js";
 import { q1 } from "../pool.js";
+import { inviteLookupRateLimit } from "../lib/rateLimit.js";
 
 const h =
   (fn: (req: Request, res: Response) => Promise<unknown>) =>
@@ -29,12 +30,13 @@ const router = Router();
 // PUBLIC lookups (no auth) - drive the /join and /r landing pages.
 // ===========================================================================
 
-// GET /public/invite/:code
+// GET /public/invite/:code  (#27: rate-limited to prevent code enumeration)
 //   -> { found, email, companyKind, status, companyName, companyWebsite, prefill }
 // Returns only enough to render the landing / claim page; never leaks
 // created_by or other internal fields.
 router.get(
   "/public/invite/:code",
+  inviteLookupRateLimit,
   h(async (req, res) => {
     const row = await q1<{
       email: string | null;
@@ -66,6 +68,7 @@ router.get(
 // Only active partners are honored; disabled partners read as not-found.
 router.get(
   "/public/referral/:code",
+  inviteLookupRateLimit,
   h(async (req, res) => {
     const row = await q1<{ name: string; status: string | null }>(
       `select name, status from referral_partners where referral_code = $1`,
