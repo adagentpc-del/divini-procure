@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import LanguageSwitcher from '../components/LanguageSwitcher';
@@ -24,8 +24,14 @@ export default function Register() {
   const [sent, setSent] = useState(false);
   const [resent, setResent] = useState(false);
   const [agreed, setAgreed] = useState(false);
+  // Anti-bot: record when the form was rendered so we can reject submissions
+  // that arrive suspiciously quickly (bots submit in milliseconds).
+  const renderTimeRef = useRef<number>(Date.now());
+  // Anti-bot: honeypot field value -- must remain empty for real users.
+  const [honeypot, setHoneypot] = useState('');
 
   useEffect(() => {
+    renderTimeRef.current = Date.now();
     const e = readInviteEmail();
     if (e) setEmail(e);
   }, []);
@@ -33,12 +39,16 @@ export default function Register() {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setErr('');
+    // Anti-bot: reject if honeypot field is filled (bots fill every visible field).
+    if (honeypot) return;
+    // Anti-bot: reject if form was submitted in under 1500ms (bot speed).
+    if (Date.now() - renderTimeRef.current < 1500) return;
     if (password !== confirm) { setErr('Passwords do not match.'); return; }
     if (password.length < 8) { setErr('Password must be at least 8 characters.'); return; }
     if (!agreed) { setErr('Please agree to the Terms, Privacy, Payment, and Non-Circumvention policies to continue.'); return; }
     setBusy(true);
     try {
-      await createAccount(email.trim(), password, confirm, agreed);
+      await createAccount(email.trim(), password, confirm, agreed, honeypot);
       setSent(true);
     } catch (e: any) {
       setErr(e?.message ?? 'Could not create your account.');
@@ -82,9 +92,14 @@ export default function Register() {
           </div>
         </div>
 
-        {err && <div className="err">{err}</div>}
+        {err && <div className="err" role="alert" aria-live="assertive">{err}</div>}
 
         <form onSubmit={submit}>
+          {/* Anti-bot honeypot: hidden from real users via CSS; bots fill it and are silently rejected. */}
+          <div style={{ position: 'absolute', left: '-9999px', width: 1, height: 1, overflow: 'hidden' }} aria-hidden="true">
+            <label htmlFor="reg-website">Website</label>
+            <input id="reg-website" type="text" name="website" tabIndex={-1} autoComplete="off" value={honeypot} onChange={(e) => setHoneypot(e.target.value)} />
+          </div>
           <div className="field">
             <label htmlFor="reg-email">Email</label>
             <input id="reg-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required placeholder="you@company.com" autoComplete="email" />

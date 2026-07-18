@@ -16,7 +16,10 @@
 export const LLM_PROVIDER = (process.env.LLM_PROVIDER || "").toLowerCase(); // "ollama" | "openai-compat"
 export const OLLAMA_URL = (process.env.OLLAMA_URL || "http://127.0.0.1:11434").replace(/\/$/, "");
 export const LLM_MODEL = process.env.LLM_MODEL || "llama3.1";
-export const LLM_API_KEY = process.env.LLM_API_KEY || "";
+// LLM_API_KEY is intentionally NOT exported: it is an API credential and must
+// stay private to this module. Exporting it would allow other modules to log or
+// leak it accidentally. All callers use llmComplete/llmText/llmJson instead.
+const LLM_API_KEY = process.env.LLM_API_KEY || "";
 export const LLM_BASE_URL = (process.env.LLM_BASE_URL || "").replace(/\/$/, "");
 
 /**

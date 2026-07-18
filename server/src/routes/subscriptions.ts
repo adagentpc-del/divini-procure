@@ -46,6 +46,7 @@ import {
   allLimits,
   type Tier,
 } from "../lib/entitlements.js";
+import { sendEmail } from "../lib/email.js";
 
 /** Vendor-facing self-serve tiers (the "upgrade to Pro / buy Verified+" set). */
 const SELF_SERVE_TIER_KEYS = new Set(["vendor_pro", "verified_plus", "vendor_featured"]);
@@ -712,6 +713,38 @@ router.post(
                 where company_id = $1`,
               [companyId, subId, custId],
             );
+          }
+          // Send a confirmation email to the company owner. Best-effort: a
+          // failure here must never fail the webhook response (Stripe would retry).
+          try {
+            const owner = await q1<{ email: string; name: string | null }>(
+              `select u.email, c.name
+                 from company_members cm
+                 join users u on u.id = cm.user_id
+                 join companies c on c.id = cm.company_id
+                where cm.company_id = $1
+                  and cm.role = 'owner'
+                order by cm.created_at asc
+                limit 1`,
+              [companyId],
+            );
+            if (owner) {
+              await sendEmail({
+                to: owner.email,
+                subject: "Your Divini Procure subscription is active",
+                text:
+                  `Hi${owner.name ? ` from ${owner.name}` : ""},\n\n` +
+                  `Your subscription to the ${tier.name} plan is now active.\n\n` +
+                  `You can manage your plan at any time from Settings in the Divini Procure app.\n\n` +
+                  `Thank you for using Divini Procure.\n\n` +
+                  `--\n` +
+                  `Divini Procure\n` +
+                  `support@diviniprocure.com\n` +
+                  `9169 W State St #2739, Garden City, ID 83714`,
+              });
+            }
+          } catch (emailErr) {
+            console.warn("[webhook] checkout confirmation email failed:", (emailErr as Error).message);
           }
           break;
         }

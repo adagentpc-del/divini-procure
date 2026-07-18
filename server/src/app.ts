@@ -53,7 +53,8 @@ app.use(
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        scriptSrc: ["'self'"],
+        // Stripe.js must be loaded from js.stripe.com (their CDN requirement).
+        scriptSrc: ["'self'", "https://js.stripe.com"],
         styleSrc: ["'self'", "'unsafe-inline'"], // allow CSS-in-JS / inline styles from React
         imgSrc: ["'self'", "data:", "blob:"],
         fontSrc: ["'self'"],
@@ -68,7 +69,13 @@ app.use(
           ...(process.env.VITE_SUPABASE_URL
             ? [process.env.VITE_SUPABASE_URL.replace(/^https?:/, "wss:")]
             : []),
+          // Stripe.js makes XHR/fetch calls to api.stripe.com for payment
+          // tokenisation and 3DS challenges.
+          "https://api.stripe.com",
+          "https://errors.stripe.com",
         ],
+        // Stripe payment iframes (card element, 3DS) are hosted on js.stripe.com.
+        frameSrc: ["https://js.stripe.com", "https://hooks.stripe.com"],
         objectSrc: ["'none'"],
         baseUri: ["'self'"],
         formAction: ["'self'"],

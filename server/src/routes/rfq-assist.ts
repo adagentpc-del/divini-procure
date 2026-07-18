@@ -295,9 +295,35 @@ router.post(
     if (!CATEGORIES.has(category)) {
       return res.status(400).json({ error: "invalid category" });
     }
-    const ext = (file.originalname.split(".").pop() ?? "").toLowerCase();
+    // Sanitize filename: strip path traversal characters (../, ..\, leading
+    // slashes) and any non-printable chars. Keep only the basename portion.
+    // This prevents a crafted filename from escaping the storage key path or
+    // storing surprising values in the DB.
+    const rawName = file.originalname;
+    const baseName = rawName
+      .replace(/\\/g, "/")          // normalize backslashes
+      .split("/").pop()             // take basename only (drop any directory)!
+      || "upload";
+    const safeName = baseName
+      .replace(/\.\./g, "")        // remove .. sequences
+      .replace(/[^\w.\-() ]/g, "_") // allow word chars, dots, dashes, parens, spaces
+      .slice(0, 240)               // hard cap
+      || "upload";
+
+    const ext = (safeName.split(".").pop() ?? "").toLowerCase();
     if (!ALLOWED_EXT.has(ext)) {
       return res.status(400).json({ error: `file type .${ext} not allowed` });
+    }
+    // MIME type validation (defense in depth alongside extension check).
+    // Allow empty/octet-stream since some OS/browsers report that for CAD files.
+    const ALLOWED_MIME_PREFIXES = [
+      "image/", "application/pdf", "application/msword",
+      "application/vnd.openxmlformats",  // .docx, .xlsx
+      "text/", "application/octet-stream", "",
+    ];
+    const mime = (file.mimetype || "").toLowerCase();
+    if (!ALLOWED_MIME_PREFIXES.some((p) => mime.startsWith(p))) {
+      return res.status(400).json({ error: "file MIME type not permitted" });
     }
     if (file.size > MAX_UPLOAD_BYTES) {
       return res.status(400).json({ error: "file too large" });
@@ -320,7 +346,7 @@ router.post(
       companyId,
       packageId,
       buildingId: pkg?.building_id ?? null,
-      fileName: file.originalname,
+      fileName: safeName,
     });
     const doc = await q1(
       `insert into documents (company_id, building_id, package_id, name, kind, category, storage_path, size, uploaded_by)
@@ -329,7 +355,7 @@ router.post(
         companyId,
         pkg?.building_id ?? null,
         packageId,
-        file.originalname,
+        safeName,
         ext,
         category,
         storageKey,
@@ -338,6 +364,22 @@ router.post(
       ],
     );
     writeFile(storageKey, file.buffer);
+    // ISO 27001 / SOC 2 audit log: structured record of every file upload.
+    console.info(
+      JSON.stringify({
+        audit: "file_upload",
+        userId: auth.userId,
+        companyId,
+        packageId,
+        originalName: rawName,
+        safeName,
+        ext,
+        mime,
+        sizeBytes: file.size,
+        storageKey,
+        correlationId: (req as any).correlationId ?? null,
+      }),
+    );
     res.status(201).json(doc);
   }),
 );

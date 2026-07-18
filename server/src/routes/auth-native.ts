@@ -154,11 +154,19 @@ router.post(
   "/auth/register",
   registerRateLimit,
   h(async (req, res) => {
-    const { email, password, passwordConfirm } = (req.body ?? {}) as {
+    const { email, password, passwordConfirm, website } = (req.body ?? {}) as {
       email?: string;
       password?: string;
       passwordConfirm?: string;
+      website?: string;
     };
+    // Anti-bot: honeypot field (named "website") must be empty. Real users never
+    // fill it because it is hidden via CSS. Bots that fill every visible field will
+    // populate it. Silently accept but do nothing (do not tell the bot it failed).
+    if (typeof website === "string" && website.trim().length > 0) {
+      // Return a plausible-looking success to avoid fingerprinting.
+      return res.json({ ok: true, needsVerification: true });
+    }
     if (!isValidEmail(email)) {
       return res.status(400).json({ error: "Enter a valid email address." });
     }

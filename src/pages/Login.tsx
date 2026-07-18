@@ -49,7 +49,7 @@ export default function Login() {
           </div>
         </div>
 
-        {err && <div className="err">{err}</div>}
+        {err && <div className="err" role="alert" aria-live="assertive">{err}</div>}
         {needsVerify && (
           <div className="note" style={{ marginBottom: 12 }}>
             {resent ? (
@@ -67,12 +67,12 @@ export default function Login() {
 
         <form onSubmit={submit}>
           <div className="field">
-            <label>Email</label>
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required placeholder="you@company.com" autoComplete="email" />
+            <label htmlFor="login-email">Email</label>
+            <input id="login-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required placeholder="you@company.com" autoComplete="email" />
           </div>
           <div className="field">
-            <label>Password</label>
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required placeholder="Your password" autoComplete="current-password" />
+            <label htmlFor="login-password">Password</label>
+            <input id="login-password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required placeholder="Your password" autoComplete="current-password" />
           </div>
           <button className="btn primary block lg" disabled={busy}>{busy ? 'Signing in...' : 'Sign in'}</button>
         </form>

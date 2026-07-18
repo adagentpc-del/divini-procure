@@ -59,7 +59,7 @@ type AuthState = {
   loading: boolean;
   refreshCompany: () => Promise<void>;
   // Native auth actions.
-  createAccount: (email: string, password: string, passwordConfirm: string, agreed?: boolean) => Promise<RegisterResult>;
+  createAccount: (email: string, password: string, passwordConfirm: string, agreed?: boolean, _hp?: string) => Promise<RegisterResult>;
   signIn: (email: string, password: string) => Promise<void>;
   verifyEmail: (token: string) => Promise<void>;
   forgotPassword: (email: string) => Promise<void>;
@@ -121,8 +121,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     password: string,
     passwordConfirm: string,
     agreed = false,
+    _hp = '',
   ): Promise<RegisterResult> => {
-    return apiSend<RegisterResult>('POST', '/auth/register', { email, password, passwordConfirm, agreed });
+    // Send the honeypot value to the backend for server-side rejection.
+    // The field name is intentionally generic so it looks like a real field.
+    return apiSend<RegisterResult>('POST', '/auth/register', { email, password, passwordConfirm, agreed, website: _hp });
   };
 
   const signIn = async (email: string, password: string): Promise<void> => {

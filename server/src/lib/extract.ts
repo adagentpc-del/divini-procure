@@ -88,6 +88,41 @@ async function fetchTextCapped(url: string): Promise<string | null> {
   }
 }
 
+/**
+ * Sanitize text sourced from external URLs before passing it to an LLM.
+ * Removes common prompt-injection markers so a malicious page cannot hijack
+ * the model's system role or override its instructions.
+ *
+ * Defense-in-depth: the system prompt already instructs the model to only
+ * restate what it sees. This layer removes the tokens before they reach the
+ * model context at all.
+ */
+export function sanitizeForLlm(text: string): string {
+  return text
+    // OpenAI / llama.cpp special tokens
+    .replace(/<\|im_start\|>/gi, " ")
+    .replace(/<\|im_end\|>/gi, " ")
+    .replace(/<\|system\|>/gi, " ")
+    .replace(/<\|user\|>/gi, " ")
+    .replace(/<\|assistant\|>/gi, " ")
+    .replace(/<\|endoftext\|>/gi, " ")
+    // Markdown-style role headers that injection attempts commonly use
+    .replace(/^#{1,4}\s*(system|user|assistant|instruction|prompt)\b.*$/gim, " ")
+    .replace(/\[(system|user|assistant|instruction)\]/gi, " ")
+    // Natural-language override phrases
+    .replace(/ignore\s+all\s+previous\s+instructions?/gi, " ")
+    .replace(/ignore\s+the\s+above\s+instructions?/gi, " ")
+    .replace(/disregard\s+(all\s+)?(previous|above|prior)\s+instructions?/gi, " ")
+    .replace(/forget\s+(all\s+)?(previous|above|prior)\s+instructions?/gi, " ")
+    .replace(/new\s+instructions?:/gi, " ")
+    .replace(/override\s+instructions?/gi, " ")
+    .replace(/system\s+prompt:/gi, " ")
+    .replace(/you\s+are\s+now\s+(a|an)\s+/gi, " ")
+    // Collapse any resulting extra whitespace
+    .replace(/[ \t]{3,}/g, "  ")
+    .trim();
+}
+
 /** Strip HTML to readable text. Drops scripts, styles, and tags; collapses space. */
 export function htmlToText(html: string): string {
   const noScript = html
@@ -123,7 +158,9 @@ export async function extractProfileFromUrl(url: string): Promise<ExtractedProfi
 
   const raw = await fetchTextCapped(clean);
   if (!raw) return null;
-  const text = htmlToText(raw);
+  // htmlToText first, then sanitizeForLlm to strip any prompt-injection markers
+  // that a malicious page might embed in its visible text content.
+  const text = sanitizeForLlm(htmlToText(raw));
   if (text.length < 40) return null;
 
   const system =
