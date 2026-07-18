@@ -178,7 +178,11 @@ router.patch(
       req.params.id,
     ]);
     if (!existing) throw new NotFoundError();
-    await assertMemberOrAdmin(auth.userId, auth.isAdmin, existing.company_id);
+    // Catch 403 from assertMemberOrAdmin and surface as 404 to prevent
+    // enumeration: an attacker must not learn whether an ID exists vs. whether
+    // they are simply not authorised to access it.
+    try { await assertMemberOrAdmin(auth.userId, auth.isAdmin, existing.company_id); }
+    catch { throw new NotFoundError(); }
 
     const body = (req.body ?? {}) as Record<string, unknown>;
     const teaser = await q1<any>(
@@ -389,7 +393,8 @@ router.patch(
       req.params.id,
     ]);
     if (!existing) throw new NotFoundError();
-    await assertMemberOrAdmin(auth.userId, auth.isAdmin, existing.company_id);
+    try { await assertMemberOrAdmin(auth.userId, auth.isAdmin, existing.company_id); }
+    catch { throw new NotFoundError(); }
 
     const body = (req.body ?? {}) as Record<string, unknown>;
     const capacity =
