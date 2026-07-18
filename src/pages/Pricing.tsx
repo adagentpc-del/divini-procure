@@ -60,13 +60,14 @@ const PLANS: Plan[] = [
   },
   {
     name: 'Featured Vendor',
-    price: 'Add-on',
+    price: '$49',
+    cadence: '/mo',
     who: 'Vendors who want top placement',
     features: [
       'Top placement in search and matches',
       'Featured badge across the marketplace',
       'More visibility to active developers',
-      'Stacks on top of any plan',
+      'Add-on to Vendor Free or Vendor Pro',
     ],
   },
 ];

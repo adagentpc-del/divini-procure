@@ -36,11 +36,24 @@ export default function Privacy() {
         <li>To send transactional emails (verification, password reset, purchase confirmation). Marketing emails include an unsubscribe link.</li>
       </ul>
 
+      <h2 style={h2}>Vendor data imported by developers</h2>
+      <p>
+        Developers (buyers) may import a list of existing vendor contacts via CSV upload. When a developer
+        imports vendor contact data (such as company name, email address, and contact name), they attest
+        at the time of import that they have an existing professional business relationship with each
+        vendor and a legitimate basis for adding that vendor to the platform. Divini Procure uses this
+        data solely to create a starter vendor profile and to facilitate the procurement relationship
+        the developer has attested to. Newly created vendor profiles are private within that developer's
+        account until the vendor claims and activates their profile. Vendors may contact us at{' '}
+        <a href="mailto:privacy@diviniprocure.com" style={{ color: '#1f6f50' }}>privacy@diviniprocure.com</a>{' '}
+        to request removal of an imported profile.
+      </p>
+
       <h2 style={h2}>How it's stored and who processes it</h2>
       <p>
         Your data is stored with our infrastructure providers, who process it on our behalf:
         <strong> Supabase</strong> (database and file storage), <strong>Vercel</strong> (web hosting),
-        and <strong>PayPal</strong> (subscription and platform payments — we do not store full card or bank details).
+        and <strong>Stripe</strong> (subscription and platform payments — we do not store full card or bank details).
         We do not sell your personal information. We do not share it with third parties for their own marketing.
       </p>
 

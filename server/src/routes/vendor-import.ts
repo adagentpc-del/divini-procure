@@ -210,7 +210,20 @@ router.post(
   requireUser,
   h(async (req, res) => {
     const auth = getAuth(req);
-    const { developerCompanyId, projectId, rows } = (req.body ?? {}) as Record<string, unknown>;
+    const { developerCompanyId, projectId, rows, consentAcknowledged } = (req.body ?? {}) as Record<string, unknown>;
+
+    // #14 PRIVACY CONSENT GATE -- the caller must explicitly pass
+    // consentAcknowledged: true to attest that they have a legitimate business
+    // basis (existing professional relationship) for importing each vendor's
+    // name, email, and contact details, and that importing does not constitute
+    // unsolicited contact or marketing. This mirrors the CCPA "legitimate
+    // interest" and CAN-SPAM requirements for B2B data use.
+    if (consentAcknowledged !== true) {
+      return res.status(400).json({
+        error:
+          "consentAcknowledged required. By passing consentAcknowledged: true you attest that you have an existing professional relationship with each vendor in this list and a legitimate business basis for importing their contact details into Divini Procure.",
+      });
+    }
 
     if (!developerCompanyId) {
       return res.status(400).json({ error: "developerCompanyId required" });
