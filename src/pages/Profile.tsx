@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../lib/auth';
 import { getVendorProfile, updateCompany, deleteMyAccount, exportMyData, transferOwnership } from '../lib/db';
+import { useToast } from '../lib/toast';
 
 export default function Profile() {
+  const { toast } = useToast();
   const { company, refreshCompany, signOut } = useAuth();
   const [name, setName] = useState('');
   const [contact, setContact] = useState('');
@@ -32,9 +34,18 @@ export default function Profile() {
     e.preventDefault();
     if (!company) return;
     setBusy(true); setMsg('');
-    await updateCompany(company.id, { name, contact_name: contact, phone, city });
-    await refreshCompany();
-    setMsg('Saved.'); setBusy(false);
+    try {
+      await updateCompany(company.id, { name, contact_name: contact, phone, city });
+      await refreshCompany();
+      setMsg('Saved.');
+      toast('Company profile saved.', 'success');
+    } catch (err: any) {
+      const msg = err?.message ?? 'Could not save.';
+      setMsg(msg);
+      toast(msg, 'error');
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function transfer(e: React.FormEvent) {

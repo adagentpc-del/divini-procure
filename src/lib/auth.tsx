@@ -31,7 +31,7 @@ async function runSignupAttribution(): Promise<void> {
 }
 
 export type Company = {
-  id: string; kind: 'buyer' | 'vendor'; name: string;
+  id: string; kind: 'buyer' | 'vendor' | 'investor'; name: string;
   contact_name?: string; contact_title?: string; phone?: string; email?: string;
   city?: string; region?: string; logo_url?: string; rating?: number;
 };

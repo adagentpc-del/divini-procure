@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { apiGet, apiSend } from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { useToast } from '../lib/toast';
 
 // ---- shapes returned by the /award API -------------------------------------
 type PurchaseOrder = {
@@ -62,6 +63,7 @@ const statusBadge = (s: string) => {
 };
 
 export default function AwardWorkflow() {
+  const { toast } = useToast();
   const { company } = useAuth();
   const nav = useNavigate();
   const [params, setParams] = useSearchParams();
@@ -136,10 +138,13 @@ export default function AwardWorkflow() {
       const r = await apiSend<{ purchaseOrder: PurchaseOrder }>('POST', '/award/confirm', { bidId: bidId.trim() });
       setBidId('');
       setOk('Award confirmed. Draft purchase order created.');
+      toast('Award confirmed. Draft PO created.', 'success');
       await loadList();
       await openPo(r.purchaseOrder.id);
     } catch (e: any) {
-      setErr(e?.message || 'Failed to confirm award.');
+      const msg = e?.message || 'Failed to confirm award.';
+      setErr(msg);
+      toast(msg, 'error');
     } finally {
       setBusy(false);
     }

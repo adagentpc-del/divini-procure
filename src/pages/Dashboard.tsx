@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
+import OnboardingChecklist from '../components/OnboardingChecklist';
+import { useToast } from '../lib/toast';
 import {
   getBuildings, getOpenPackages, getMyBids, getVendorProfile,
   listEngagements, createEngagement, updateEngagement,
@@ -23,6 +25,7 @@ function money(cents?: number | null) {
 }
 
 function CurrentWork() {
+  const { toast } = useToast();
   const [rows, setRows] = useState<Engagement[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
@@ -52,7 +55,11 @@ function CurrentWork() {
       setForm({ title: '', type: '', counterparty: '', value: '', location: '' });
       setOpen(false);
       await load();
-    } catch (e: any) { setErr(e.message ?? 'Could not add.'); }
+      toast('Engagement added.', 'success');
+    } catch (e: any) {
+      setErr(e.message ?? 'Could not add.');
+      toast(e.message ?? 'Could not add.', 'error');
+    }
     finally { setBusy(false); }
   }
 
@@ -60,7 +67,11 @@ function CurrentWork() {
     try {
       const updated = await updateEngagement(id, { status });
       setRows(rs => rs.map(r => (r.id === id ? updated : r)));
-    } catch (e: any) { setErr(e.message ?? 'Could not update.'); }
+      toast('Status updated.', 'success');
+    } catch (e: any) {
+      setErr(e.message ?? 'Could not update.');
+      toast(e.message ?? 'Could not update.', 'error');
+    }
   }
 
   return (
@@ -352,18 +363,28 @@ export default function Dashboard() {
 
   if (!company) return null;
   const isBuyer = company.kind === 'buyer';
+  const isVendor = company.kind === 'vendor';
+  const isInvestor = company.kind === 'investor';
+
+  const subLabel = isInvestor
+    ? 'Your investment dashboard'
+    : isBuyer
+    ? 'Your procurement command center'
+    : 'Your vendor workspace';
 
   return (
     <>
       <div className="page-head">
         <div>
           <h1>Welcome, {company.name}</h1>
-          <div className="sub">{isBuyer ? 'Your procurement command center' : 'Your vendor workspace'}</div>
+          <div className="sub">{subLabel}</div>
         </div>
-        {isBuyer
-          ? <button className="btn primary" onClick={() => nav('/projects')}>+ Post a Project</button>
-          : <button className="btn primary" onClick={() => nav('/search')}>Find bids</button>}
+        {isBuyer && <button className="btn primary" onClick={() => nav('/projects')}>+ Post a Project</button>}
+        {isVendor && <button className="btn primary" onClick={() => nav('/search')}>Find bids</button>}
+        {isInvestor && <button className="btn primary" onClick={() => nav('/app/deals')}>Browse deals</button>}
       </div>
+
+      <OnboardingChecklist />
 
       <div className="grid cards3 kpi">
         {isBuyer ? (
