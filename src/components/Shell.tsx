@@ -118,10 +118,10 @@ const VENDOR_SECTIONS: Section[] = [
 // INVESTOR — dedicated nav focused on deals, watchlists, and introductions
 const INVESTOR_SECTIONS: Section[] = [
   { label: 'Workspace', items: [
-    ['/app',     'Dashboard', '▦'],
-    ['/app/deals','Deal Flow','⬡'],
-    ['/investor-watchlist','Watchlist','◉'],
-    ['/teasers', 'Teasers',   '◷'],
+    ['/app',              'Dashboard',    '▦'],
+    ['/investor',         'Investor Hub', '⬡'],
+    ['/investor-watchlist','Watchlist',   '◉'],
+    ['/opportunities',    'Browse Deals', '◷'],
   ]},
   { label: 'Sourcing', items: [
     ['/my-introductions',    'Introductions',    '✦'],
@@ -178,9 +178,9 @@ const MOBILE: Record<string, Item[]> = {
   ],
   investor: [
     ['/app',               'Home',     '▦'],
-    ['/app/deals',         'Deals',    '⬡'],
+    ['/investor',          'Hub',      '⬡'],
     ['/investor-watchlist','Watchlist','◉'],
-    ['/teasers',           'Teasers',  '◷'],
+    ['/opportunities',     'Deals',    '◷'],
     ['/profile',           'Account',  '⚙'],
   ],
 };

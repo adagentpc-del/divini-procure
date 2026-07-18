@@ -170,6 +170,10 @@ function Routed() {
         <Route path="/investor-onboarding" element={<Gate><InvestorOnboarding /></Gate>} />
         <Route path="/trust-profile" element={<Gate><TrustProfile /></Gate>} />
         <Route path="/investor" element={<Gate><InvestorDashboard /></Gate>} />
+        {/* Alias used by investor nav and dashboard CTAs */}
+        <Route path="/app/deals" element={<Gate><InvestorDashboard /></Gate>} />
+        {/* Alias used by buyer nav and onboarding checklist */}
+        <Route path="/app/marketplace" element={<Gate><SearchBids /></Gate>} />
         <Route path="/my-introductions" element={<Gate><MyIntroductions /></Gate>} />
         <Route path="/subscription" element={<Gate><Subscription /></Gate>} />
         <Route path="/vendor-pricing" element={<Gate><VendorPricing /></Gate>} />

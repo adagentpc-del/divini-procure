@@ -2,6 +2,8 @@
  * Investor Watchlist - Deal Alerts page
  */
 import { useEffect, useState } from 'react';
+import { apiGet, apiSend } from '../lib/api';
+import { useToast } from '../lib/toast';
 
 interface WatchlistItem {
   id: string;
@@ -31,9 +33,11 @@ const dollars = (c: number | null) =>
 const ASSET_CLASSES = ['multifamily', 'office', 'retail', 'industrial', 'mixed-use', 'other'];
 
 export default function InvestorWatchlist() {
+  const { toast } = useToast();
   const [items, setItems] = useState<WatchlistItem[]>([]);
   const [matches, setMatches] = useState<MatchedDeal[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadErr, setLoadErr] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
@@ -47,19 +51,18 @@ export default function InvestorWatchlist() {
 
   const load = async () => {
     setLoading(true);
+    setLoadErr('');
     try {
-      const [wRes, mRes] = await Promise.all([
-        fetch('/api/watchlist'),
-        fetch('/api/watchlist/matches'),
+      const [wData, mData] = await Promise.all([
+        apiGet<{ items: WatchlistItem[] }>('/watchlist'),
+        apiGet<{ matches: MatchedDeal[] }>('/watchlist/matches'),
       ]);
-      if (wRes.ok) {
-        const d = await wRes.json();
-        setItems(d.items ?? []);
-      }
-      if (mRes.ok) {
-        const d = await mRes.json();
-        setMatches(d.matches ?? []);
-      }
+      setItems(wData.items ?? []);
+      setMatches(mData.matches ?? []);
+    } catch (e: any) {
+      const msg = e?.message ?? 'Could not load watchlist. Please try again.';
+      setLoadErr(msg);
+      toast(msg, 'error');
     } finally {
       setLoading(false);
     }
@@ -68,8 +71,13 @@ export default function InvestorWatchlist() {
   useEffect(() => { load(); }, []);
 
   const handleDelete = async (id: string) => {
-    await fetch(`/api/watchlist/${id}`, { method: 'DELETE' });
-    setItems(prev => prev.filter(i => i.id !== id));
+    try {
+      await apiSend('DELETE', `/watchlist/${id}`);
+      setItems(prev => prev.filter(i => i.id !== id));
+      toast('Alert removed.', 'success');
+    } catch (e: any) {
+      toast(e?.message ?? 'Could not remove alert.', 'error');
+    }
   };
 
   const handleAdd = async (e: React.FormEvent) => {
@@ -83,18 +91,14 @@ export default function InvestorWatchlist() {
       if (form.minTargetReturn) body.minTargetReturn = Number(form.minTargetReturn);
       if (form.maxMinInvestmentDollars) body.maxMinInvestmentCents = Math.round(Number(form.maxMinInvestmentDollars) * 100);
 
-      const res = await fetch('/api/watchlist', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      if (res.ok) {
-        const d = await res.json();
-        setItems(prev => [d.item, ...prev]);
-        setForm({ label: '', assetClass: '', location: '', minTargetReturn: '', maxMinInvestmentDollars: '', notifyEmail: true });
-        setShowForm(false);
-        load(); // refresh matches
-      }
+      const d = await apiSend<{ item: WatchlistItem }>('POST', '/watchlist', body);
+      setItems(prev => [d.item, ...prev]);
+      setForm({ label: '', assetClass: '', location: '', minTargetReturn: '', maxMinInvestmentDollars: '', notifyEmail: true });
+      setShowForm(false);
+      toast('Alert saved. You\'ll be notified when matching deals are listed.', 'success');
+      load(); // refresh matches
+    } catch (e: any) {
+      toast(e?.message ?? 'Could not save alert. Please try again.', 'error');
     } finally {
       setSaving(false);
     }
@@ -196,7 +200,11 @@ export default function InvestorWatchlist() {
 
         {loading && <p style={{ color: 'var(--ink)', opacity: 0.5 }}>Loading...</p>}
 
-        {!loading && items.length === 0 && !showForm && (
+        {loadErr && !loading && (
+          <div className="err" style={{ marginBottom: '1rem' }}>{loadErr}</div>
+        )}
+
+        {!loading && items.length === 0 && !showForm && !loadErr && (
           <div className="card" style={{ textAlign: 'center', padding: '2.5rem' }}>
             <p style={{ color: 'var(--ink)', opacity: 0.6 }}>
               Set up your first alert to get notified when matching deals are listed.
@@ -222,6 +230,7 @@ export default function InvestorWatchlist() {
               onClick={() => handleDelete(item.id)}
               style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink)', opacity: 0.4, fontSize: '1.1rem', padding: '0.25rem', lineHeight: 1 }}
               title="Delete alert"
+              aria-label="Delete alert"
             >
               ×
             </button>
