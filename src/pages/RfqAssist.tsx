@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
+import { useToast } from '../lib/toast';
 import {
   getPackage,
   getRfqDocuments, uploadRfqDocument,
@@ -26,6 +27,7 @@ export default function RfqAssist() {
   const { id } = useParams();
   const nav = useNavigate();
   const { company } = useAuth();
+  const { toast } = useToast();
 
   const [p, setP] = useState<any>(null);
   const [docs, setDocs] = useState<any[]>([]);
@@ -63,7 +65,12 @@ export default function RfqAssist() {
       }
       setDocs(await getRfqDocuments(id));
       setMsg('Files uploaded.');
-    } catch (e: any) { setErr(e.message ?? 'Upload failed.'); }
+      toast('Files uploaded.', 'success');
+    } catch (e: any) {
+      const m = e.message ?? 'Upload failed.';
+      setErr(m);
+      toast(m, 'error');
+    }
     finally { setBusy(false); if (fileRef.current) fileRef.current.value = ''; }
   }
 
@@ -78,8 +85,14 @@ export default function RfqAssist() {
     try {
       const { suggestions, sourceUsedDocText } = await suggestRfqLines(id, { needs, specText });
       setRows(suggestions.map(s => ({ ...s, _accept: true })));
-      setMsg(`Generated ${suggestions.length} suggestion${suggestions.length === 1 ? '' : 's'}${sourceUsedDocText ? ' (incl. text from spec docs)' : ''}.`);
-    } catch (e: any) { setErr(e.message ?? 'Could not generate suggestions.'); }
+      const m = `Generated ${suggestions.length} suggestion${suggestions.length === 1 ? '' : 's'}${sourceUsedDocText ? ' (incl. text from spec docs)' : ''}.`;
+      setMsg(m);
+      toast(m, 'success');
+    } catch (e: any) {
+      const m = e.message ?? 'Could not generate suggestions.';
+      setErr(m);
+      toast(m, 'error');
+    }
     finally { setSuggesting(false); }
   }
 
@@ -103,9 +116,15 @@ export default function RfqAssist() {
       // Prefer id-based apply (marks suggestions applied); if none have ids, send lines.
       const payload = lineIds.length ? { lineIds } : { lines };
       const { applied } = await applyRfqLines(id, payload);
-      setMsg(`Added ${applied} line item${applied === 1 ? '' : 's'} to the RFQ.`);
+      const m = `Added ${applied} line item${applied === 1 ? '' : 's'} to the RFQ.`;
+      setMsg(m);
+      toast(m, 'success');
       await load();
-    } catch (e: any) { setErr(e.message ?? 'Could not add lines.'); }
+    } catch (e: any) {
+      const m = e.message ?? 'Could not add lines.';
+      setErr(m);
+      toast(m, 'error');
+    }
     finally { setApplying(false); }
   }
 

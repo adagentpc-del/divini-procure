@@ -45,6 +45,7 @@ import { q, q1, pool } from "./pool.js";
 import {
   buildStorageKey,
   writeFile,
+  readFileBytes,
   signDownloadUrl,
   verifyDownloadUrl,
   readPath,
@@ -577,6 +578,19 @@ router.get(
 );
 
 // Upload: multipart/form-data with `file` + companyId/buildingId/packageId.
+// Allowed extensions for the general documents endpoint. Mirrors the set in
+// rfq-assist.ts; binary CAD types are included since DocumentPanel advertises them.
+const DOC_ALLOWED_EXT = new Set([
+  "pdf", "png", "jpg", "jpeg", "gif", "webp", "heic",
+  "dwg", "dxf", "dwf", "rvt", "ifc", "step", "stp", "iges", "igs", "skp", "3dm",
+  "doc", "docx", "xls", "xlsx", "csv", "txt",
+]);
+const DOC_ALLOWED_MIME_PREFIXES = [
+  "image/", "application/pdf", "application/msword",
+  "application/vnd.openxmlformats", "application/vnd.ms-excel",
+  "text/", "application/octet-stream", "",
+];
+
 // Returns the created document row. (Replaces supabase.storage.upload + insert.)
 router.post(
   "/documents",
@@ -591,20 +605,37 @@ router.post(
     const buildingId = req.body.buildingId ? String(req.body.buildingId) : null;
     const packageId = req.body.packageId ? String(req.body.packageId) : null;
 
+    // Sanitize filename: strip path traversal sequences and non-printable chars.
+    const rawName = file.originalname;
+    const baseName = rawName.replace(/\\/g, "/").split("/").pop() || "upload";
+    const safeName = baseName
+      .replace(/\.\./g, "")
+      .replace(/[^\w.\-() ]/g, "_")
+      .slice(0, 240) || "upload";
+
+    // Extension and MIME validation (defense-in-depth).
+    const ext = (safeName.split(".").pop() ?? "").toLowerCase();
+    if (!DOC_ALLOWED_EXT.has(ext)) {
+      return res.status(400).json({ error: `file type .${ext} not allowed` });
+    }
+    const mime = (file.mimetype || "").toLowerCase();
+    if (!DOC_ALLOWED_MIME_PREFIXES.some((p) => mime.startsWith(p))) {
+      return res.status(400).json({ error: "file MIME type not permitted" });
+    }
+
     const storageKey = buildStorageKey({
       companyId,
       buildingId,
       packageId,
-      fileName: file.originalname,
+      fileName: safeName,
     });
     // Write only after authz passes (insertDocument checks membership). Build
     // the row first so a forbidden upload never touches disk.
-    const ext = (file.originalname.split(".").pop() ?? "").toLowerCase();
     const doc = await db.insertDocument(auth.userId!, {
       company_id: companyId,
       building_id: buildingId,
       package_id: packageId,
-      name: file.originalname,
+      name: safeName,
       kind: ext,
       storage_path: storageKey,
       size: file.size,
@@ -652,8 +683,18 @@ router.get(
     if (!fileExists(rel)) return res.status(404).json({ error: "file missing" });
     const doc = await db.getDocumentByPath(rel);
     const filename = doc?.name || rel.split("/").pop() || "download";
-    res.setHeader("Content-Disposition", `inline; filename="${filename.replace(/"/g, "")}"`);
-    fs.createReadStream(readPath(rel)).pipe(res);
+    // RFC 5987 encoding for non-ASCII filenames; also provide ASCII fallback.
+    const asciiName = filename.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, "");
+    const encodedName = encodeURIComponent(filename);
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename="${asciiName}"; filename*=UTF-8''${encodedName}`,
+    );
+    // readFileBytes decrypts transparently when STORAGE_ENCRYPTION_KEY is set.
+    // Using it here instead of createReadStream(readPath(...)) ensures the
+    // client receives plaintext bytes even when encryption-at-rest is enabled.
+    const bytes = readFileBytes(rel);
+    res.send(bytes);
   }),
 );
 

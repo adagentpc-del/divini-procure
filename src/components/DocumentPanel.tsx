@@ -45,6 +45,7 @@ export default function DocumentPanel({ packageId, buildingId, canUpload }: { pa
       {canUpload && (
         <div style={{ marginBottom: docs.length ? 12 : 0 }}>
           <input ref={fileRef} type="file" multiple style={{ display: 'none' }}
+            accept=".pdf,.png,.jpg,.jpeg,.gif,.webp,.heic,.dwg,.dxf,.dwf,.rvt,.ifc,.step,.stp,.iges,.igs,.skp,.3dm,.doc,.docx,.xls,.xlsx,.csv,.txt"
             onChange={e => onFiles(e.target.files)} />
           <button className="btn" disabled={busy} onClick={() => fileRef.current?.click()}>
             {busy ? 'Uploading…' : '⬆ Upload CAD / drawings / specs'}
