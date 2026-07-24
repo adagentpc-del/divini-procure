@@ -53,6 +53,7 @@ import {
 } from "./storage.js";
 import adminExtraRouter from "./routes/admin-extra.js";
 import publicCaptureRouter from "./routes/public-capture.js";
+import referralPartnerOnboardingRouter from "./routes/referral-partner-onboarding.js";
 import quoteComparisonRouter from "./routes/quote-comparison.js";
 import intelRouter from "./routes/intel.js";
 import rfqAssistRouter from "./routes/rfq-assist.js";
@@ -149,6 +150,7 @@ router.use(rfqAssistRouter);
 router.use(submittalsRouter);
 router.use("/deliveries", deliveryRouter);
 router.use(partnerRevRouter);
+router.use(referralPartnerOnboardingRouter);
 // ---- platform revenue ledger (accrual; admin marks collected, never charges) -
 router.use(revenueRouter);
 // ---- Stripe Connect payout rail (connect bank, queue splits, 1-click release) -

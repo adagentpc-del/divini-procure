@@ -18,6 +18,8 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { getAuth, requireUser } from "../auth.js";
 import { q1 } from "../pool.js";
 import { inviteLookupRateLimit } from "../lib/rateLimit.js";
+import { sendEmail, emailEnabled } from "../lib/email.js";
+import { PUBLIC_APP_URL } from "../config.js";
 
 const h =
   (fn: (req: Request, res: Response) => Promise<unknown>) =>
@@ -167,6 +169,31 @@ router.post(
        returning id`,
       [email, code],
     );
+
+    // Send onboarding email to the partner (the person who clicked the link
+    // and just registered) so they know to complete the agreement + banking.
+    if (emailEnabled() && email) {
+      const onboardingUrl = `${PUBLIC_APP_URL || ""}/partner/onboarding`;
+      void sendEmail({
+        to: email,
+        subject: "Complete your Referral Partner Setup - Divini Procure",
+        html: `<div style="font-family:Inter,Arial,sans-serif;color:#2c2a26;max-width:560px;margin:0 auto;padding:24px">
+  <div style="font-family:Georgia,serif;font-size:22px;color:#123c2e;font-weight:700;margin-bottom:16px">Divini Procure</div>
+  <h1 style="font-family:Georgia,serif;font-size:20px;color:#123c2e;font-weight:600;margin:0 0 14px">Welcome, Referral Partner!</h1>
+  <p style="margin:0 0 10px">Your account has been created and linked to the Divini Procure referral program.</p>
+  <p style="margin:0 0 18px">To activate your partner account and start earning referral fees, you need to complete two quick steps:</p>
+  <ol style="margin:0 0 18px;padding-left:20px;line-height:2">
+    <li><strong>Sign the Referral Partner Agreement</strong></li>
+    <li><strong>Submit your banking information</strong> so we can pay you</li>
+  </ol>
+  <p style="margin:0 0 18px"><a href="${onboardingUrl}" style="display:inline-block;background:#123c2e;color:#fff;text-decoration:none;padding:11px 20px;border-radius:6px;font-weight:600">Complete Partner Setup</a></p>
+  <p style="margin:0 0 10px;font-size:13px;color:#7d776c">Or paste this link: ${onboardingUrl}</p>
+  <div style="margin-top:22px;border-top:1px solid #e7e1d6;padding-top:14px;font-size:12px;color:#7d776c">Divini Procure by Divini Group</div>
+</div>`,
+        text: `Welcome to the Divini Procure referral program!\n\nTo activate your partner account and receive referral fees, please complete these two steps:\n1. Sign the Referral Partner Agreement\n2. Submit your banking information\n\nComplete your setup here: ${onboardingUrl}`,
+      }).catch(() => undefined);
+    }
+
     res.status(201).json({ attributed: true, referralId: row?.id ?? null, partnerName: partner.name });
   }),
 );

@@ -3451,3 +3451,6 @@ ALTER TABLE investor_watchlist
 CREATE INDEX IF NOT EXISTS idx_investor_watchlist_user ON investor_watchlist (user_id);
 
 COMMIT;
+
+-- Referral partner onboarding (agreement e-sign + banking)
+\i db/schema-referral-partner-onboarding.sql

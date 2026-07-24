@@ -74,6 +74,7 @@ const ProjectTemplates = lazy(() => import('./pages/ProjectTemplates'));
 const SampleRequests = lazy(() => import('./pages/SampleRequests'));
 const VendorOnboardingTemplates = lazy(() => import('./pages/VendorOnboardingTemplates'));
 const BrokerOnboarding = lazy(() => import('./pages/BrokerOnboarding'));
+const PartnerOnboarding = lazy(() => import('./pages/PartnerOnboarding'));
 const AdminInvestmentCompliance = lazy(() => import('./pages/AdminInvestmentCompliance'));
 const OpportunityTeasers = lazy(() => import('./pages/OpportunityTeasers'));
 const PublicDeveloperProfile = lazy(() => import('./pages/PublicDeveloperProfile'));
@@ -194,6 +195,7 @@ function Routed() {
         <Route path="/samples" element={<Gate><SampleRequests /></Gate>} />
         <Route path="/onboarding-templates" element={<Gate><VendorOnboardingTemplates /></Gate>} />
         <Route path="/broker" element={<Gate><BrokerOnboarding /></Gate>} />
+        <Route path="/partner/onboarding" element={<Gate><PartnerOnboarding /></Gate>} />
         <Route path="/teasers" element={<Gate><OpportunityTeasers /></Gate>} />
         <Route path="/public-profile" element={<Gate><PublicDeveloperProfile /></Gate>} />
         <Route path="/collateral" element={<Gate><ProfileCollateral /></Gate>} />
