@@ -24,11 +24,13 @@
  */
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { getAuth, requireUser } from "../auth.js";
-import { ForbiddenError, NotFoundError } from "../db.js";
+import { ForbiddenError, NotFoundError, userCompanyIds } from "../db.js";
 import { q, q1 } from "../pool.js";
 import { classifyDocument, type Discipline } from "../lib/document-classifier.js";
 import { suggestTrades } from "../lib/trade-suggester.js";
+import { suggestRevisionMatches } from "../lib/revision-matcher.js";
 import { llmEnabled, llmJson } from "../lib/llm.js";
+import { sendEmail } from "../lib/email.js";
 
 const h =
   (fn: (req: Request, res: Response) => Promise<unknown>) =>
@@ -134,6 +136,104 @@ router.get(
     await authorizeBuilding(req, buildingId);
     const rows = await q(`select * from documents where building_id = $1 order by created_at desc`, [buildingId]);
     res.json({ documents: rows });
+  }),
+);
+
+// ---- GET /blueprint/documents/:id/suggest-revision-of --------------------------
+// Deterministic filename-pattern suggestion only - never a confirmed link.
+router.get(
+  "/documents/:id/suggest-revision-of",
+  requireUser,
+  h(async (req, res) => {
+    const auth = getAuth(req);
+    const doc = await q1<any>(`select * from documents where id = $1`, [req.params.id]);
+    if (!doc) throw new NotFoundError("document not found");
+    if (!auth.isAdmin && !(await isMemberOfCompany(auth.userId!, doc.company_id))) {
+      throw new ForbiddenError("not a member of this organization");
+    }
+    if (!doc.building_id) return res.json({ matches: [] });
+    const others = await q<{ id: string; name: string }>(
+      `select id, name from documents where building_id = $1 and id <> $2`,
+      [doc.building_id, doc.id],
+    );
+    res.json({ matches: suggestRevisionMatches(doc.name, others) });
+  }),
+);
+
+// ---- POST /blueprint/documents/:id/link-revision {parentDocumentId, revisionLabel?}
+router.post(
+  "/documents/:id/link-revision",
+  requireUser,
+  h(async (req, res) => {
+    const auth = getAuth(req);
+    const doc = await q1<any>(`select * from documents where id = $1`, [req.params.id]);
+    if (!doc) throw new NotFoundError("document not found");
+    if (!auth.isAdmin && !(await isMemberOfCompany(auth.userId!, doc.company_id))) {
+      throw new ForbiddenError("not a member of this organization");
+    }
+    const parentId = String(req.body?.parentDocumentId || "");
+    if (!parentId) return res.status(400).json({ error: "parentDocumentId required" });
+    if (parentId === doc.id) return res.status(400).json({ error: "a document cannot be a revision of itself" });
+    const parent = await q1<any>(`select * from documents where id = $1`, [parentId]);
+    if (!parent) throw new NotFoundError("parent document not found");
+    if (parent.building_id !== doc.building_id) {
+      return res.status(400).json({ error: "the parent document must belong to the same project" });
+    }
+    // Reject anything that would create a cycle: walk the proposed parent's own
+    // ancestor chain and make sure doc.id does not already appear in it.
+    let ancestor = parent;
+    const walked = new Set([parent.id]);
+    while (ancestor.parent_document_id) {
+      if (ancestor.parent_document_id === doc.id) {
+        return res.status(400).json({ error: "that would create a circular revision chain" });
+      }
+      if (walked.has(ancestor.parent_document_id)) break; // an existing cycle elsewhere; stop rather than loop
+      walked.add(ancestor.parent_document_id);
+      const next = await q1<any>(`select * from documents where id = $1`, [ancestor.parent_document_id]);
+      if (!next) break;
+      ancestor = next;
+    }
+    const revisionLabel = req.body?.revisionLabel ? String(req.body.revisionLabel) : null;
+    const row = await q1(
+      `update documents set parent_document_id = $2, revision_number = $3, revision_label = $4 where id = $1 returning *`,
+      [doc.id, parentId, (parent.revision_number ?? 1) + 1, revisionLabel],
+    );
+    res.json({ document: row });
+  }),
+);
+
+// ---- GET /blueprint/documents/:id/revisions -------------------------------------
+// Walks to the root of the revision chain, then returns every document in it.
+router.get(
+  "/documents/:id/revisions",
+  requireUser,
+  h(async (req, res) => {
+    const auth = getAuth(req);
+    const doc = await q1<any>(`select * from documents where id = $1`, [req.params.id]);
+    if (!doc) throw new NotFoundError("document not found");
+    if (!auth.isAdmin && !(await isMemberOfCompany(auth.userId!, doc.company_id))) {
+      throw new ForbiddenError("not a member of this organization");
+    }
+    let root = doc;
+    const seen = new Set([root.id]);
+    while (root.parent_document_id && !seen.has(root.parent_document_id)) {
+      const parent = await q1<any>(`select * from documents where id = $1`, [root.parent_document_id]);
+      if (!parent) break;
+      root = parent;
+      seen.add(root.id);
+    }
+    const chain = await q<any>(
+      `with recursive chain as (
+         select d.*, array[d.id] as visited from documents d where d.id = $1
+         union all
+         select d.*, c.visited || d.id from documents d
+           join chain c on d.parent_document_id = c.id
+           where not d.id = any(c.visited)
+       )
+       select * from chain order by revision_number asc, created_at asc`,
+      [root.id],
+    );
+    res.json({ revisions: chain.map((r: any) => { delete r.visited; return r; }) });
   }),
 );
 
@@ -466,6 +566,244 @@ router.post(
       [opp.id, auth.userId],
     );
     res.status(201).json({ opportunity: opp });
+  }),
+);
+
+// ---------------------------------------------------------------------------
+// Revision and addendum management
+// ---------------------------------------------------------------------------
+
+async function authorizeAddendum(req: Request, id: string): Promise<any> {
+  const addendum = await q1<any>(`select * from document_addenda where id = $1`, [id]);
+  if (!addendum) throw new NotFoundError("addendum not found");
+  const auth = getAuth(req);
+  if (!auth.isAdmin && !(await isMemberOfCompany(auth.userId!, addendum.organization_id))) {
+    throw new ForbiddenError("not a member of this organization");
+  }
+  return addendum;
+}
+
+/** A document's own package_id, plus any extra packages it was manually linked to. */
+async function derivedPackageIds(documentIds: string[]): Promise<string[]> {
+  if (documentIds.length === 0) return [];
+  const rows = await q<{ package_id: string | null }>(
+    `select package_id from documents where id = any($1) and package_id is not null
+     union
+     select package_id from blueprint_document_package_links where document_id = any($1)`,
+    [documentIds],
+  );
+  return [...new Set(rows.map((r) => r.package_id).filter((x): x is string => !!x))];
+}
+
+// ---- POST /blueprint/addenda {buildingId, title, description?, documentIds?} ----
+router.post(
+  "/addenda",
+  requireUser,
+  h(async (req, res) => {
+    const auth = getAuth(req);
+    const b = req.body ?? {};
+    const buildingId = String(b.buildingId || "");
+    if (!buildingId) return res.status(400).json({ error: "buildingId required" });
+    const title = String(b.title || "").trim();
+    if (!title) return res.status(400).json({ error: "title required" });
+    const building = await authorizeBuilding(req, buildingId);
+    const documentIds: string[] = Array.isArray(b.documentIds) ? b.documentIds : [];
+    const packageIds = await derivedPackageIds(documentIds);
+    const row = await q1<any>(
+      `insert into document_addenda
+         (organization_id, building_id, title, description, affected_document_ids, affected_package_ids, created_by)
+       values ($1,$2,$3,$4,$5,$6,$7) returning *`,
+      [building.company_id, buildingId, title, b.description ? String(b.description) : null, documentIds, packageIds, auth.userId],
+    );
+    res.status(201).json({ addendum: row });
+  }),
+);
+
+// ---- GET /blueprint/addenda?buildingId= ------------------------------------------
+router.get(
+  "/addenda",
+  requireUser,
+  h(async (req, res) => {
+    const buildingId = String(req.query.buildingId || "");
+    if (!buildingId) return res.status(400).json({ error: "buildingId required" });
+    await authorizeBuilding(req, buildingId);
+    const rows = await q(`select * from document_addenda where building_id = $1 order by created_at desc`, [buildingId]);
+    res.json({ addenda: rows });
+  }),
+);
+
+// ---- GET /blueprint/addenda/for-vendor?companyId= ---------------------------------
+// Vendor-side: every published addendum a vendor company was notified of.
+// Registered before /addenda/:id so "for-vendor" is never captured as an id.
+router.get(
+  "/addenda/for-vendor",
+  requireUser,
+  h(async (req, res) => {
+    const auth = getAuth(req);
+    const companyId = String(req.query.companyId || "");
+    if (!companyId) return res.status(400).json({ error: "companyId required" });
+    if (!auth.isAdmin && !(await isMemberOfCompany(auth.userId!, companyId))) {
+      throw new ForbiddenError("not a member of this organization");
+    }
+    const rows = await q(
+      `select a.*, ack.notified_at, ack.acknowledged_at
+       from document_addenda a
+       join document_addendum_acknowledgments ack on ack.addendum_id = a.id
+       where ack.vendor_company_id = $1 and a.status = 'published'
+       order by a.published_at desc`,
+      [companyId],
+    );
+    res.json({ addenda: rows });
+  }),
+);
+
+// ---- GET /blueprint/addenda/:id ---------------------------------------------------
+router.get(
+  "/addenda/:id",
+  requireUser,
+  h(async (req, res) => {
+    const addendum = await authorizeAddendum(req, req.params.id);
+    const acknowledgments = await q(`select * from document_addendum_acknowledgments where addendum_id = $1`, [addendum.id]);
+    res.json({ addendum, acknowledgments });
+  }),
+);
+
+// ---- PATCH /blueprint/addenda/:id {title?, description?, documentIds?, status?, bidDeadlineExtendedTo?}
+// Structural fields stay editable through draft/review - same "not editable once
+// published" invariant used by change-orders and Divini Bid Studio drafts.
+// status here only moves between draft and review; POST /publish is the only
+// way to reach published, since that is also the action that notifies vendors.
+router.patch(
+  "/addenda/:id",
+  requireUser,
+  h(async (req, res) => {
+    const addendum = await authorizeAddendum(req, req.params.id);
+    if (addendum.status === "published") {
+      return res.status(400).json({ error: "a published addendum cannot be edited" });
+    }
+    const b = req.body ?? {};
+    const sets: string[] = [];
+    const vals: unknown[] = [];
+    let i = 1;
+    if (b.title !== undefined) { sets.push(`title = $${i++}`); vals.push(String(b.title)); }
+    if (b.description !== undefined) { sets.push(`description = $${i++}`); vals.push(b.description ? String(b.description) : null); }
+    if (b.bidDeadlineExtendedTo !== undefined) { sets.push(`bid_deadline_extended_to = $${i++}`); vals.push(b.bidDeadlineExtendedTo || null); }
+    if (Array.isArray(b.documentIds)) {
+      const packageIds = await derivedPackageIds(b.documentIds);
+      sets.push(`affected_document_ids = $${i++}`); vals.push(b.documentIds);
+      sets.push(`affected_package_ids = $${i++}`); vals.push(packageIds);
+    }
+    if (b.status !== undefined) {
+      const status = String(b.status);
+      if (status !== "draft" && status !== "review") {
+        return res.status(400).json({ error: "status must be draft or review here - use POST /publish to publish" });
+      }
+      sets.push(`status = $${i++}`); vals.push(status);
+    }
+    if (sets.length === 0) return res.json({ addendum });
+    sets.push(`updated_at = now()`);
+    vals.push(addendum.id);
+    const row = await q1(`update document_addenda set ${sets.join(", ")} where id = $${i} returning *`, vals);
+    res.json({ addendum: row });
+  }),
+);
+
+// ---- POST /blueprint/addenda/:id/publish -------------------------------------------
+// Requires status = 'review' first (explicit review-before-publish gate). Notifies
+// every member of every vendor company with a bid_invites or bids row on an
+// affected package: an in-app notification always, plus best-effort email via the
+// existing gracefully-degrading lib/email.ts.
+router.post(
+  "/addenda/:id/publish",
+  requireUser,
+  h(async (req, res) => {
+    const auth = getAuth(req);
+    const addendum = await authorizeAddendum(req, req.params.id);
+    if (addendum.status !== "review") {
+      return res.status(400).json({ error: "an addendum must be in review before it can be published" });
+    }
+    const packageIds: string[] = addendum.affected_package_ids ?? [];
+    let vendorCompanyIds: string[] = [];
+    if (packageIds.length) {
+      const rows = await q<{ vendor_company_id: string }>(
+        `select vendor_company_id from bid_invites where package_id = any($1)
+         union
+         select vendor_company_id from bids where package_id = any($1)`,
+        [packageIds],
+      );
+      vendorCompanyIds = [...new Set(rows.map((r) => r.vendor_company_id).filter(Boolean))];
+    }
+
+    const building = await q1<any>(`select * from buildings where id = $1`, [addendum.building_id]);
+    for (const vendorCompanyId of vendorCompanyIds) {
+      await q(
+        `insert into document_addendum_acknowledgments (addendum_id, vendor_company_id, notified_at)
+         values ($1,$2,now())
+         on conflict (addendum_id, vendor_company_id) do update set notified_at = now()`,
+        [addendum.id, vendorCompanyId],
+      );
+      const members = await q<{ user_id: string }>(`select user_id from company_members where company_id = $1`, [vendorCompanyId]);
+      for (const m of members) {
+        await q(`insert into notifications (user_id, title, detail, kind) values ($1,$2,$3,'addendum')`, [
+          m.user_id,
+          `Addendum: ${addendum.title}`,
+          `${building?.name ?? "A project"} you are bidding on has a new addendum. Review the updated documents before your bid deadline.`,
+        ]);
+        const u = await q1<{ email: string }>(`select email from users where id = $1`, [m.user_id]);
+        if (u?.email) {
+          await sendEmail({
+            to: u.email,
+            subject: `Addendum published: ${addendum.title}`,
+            text:
+              `${building?.name ?? "A project"} you are bidding on has published an addendum: ${addendum.title}.\n\n` +
+              `${addendum.description ?? ""}\n\nPlease review the updated documents before your bid deadline.`,
+          });
+        }
+      }
+    }
+
+    const row = await q1(
+      `update document_addenda set status = 'published', published_by = $2, published_at = now(), updated_at = now()
+       where id = $1 returning *`,
+      [addendum.id, auth.userId],
+    );
+    res.json({ addendum: row, notifiedVendorCompanies: vendorCompanyIds.length });
+  }),
+);
+
+// ---- POST /blueprint/addenda/:id/acknowledge ---------------------------------------
+// Vendor-side: a member of a vendor company that was actually notified of this
+// addendum (a document_addendum_acknowledgments row already exists from /publish)
+// can mark their company's acknowledgment. Never lets a company acknowledge an
+// addendum it was never notified of.
+router.post(
+  "/addenda/:id/acknowledge",
+  requireUser,
+  h(async (req, res) => {
+    const auth = getAuth(req);
+    const addendum = await q1<any>(`select * from document_addenda where id = $1`, [req.params.id]);
+    if (!addendum) throw new NotFoundError("addendum not found");
+    if (addendum.status !== "published") {
+      return res.status(400).json({ error: "only a published addendum can be acknowledged" });
+    }
+    const myCompanyIds = auth.isAdmin ? [] : await userCompanyIds(auth.userId!);
+    let vendorCompanyId = String(req.body?.vendorCompanyId || "");
+    if (!auth.isAdmin) {
+      const ack = await q1<any>(
+        `select * from document_addendum_acknowledgments where addendum_id = $1 and vendor_company_id = any($2)`,
+        [addendum.id, myCompanyIds],
+      );
+      if (!ack) throw new ForbiddenError("your company was not notified of this addendum");
+      vendorCompanyId = ack.vendor_company_id;
+    }
+    if (!vendorCompanyId) return res.status(400).json({ error: "vendorCompanyId required" });
+    const row = await q1(
+      `update document_addendum_acknowledgments set acknowledged_at = now(), acknowledged_by = $3
+       where addendum_id = $1 and vendor_company_id = $2 returning *`,
+      [addendum.id, vendorCompanyId, auth.userId],
+    );
+    if (!row) throw new NotFoundError("this vendor company was not notified of this addendum");
+    res.json({ acknowledgment: row });
   }),
 );
 

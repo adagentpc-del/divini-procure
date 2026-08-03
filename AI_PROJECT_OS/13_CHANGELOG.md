@@ -6,6 +6,88 @@ the Authentik/Supabase era and does not reflect Monetization V2.)
 
 ---
 
+## 2026-08-03 (8) - Divini Blueprint: revision linking and addendum publishing (Phase 2 slice)
+
+**What.** Continues the CAD/Drawing/Plan/Specification/Bid Intelligence spec
+into its Phase 2 "revision and addendum management" section, closing a gap
+left by the previous slice: `documents.parent_document_id` /
+`revision_number` / `revision_label` existed in the schema but nothing
+populated or read them. This adds a deterministic filename-based revision
+suggester, explicit user-confirmed revision linking, and a full
+draft -> review -> published addendum workflow that notifies vendors and
+tracks acknowledgment - all on top of the existing `documents`, `packages`,
+and `bid_invites`/`bids` tables rather than new parallel structures.
+
+- **Revision suggestion is filename-pattern only, never automatic**
+  (`server/src/lib/revision-matcher.ts`, pure, 8 tests): strips common
+  revision/version/addendum tokens (`rev2`, `v3`, `addendum 1`, ...) and
+  compares normalized base names. An exact match after stripping is
+  "medium" confidence; a substring relationship is "low"; nothing is ever
+  auto-linked - `GET /blueprint/documents/:id/suggest-revision-of` only
+  returns suggestions, and `POST .../link-revision` requires the user to
+  pick one explicitly.
+- **Cycle-safety, a real bug caught and fixed in self-review**: the first
+  draft of `link-revision` only rejected linking a document as a revision
+  of itself, not a longer cycle (e.g. A -> B, then later B -> A) - which
+  would have made the `WITH RECURSIVE` chain-lookup query in
+  `GET /blueprint/documents/:id/revisions` loop forever against a real
+  database. Fixed two ways: `link-revision` now walks the proposed
+  parent's full ancestor chain and rejects any link that would close a
+  loop, and the recursive query itself carries a `visited` array guard as
+  defense in depth against a cycle introduced any other way.
+- **Addenda** (`document_addenda`, `document_addendum_acknowledgments`):
+  draft -> review -> published, the same "structural fields are only
+  editable before the record leaves draft-like status" invariant used by
+  change-orders and Divini Bid Studio elsewhere in this build - a
+  published addendum can never be edited again. `affected_package_ids` is
+  derived automatically from the selected documents' own `package_id` and
+  any `blueprint_document_package_links` rows, never hand-typed.
+  `POST /addenda/:id/publish` (gated on `status = 'review'`) finds every
+  vendor company with a `bid_invites` or `bids` row on an affected
+  package, writes an acknowledgment row per company, notifies every member
+  of that company with an in-app `notifications` row, and best-effort
+  emails them via the existing gracefully-degrading `lib/email.ts`.
+  `POST /addenda/:id/acknowledge` is vendor-side: a user may only
+  acknowledge on behalf of a company that actually has a notified
+  acknowledgment row, never an arbitrary company id.
+- **Honesty boundary maintained**: no content-level diffing ("changed
+  dimensions", "changed specifications") is claimed anywhere - this
+  codebase cannot read document content, so revision matching is a
+  filename suggestion and addendum authorship (what changed, why) is
+  entirely user-written.
+- Frontend: `src/pages/Blueprint.tsx` now shows, per document, a
+  "Check for revision of..." action with inline suggestion buttons; a
+  checkbox per document plus a new Addenda card to draft, review, and
+  publish; and, for vendor-role companies, the page renders an entirely
+  different view (`isVendor` branch) listing addenda published to that
+  company with an Acknowledge action. Vendor nav entry added in
+  `src/components/Shell.tsx`.
+
+**Files.** `db/schema-blueprint-addenda.sql` (new, synced into
+`db/apply-all.sql` right after `schema-blueprint.sql`),
+`server/src/lib/revision-matcher.ts`, `server/src/routes/blueprint.ts`
+(extended, not a new file), `src/pages/Blueprint.tsx` (extended),
+`src/components/Shell.tsx` (vendor nav entry),
+`tests/revision-matcher.test.ts` (8 tests).
+
+**Permissions.** Same single-owner model as the rest of Blueprint for
+everything on the developer/owner side (addendum belongs to one
+`organization_id`; member-of-company or admin). The acknowledge endpoint
+is deliberately NOT gated by that same organization check, since the
+acknowledging party is a different company (the vendor) than the
+addendum's owner - it is instead gated by an existing, already-notified
+`document_addendum_acknowledgments` row for one of the caller's own
+companies, which prevents both cross-tenant reads and acknowledging on
+behalf of a company never actually notified.
+
+**Tests completed.** 8 new unit tests (revision matcher, pure, no DB), full
+suite 107/107 passing. Both server and SPA typecheck clean. Self-review
+re-read of the new `blueprint.ts` routes caught the revision-cycle bug
+described above before commit. **Not tested against a live database or in
+a browser** - same sandbox limitation as every prior slice this session.
+
+---
+
 ## 2026-08-03 (7) - Divini Blueprint (Slice 5, folding in the CAD/Drawing/Plan/Spec/Bid Intelligence spec)
 
 **What.** A document-intelligence module answering the "CAD, Drawing, Plan,

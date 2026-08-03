@@ -86,6 +86,7 @@ const VENDOR_SECTIONS: Section[] = [
     ['/pipeline','Divini Pipeline','☰'],
     ['/bid-studio','Divini Bid Studio','▧'],
     ['/follow-up-desk','Divini Follow-Up Desk','⏰'],
+    ['/blueprint','Blueprint Addenda','⌂'],
     ['/bids',    'My Bids',    '◧'],
     ['/my-invites','Invitations','✉'],
   ]},
