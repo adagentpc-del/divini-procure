@@ -29,7 +29,7 @@ create extension if not exists "pgcrypto";
 create table if not exists platform_revenue (
   id uuid primary key default gen_random_uuid(),
   source_type text not null default 'procurement_fee'
-    check (source_type in ('procurement_fee','capital_introduction','subscription','manual')),
+    check (source_type in ('procurement_fee','infrastructure_fee','capital_introduction','subscription','manual')),
   developer_company_id uuid,
   vendor_company_id uuid,
   purchase_order_id uuid,
@@ -51,7 +51,15 @@ create table if not exists platform_revenue (
 
 create index if not exists platform_revenue_status_idx on platform_revenue (status);
 create index if not exists platform_revenue_developer_idx on platform_revenue (developer_company_id);
--- One accrual per payment authorization (idempotency for procurement fees).
-create unique index if not exists platform_revenue_payment_auth_uniq
-  on platform_revenue (payment_authorization_id)
+
+-- Defensive re-run: widen the source_type check and move the idempotency key
+-- from "one accrual per authorization" to "one accrual per authorization PER
+-- fee type" so the platform fee and the infrastructure fee can each have their
+-- own row on the same payment authorization.
+alter table if exists platform_revenue drop constraint if exists platform_revenue_source_type_check;
+alter table if exists platform_revenue add constraint platform_revenue_source_type_check
+  check (source_type in ('procurement_fee','infrastructure_fee','capital_introduction','subscription','manual'));
+drop index if exists platform_revenue_payment_auth_uniq;
+create unique index if not exists platform_revenue_payment_auth_type_uniq
+  on platform_revenue (payment_authorization_id, source_type)
   where payment_authorization_id is not null;

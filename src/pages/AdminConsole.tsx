@@ -90,9 +90,9 @@ export default function AdminConsole() {
           <div className="sectitle">Monetization</div>
           <div className="grid cards3 kpi" style={{ marginBottom: 20 }}>
             <div className="card metric">
-              <div className="k">Success-fee ledger</div>
+              <div className="k">Platform-fee ledger</div>
               <div className="v" style={{ fontSize: 24 }}>{moneyCents(mon.successFeeTotalCents)}</div>
-              <div className="d">total accrued (2% capped $2,500)</div>
+              <div className="d">total accrued (5% capped $25,000)</div>
             </div>
             <div className="card metric">
               <div className="k">Vendor Pro MRR</div>

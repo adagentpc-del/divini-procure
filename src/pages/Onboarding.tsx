@@ -439,8 +439,9 @@ export default function Onboarding() {
                   and buyers. Divini Procure may verify your credentials and suspend accounts that
                   misrepresent qualifications. Joining and browsing are free. Bidding and contacting
                   developers unlock once your credentials pass verification. Free vendors get 5 bids per
-                  quarter; Vendor Pro is unlimited. A 2% success fee, capped at $2,500, applies only when
-                  you win work through the platform.
+                  quarter; Vendor Pro is unlimited. A 5% platform fee, capped at $25,000 (2% capped at
+                  $10,000 for an existing relationship), plus a separate 0.1% infrastructure fee capped at
+                  $1,500, applies only when you win work through the platform.
                 </div>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 14 }}>
                   <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} />

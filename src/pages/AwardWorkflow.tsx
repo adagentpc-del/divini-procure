@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { apiGet, apiSend } from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -36,6 +36,16 @@ type PaymentAuth = {
   authorized_at: string | null;
   notes: string | null;
   created_at: string;
+  award_cents: number | null;
+  // platform fee (5% capped $25,000 standard; 2% capped $10,000 existing-relationship)
+  success_fee_pct: number | null;
+  success_fee_cap_cents: number | null;
+  success_fee_cents: number | null;
+  success_fee_grandfathered: boolean | null;
+  // platform infrastructure fee (0.1% capped $1,500), always its own line item
+  service_buffer_pct: number | null;
+  service_buffer_cap_cents: number | null;
+  service_buffer_cents: number | null;
 };
 type AwardDoc = {
   id: string;
@@ -87,6 +97,7 @@ export default function AwardWorkflow() {
   const [payAmount, setPayAmount] = useState('');
   const [payFee, setPayFee] = useState('');
   const [payerType, setPayerType] = useState('developer');
+  const [expandedPayId, setExpandedPayId] = useState<string | null>(null);
 
   // document form
   const [docKind, setDocKind] = useState('closeout');
@@ -388,23 +399,79 @@ export default function AwardWorkflow() {
               <table style={{ marginTop: 12 }}>
                 <thead><tr><th>When</th><th>Amount</th><th>Fee</th><th>Payer</th><th>Status</th><th>Actions</th></tr></thead>
                 <tbody>
-                  {payments.map((p) => (
-                    <tr key={p.id}>
-                      <td className="note">{new Date(p.created_at).toLocaleDateString()}</td>
-                      <td>{money(p.amount_cents)}</td>
-                      <td className="note">{p.fee_percentage != null ? `${p.fee_percentage}% · ${money(p.fee_cents)}` : '-'}</td>
-                      <td className="note">{p.payer_type || '-'}</td>
-                      <td><span className={`badge ${statusBadge(p.status)}`}>{pretty(p.status)}</span></td>
-                      <td>
-                        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                          {PAY_STATUSES.filter((s) => s !== p.status).map((s) => (
-                            <button key={s} className="btn" style={{ padding: '2px 8px', fontSize: 12 }}
-                              onClick={() => setPayStatus(p.id, s)} disabled={busy}>{s}</button>
-                          ))}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                  {payments.map((p) => {
+                    const processingFeeCents = null as number | null; // pass-through; not computed until a processor charge occurs
+                    const totalCents =
+                      (p.amount_cents ?? 0) + (p.success_fee_cents ?? p.fee_cents ?? 0) + (p.service_buffer_cents ?? 0);
+                    const netPayoutCents =
+                      (p.amount_cents ?? 0) - (p.success_fee_cents ?? p.fee_cents ?? 0) - (p.service_buffer_cents ?? 0);
+                    return (
+                      <Fragment key={p.id}>
+                        <tr>
+                          <td className="note">{new Date(p.created_at).toLocaleDateString()}</td>
+                          <td>{money(p.amount_cents)}</td>
+                          <td className="note">{p.fee_percentage != null ? `${p.fee_percentage}% · ${money(p.fee_cents)}` : '-'}</td>
+                          <td className="note">{p.payer_type || '-'}</td>
+                          <td><span className={`badge ${statusBadge(p.status)}`}>{pretty(p.status)}</span></td>
+                          <td>
+                            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                              <button className="btn" style={{ padding: '2px 8px', fontSize: 12 }}
+                                onClick={() => setExpandedPayId(expandedPayId === p.id ? null : p.id)}>
+                                {expandedPayId === p.id ? 'Hide breakdown' : 'View breakdown'}
+                              </button>
+                              {PAY_STATUSES.filter((s) => s !== p.status).map((s) => (
+                                <button key={s} className="btn" style={{ padding: '2px 8px', fontSize: 12 }}
+                                  onClick={() => setPayStatus(p.id, s)} disabled={busy}>{s}</button>
+                              ))}
+                            </div>
+                          </td>
+                        </tr>
+                        {expandedPayId === p.id && (
+                          <tr>
+                            <td colSpan={6}>
+                              <div className="two" style={{ gap: 24 }}>
+                                <div>
+                                  <div className="note" style={{ fontWeight: 600, marginBottom: 4 }}>Invoice</div>
+                                  <table>
+                                    <tbody>
+                                      <tr><td>Project amount</td><td style={{ textAlign: 'right' }}>{money(p.amount_cents)}</td></tr>
+                                      <tr>
+                                        <td>Platform fee{p.success_fee_grandfathered ? ' (existing relationship)' : ''}
+                                          {p.success_fee_pct != null && ` (${p.success_fee_pct}%${p.success_fee_cap_cents ? `, capped ${money(p.success_fee_cap_cents)}` : ''})`}
+                                        </td>
+                                        <td style={{ textAlign: 'right' }}>{money(p.success_fee_cents ?? p.fee_cents)}</td>
+                                      </tr>
+                                      <tr>
+                                        <td>Platform infrastructure fee
+                                          {p.service_buffer_pct != null && ` (${p.service_buffer_pct}%${p.service_buffer_cap_cents ? `, capped ${money(p.service_buffer_cap_cents)}` : ''})`}
+                                        </td>
+                                        <td style={{ textAlign: 'right' }}>{money(p.service_buffer_cents)}</td>
+                                      </tr>
+                                      <tr><td>Payment processing fee</td><td style={{ textAlign: 'right' }} className="note">{processingFeeCents == null ? 'Passed through at charge time' : money(processingFeeCents)}</td></tr>
+                                      <tr><td>Taxes</td><td style={{ textAlign: 'right' }} className="note">Not applicable</td></tr>
+                                      <tr style={{ fontWeight: 600 }}><td>Total</td><td style={{ textAlign: 'right' }}>{money(totalCents)}</td></tr>
+                                    </tbody>
+                                  </table>
+                                </div>
+                                <div>
+                                  <div className="note" style={{ fontWeight: 600, marginBottom: 4 }}>Vendor payout</div>
+                                  <table>
+                                    <tbody>
+                                      <tr><td>Gross amount</td><td style={{ textAlign: 'right' }}>{money(p.amount_cents)}</td></tr>
+                                      <tr><td>Platform fee</td><td style={{ textAlign: 'right' }}>-{money(p.success_fee_cents ?? p.fee_cents)}</td></tr>
+                                      <tr><td>Processing allocation</td><td style={{ textAlign: 'right' }} className="note">Passed through at charge time</td></tr>
+                                      <tr><td>Infrastructure fee allocation</td><td style={{ textAlign: 'right' }}>-{money(p.service_buffer_cents)}</td></tr>
+                                      <tr style={{ fontWeight: 600 }}><td>Net payout</td><td style={{ textAlign: 'right' }}>{money(netPayoutCents)}</td></tr>
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
             )}

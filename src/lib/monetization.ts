@@ -49,8 +49,12 @@ export type FeaturedListing = {
 export const VENDOR_PRO_TIER_KEY = 'vendor_pro';
 export const VENDOR_PRO_PRICE_LABEL = '$149/mo';
 export const FREE_BID_LIMIT = 5;
-export const SUCCESS_FEE_PCT = 2;
-export const SUCCESS_FEE_CAP_LABEL = '$2,500';
+export const SUCCESS_FEE_PCT = 5;
+export const SUCCESS_FEE_CAP_LABEL = '$25,000';
+export const GRANDFATHERED_FEE_PCT = 2;
+export const GRANDFATHERED_FEE_CAP_LABEL = '$10,000';
+export const INFRASTRUCTURE_FEE_PCT = 0.1;
+export const INFRASTRUCTURE_FEE_CAP_LABEL = '$1,500';
 
 // ---- endpoint readers (all tolerant of absence) ----
 

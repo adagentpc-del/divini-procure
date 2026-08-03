@@ -46,10 +46,18 @@ export function feeCentsFromPercentage(baseCents: number | string | null | undef
  * construction deals. Grandfathered existing-relationship pairs get a lower rate
  * and cap. All are overridable via env (see config.ts); these are the fallbacks.
  */
-export const PROCURE_STANDARD_SUCCESS_PCT_DEFAULT = 2.0;
-export const PROCURE_STANDARD_SUCCESS_CAP_CENTS_DEFAULT = 250000; // $2,500
-export const PROCURE_GRANDFATHERED_SUCCESS_PCT_DEFAULT = 1.0;
-export const PROCURE_GRANDFATHERED_CAP_CENTS_DEFAULT = 100000; // $1,000
+export const PROCURE_STANDARD_SUCCESS_PCT_DEFAULT = 5.0;
+export const PROCURE_STANDARD_SUCCESS_CAP_CENTS_DEFAULT = 2500000; // $25,000
+export const PROCURE_GRANDFATHERED_SUCCESS_PCT_DEFAULT = 2.0;
+export const PROCURE_GRANDFATHERED_CAP_CENTS_DEFAULT = 1000000; // $10,000
+
+/**
+ * Service buffer defaults (percent + cap in cents): a separate fee shown on its
+ * own line, on top of the success fee, never merged into it and never labeled
+ * as a payment-processor fee. Same rate regardless of grandfathered status.
+ */
+export const PROCURE_SERVICE_BUFFER_PCT_DEFAULT = 0.1;
+export const PROCURE_SERVICE_BUFFER_CAP_CENTS_DEFAULT = 150000; // $1,500
 
 /**
  * Success fee in integer cents: a percentage of the award, capped. The cap is
@@ -57,8 +65,8 @@ export const PROCURE_GRANDFATHERED_CAP_CENTS_DEFAULT = 100000; // $1,000
  * negative. This is the V2 money model: the platform earns on the WIN, and the
  * vendor never pays a scary percentage on a large award.
  *
- * Example: 2% of $1,000,000 award = $20,000, capped at $2,500 -> 250000 cents.
- *          2% of $100,000 award = $2,000 (under the cap) -> 200000 cents.
+ * Example: 5% of $1,000,000 award = $50,000, capped at $25,000 -> 2500000 cents.
+ *          5% of $100,000 award = $5,000 (under the cap) -> 500000 cents.
  */
 export function successFeeCents(
   awardCents: number | string | null | undefined,

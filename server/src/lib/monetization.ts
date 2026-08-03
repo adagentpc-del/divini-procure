@@ -8,10 +8,13 @@
  * revenue collected by hand.
  *
  *   resolveAndRecordFee()        -> resolve the correct fee via resolveContextFee
- *                                   (grandfathered 2% > matrix > standard), then
- *                                   insert/update one platform_revenue row at
- *                                   status 'accrued'. Idempotent per payment
- *                                   authorization id.
+ *                                   (grandfathered 2% > matrix > standard), CAP
+ *                                   it, then insert/update one platform_revenue
+ *                                   row at status 'accrued'. Idempotent per
+ *                                   (payment authorization id, source type), so
+ *                                   the platform fee and the platform
+ *                                   infrastructure fee on the same authorization
+ *                                   each get their own row.
  *   maybeRecordReferralCommission() -> if the referred (developer) company was
  *                                   brought in by an active referral partner,
  *                                   record a pending profit-based commission
@@ -20,9 +23,12 @@
  *
  * Reuses resolveContextFee (fee-matrix.ts), which itself reuses getByPair +
  * resolveFee, so the protected grandfathered rate is honored automatically.
+ * This is the ONLY place that writes a fee amount to the revenue ledger: no
+ * fee percentage or cap is hard-coded here, everything comes from
+ * resolveContextFee (database-driven, with a config fallback).
  * Zero em dashes by convention. Integer cents throughout.
  */
-import { q, q1 } from "../pool.js";
+import { q1 } from "../pool.js";
 import { resolveContextFee } from "./fee-matrix.js";
 
 function num(v: number | string | null | undefined, fallback = 0): number {
@@ -39,7 +45,7 @@ export interface ResolveAndRecordFeeInput {
   paymentAuthorizationId?: string | null;
   programId?: string | null;
   ruleType?: string | null;
-  /** 'procurement_fee' (default) | 'capital_introduction' | 'subscription' | 'manual' */
+  /** 'procurement_fee' (default) | 'infrastructure_fee' | 'capital_introduction' | 'subscription' | 'manual' */
   sourceType?: string | null;
   actorUserId?: string | null;
   actorEmail?: string | null;
@@ -48,6 +54,9 @@ export interface ResolveAndRecordFeeInput {
 export interface ResolveAndRecordFeeResult {
   feePercentage: number | null;
   feeCents: number;
+  capCents: number | null;
+  capped: boolean;
+  grandfathered: boolean;
   feeSource: string;
   payerType: string;
   revenueId: string | null;
@@ -55,6 +64,7 @@ export interface ResolveAndRecordFeeResult {
 
 const SOURCE_TYPES = new Set([
   "procurement_fee",
+  "infrastructure_fee",
   "capital_introduction",
   "subscription",
   "manual",
@@ -63,11 +73,15 @@ const SOURCE_TYPES = new Set([
 /**
  * Resolve the correct fee for a developer/vendor/base context and RECORD it as
  * an accrued platform_revenue row. The fee is whatever resolveContextFee
- * returns (grandfathered 2% pair wins, else the most specific matrix rule, else
- * the platform standard). fee_cents is round(base * pct/100), or flatCents when
- * the resolved rule is a flat fee. Idempotent per paymentAuthorizationId: if a
- * row already exists for that authorization, it is UPDATED in place rather than
- * duplicated. Never moves money; status is always 'accrued' on write.
+ * returns (grandfathered 2% pair wins for standard_platform, else the most
+ * specific matrix rule, else the config fallback). fee_cents is
+ * round(base * pct/100) CAPPED at capCents (when set), or flatCents when the
+ * resolved rule is a flat fee. Idempotent per (paymentAuthorizationId,
+ * sourceType): if a row already exists for that authorization + fee type, it
+ * is UPDATED in place rather than duplicated - this lets the platform fee
+ * (source 'procurement_fee') and the platform infrastructure fee (source
+ * 'infrastructure_fee') coexist as two rows on the same authorization. Never
+ * moves money; status is always 'accrued' on write.
  */
 export async function resolveAndRecordFee(
   input: ResolveAndRecordFeeInput,
@@ -85,27 +99,36 @@ export async function resolveAndRecordFee(
 
   const pct = resolved.percentage;
   const flatCents = resolved.flatCents;
+  const capCents = resolved.capCents != null && resolved.capCents > 0 ? resolved.capCents : null;
+  const isFlat = flatCents != null && (pct == null || flatCents > 0);
   let feeCents: number;
-  if (flatCents != null && (pct == null || flatCents > 0)) {
-    // Flat-fee rule: accrue the flat amount.
+  let capped = false;
+  if (isFlat) {
+    // Flat-fee rule: accrue the flat amount (caps do not apply to flat fees).
     feeCents = Math.max(0, Math.round(num(flatCents)));
   } else {
-    feeCents = Math.max(0, Math.round((baseCents * num(pct)) / 100));
+    const uncapped = Math.max(0, Math.round((baseCents * num(pct)) / 100));
+    feeCents = capCents != null ? Math.min(uncapped, capCents) : uncapped;
+    capped = capCents != null && uncapped > capCents;
   }
 
   const result: ResolveAndRecordFeeResult = {
     feePercentage: pct,
     feeCents,
+    capCents,
+    capped,
+    grandfathered: resolved.source === "grandfathered_2_percent",
     feeSource: resolved.source,
     payerType: resolved.payer_type,
     revenueId: null,
   };
 
-  // Idempotent per payment authorization: update the existing accrual if any.
+  // Idempotent per (payment authorization, fee type): update the existing
+  // accrual if any, so the platform fee and infrastructure fee never collide.
   if (input.paymentAuthorizationId) {
     const existing = await q1<{ id: string; status: string }>(
-      `select id, status from platform_revenue where payment_authorization_id = $1`,
-      [input.paymentAuthorizationId],
+      `select id, status from platform_revenue where payment_authorization_id = $1 and source_type = $2`,
+      [input.paymentAuthorizationId, sourceType],
     );
     if (existing) {
       // Only refresh the fee math + context while the row is still 'accrued'.
@@ -113,20 +136,18 @@ export async function resolveAndRecordFee(
       if (existing.status === "accrued") {
         const updated = await q1<{ id: string }>(
           `update platform_revenue set
-             source_type = $1,
-             developer_company_id = $2,
-             vendor_company_id = $3,
-             purchase_order_id = $4,
-             program_id = $5,
-             base_cents = $6,
-             fee_percentage = $7,
-             fee_cents = $8,
-             fee_source = $9,
-             payer_type = $10,
+             developer_company_id = $1,
+             vendor_company_id = $2,
+             purchase_order_id = $3,
+             program_id = $4,
+             base_cents = $5,
+             fee_percentage = $6,
+             fee_cents = $7,
+             fee_source = $8,
+             payer_type = $9,
              updated_at = now()
-           where id = $11 returning id`,
+           where id = $10 returning id`,
           [
-            sourceType,
             input.developerCompanyId ?? null,
             input.vendorCompanyId ?? null,
             input.purchaseOrderId ?? null,

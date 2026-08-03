@@ -228,24 +228,31 @@ export default function Pricing() {
           <div className="fee">
             <div className="kicker" style={{ color: 'var(--champagne)' }}>How the fee works</div>
             <h2>You only pay when you win</h2>
-            <div className="big">2% success fee</div>
+            <div className="big">5% platform fee</div>
             <p className="sub">
-              When a vendor wins a project, Divini bills a 2% success fee on the awarded contract,
-              capped at $2,500. It is paid by the winning vendor. There are no fees to browse, bid, or post.
+              When a vendor wins a project, Divini bills a 5% platform fee on the awarded contract,
+              capped at $25,000, plus a separate 0.1% platform infrastructure fee capped at $1,500. Both
+              are paid by the winning vendor and shown as their own line items. There are no fees to
+              browse, bid, or post.
             </p>
             <div className="feerow">
               <div className="feecard">
                 <div className="lbl">Standard</div>
-                <div className="amt">2% · capped at $2,500</div>
+                <div className="amt">5% · capped at $25,000</div>
                 <p>Billed to the winning vendor on the awarded contract value.</p>
               </div>
               <div className="feecard">
                 <div className="lbl">Existing relationships</div>
-                <div className="amt">1% · capped at $1,000</div>
+                <div className="amt">2% · capped at $10,000</div>
                 <p>A reduced rate when you already have a working relationship with the developer.</p>
               </div>
+              <div className="feecard">
+                <div className="lbl">Platform infrastructure fee</div>
+                <div className="amt">0.1% · capped at $1,500</div>
+                <p>A separate infrastructure fee shown on its own line, on every awarded contract.</p>
+              </div>
             </div>
-            <div className="feenote">No fees to browse, bid, or post. The success fee only applies when work is awarded.</div>
+            <div className="feenote">No fees to browse, bid, or post. Payment processing costs (e.g. Stripe) are passed through separately and shown as their own line item. The platform and infrastructure fees only apply when work is awarded.</div>
           </div>
         </div>
       </section>

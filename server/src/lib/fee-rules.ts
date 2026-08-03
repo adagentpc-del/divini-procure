@@ -8,32 +8,29 @@
  * admin override (fee_rule_source = 'admin_override') or deactivation may change
  * it, and that path is handled in the route layer, not here.
  *
- * The pure arithmetic (rate resolution + fee-cents calculation) lives in the
- * dependency-free module ./feeMath.js and is delegated to from here, so the
- * public API and behavior of this module are unchanged.
+ * The pure arithmetic (rate resolution) lives in the dependency-free module
+ * ./feeMath.js and is delegated to from here, so the public API and behavior
+ * of this module are unchanged. Actual fee AMOUNTS (with caps applied) are
+ * resolved from the database via fee-matrix.ts / monetization.ts, which is the
+ * single source of truth for percentages, caps, and fee types - nothing here
+ * hard-codes a money amount. This module only decides the boolean
+ * "is this pair grandfathered" and the label shown for it.
  *
  * Zero em dashes by convention.
  */
 import {
-  DEFAULT_STANDARD_FEE_PERCENTAGE,
   GRANDFATHERED_FEE_PERCENTAGE as GRANDFATHERED_FEE_PERCENTAGE_PURE,
-  feeCentsFromPercentage,
   resolveFeeRule,
-  successFeeCents,
 } from "./feeMath.js";
-import {
-  PROCURE_SUCCESS_FEE_PCT,
-  PROCURE_SUCCESS_FEE_CAP_CENTS,
-  PROCURE_GRANDFATHERED_PCT,
-  PROCURE_GRANDFATHERED_CAP_CENTS,
-} from "../config.js";
+import { PROCURE_SUCCESS_FEE_PCT } from "../config.js";
 
-/** Platform default fee when no grandfathered rule applies. Override via env. */
-export const STANDARD_FEE_PERCENTAGE = (() => {
-  const raw = process.env.PROCURE_STANDARD_FEE_PCT;
-  const n = raw == null ? NaN : Number(raw);
-  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_STANDARD_FEE_PERCENTAGE;
-})();
+/**
+ * Platform standard fee percentage shown when a pair is NOT grandfathered.
+ * Sourced from config (which itself defaults to 5%, overridable via
+ * PROCURE_SUCCESS_FEE_PCT); the legacy separate PROCURE_STANDARD_FEE_PCT /
+ * 10% default is retired so there is exactly one standard-rate knob.
+ */
+export const STANDARD_FEE_PERCENTAGE = PROCURE_SUCCESS_FEE_PCT;
 
 export const GRANDFATHERED_FEE_PERCENTAGE = GRANDFATHERED_FEE_PERCENTAGE_PURE;
 
@@ -108,46 +105,4 @@ export interface ResolvedFee {
  */
 export function resolveFee(rel: RelationshipFeeInput | null | undefined): ResolvedFee {
   return resolveFeeRule(rel, STANDARD_FEE_PERCENTAGE);
-}
-
-/** Compute the fee amount (integer cents) for a base amount, given a relationship. */
-export function computeFeeCents(
-  baseCents: number,
-  rel: RelationshipFeeInput | null | undefined,
-): { feeCents: number; feePercentage: number; grandfathered: boolean } {
-  const resolved = resolveFee(rel);
-  const feeCents = feeCentsFromPercentage(baseCents, resolved.feePercentage);
-  return {
-    feeCents,
-    feePercentage: resolved.feePercentage,
-    grandfathered: resolved.grandfathered,
-  };
-}
-
-/**
- * Monetization V2 SUCCESS FEE for a platform-sourced AWARD. The winning vendor
- * pays a low percentage of the awarded contract, CAPPED, so a large construction
- * award never carries a punitive fee. Grandfathered existing-relationship pairs
- * pay a lower rate and cap. Rates/caps come from config (env-tunable).
- *
- * Returns the fee in integer cents plus the rate, cap, and whether the
- * grandfathered relationship rate applied, for recording on the award row.
- */
-export function computeSuccessFeeCents(
-  awardCents: number,
-  rel: RelationshipFeeInput | null | undefined,
-): {
-  feeCents: number;
-  feePercentage: number;
-  capCents: number;
-  grandfathered: boolean;
-  capped: boolean;
-} {
-  const resolved = resolveFee(rel);
-  const grandfathered = resolved.grandfathered;
-  const pct = grandfathered ? PROCURE_GRANDFATHERED_PCT : PROCURE_SUCCESS_FEE_PCT;
-  const capCents = grandfathered ? PROCURE_GRANDFATHERED_CAP_CENTS : PROCURE_SUCCESS_FEE_CAP_CENTS;
-  const uncapped = feeCentsFromPercentage(awardCents, pct);
-  const feeCents = successFeeCents(awardCents, pct, capCents);
-  return { feeCents, feePercentage: pct, capCents, grandfathered, capped: feeCents < uncapped };
 }

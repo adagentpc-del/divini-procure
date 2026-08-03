@@ -32,9 +32,6 @@ import { getAuth, requireUser } from "../auth.js";
 import { q, q1 } from "../pool.js";
 import { ForbiddenError, NotFoundError } from "../db.js";
 import { resolveAndRecordFee, maybeRecordReferralCommission } from "../lib/monetization.js";
-import { PROCURE_MONETIZATION_V2 } from "../config.js";
-import { computeSuccessFeeCents } from "../lib/fee-rules.js";
-import { getByPair } from "../lib/relationships.js";
 
 // Async handler wrapper that funnels errors to the error middleware.
 const h =
@@ -309,18 +306,24 @@ router.patch(
 
 // ---- POST /award/purchase-orders/:id/payment-auth -- RECORD ONLY ------------
 // {amountCents, feePercentage?, payerType?} -> a pending payment_authorizations
-// row PLUS a platform_revenue accrual (and a referral commission if applicable).
-// This NEVER moves money; the monetization engine RECORDS/ACCRUES revenue only.
+// row PLUS two platform_revenue accruals (platform fee + infrastructure fee)
+// and a referral commission if applicable. This NEVER moves money; the
+// monetization engine RECORDS/ACCRUES revenue only.
 //
-// Fee resolution:
-//   - If feePercentage is NOT supplied, the correct fee is AUTO-RESOLVED via the
-//     monetization engine (grandfathered 2% pair > fee matrix > standard) from
-//     the PO's developer_company_id + vendor_company_id + amountCents, and the
-//     resolved fee_percentage + fee_cents are stored on the authorization.
-//   - If feePercentage IS supplied, the manual value is kept (source 'manual'),
-//     and the platform_revenue ledger row is still written.
-// After recording revenue, a referral commission is recorded if the DEVELOPER
-// (the referred party for procurement) was brought in by an active partner.
+// Fee resolution (single source of truth: server/src/lib/fee-matrix.ts, backed
+// by the fee_rules database table, db/schema-fee-matrix.sql):
+//   - PLATFORM FEE: if feePercentage is NOT supplied, it is AUTO-RESOLVED
+//     (grandfathered existing-relationship pair > enterprise/custom fee_rules
+//     row > standard 5% capped $25,000 / grandfathered 2% capped $10,000). If
+//     feePercentage IS supplied, the manual value is kept (source 'manual').
+//   - PLATFORM INFRASTRUCTURE FEE: always auto-resolved (0.1% capped $1,500),
+//     always its own line item, regardless of whether the platform fee above
+//     was manual. Never merged into the platform fee.
+// Both fees are always recorded (this is not gated behind a flag); their
+// resolved percentage/cap/amount are stored on the authorization row AND as
+// separate platform_revenue ledger rows. After recording, a referral
+// commission is recorded if the DEVELOPER (the referred party for
+// procurement) was brought in by an active partner.
 router.post(
   "/purchase-orders/:id/payment-auth",
   requireUser,
@@ -338,80 +341,37 @@ router.post(
     }
 
     const manualFeeSupplied = req.body?.feePercentage != null && req.body.feePercentage !== "";
-    let feePercentage: number | null = null;
-    let feeCents: number | null = null;
+    let manualFeePercentage: number | null = null;
+    let manualFeeCents: number | null = null;
     if (manualFeeSupplied) {
-      feePercentage = Number(req.body.feePercentage);
-      if (!Number.isFinite(feePercentage)) {
+      manualFeePercentage = Number(req.body.feePercentage);
+      if (!Number.isFinite(manualFeePercentage)) {
         return res.status(400).json({ error: "feePercentage must be a number" });
       }
-      feeCents = Math.round((amountCents * feePercentage) / 100);
-    } else {
-      // AUTO-RESOLVE the correct fee (grandfathered / matrix / standard) so the
-      // authorization carries the right rate without the caller specifying it.
-      const auto = await resolveAndRecordFee({
-        developerCompanyId: po.developer_company_id ?? null,
-        vendorCompanyId: po.vendor_company_id ?? null,
-        baseCents: amountCents,
-        purchaseOrderId: po.id,
-        actorUserId: auth.userId ?? null,
-        actorEmail: auth.email ?? null,
-      });
-      feePercentage = auto.feePercentage;
-      feeCents = auto.feeCents;
+      manualFeeCents = Math.round((amountCents * manualFeePercentage) / 100);
     }
 
     const payerType: string | null = req.body?.payerType ? String(req.body.payerType) : null;
     const notes: string | null = req.body?.notes ? String(req.body.notes) : null;
 
+    // Insert the base authorization row first (placeholder fee columns), so
+    // every fee resolution below can be tied to a real payment_authorization_id
+    // from the start - this keeps the ledger accrual idempotent per fee type
+    // and avoids ever writing an orphaned accrual row.
     let row = await q1<any>(
       `insert into payment_authorizations
          (purchase_order_id, amount_cents, fee_percentage, fee_cents, payer_type, status, notes)
        values ($1,$2,$3,$4,$5,'pending',$6)
        returning *`,
-      [po.id, amountCents, feePercentage, feeCents, payerType, notes],
+      [po.id, amountCents, manualFeePercentage, manualFeeCents, payerType, notes],
     );
 
-    // Monetization V2 (flag-gated): record the SUCCESS FEE billed to the winning
-    // vendor onto this authorization row. The award amount is the PO/bid total in
-    // cents (amountCents). The fee is computeSuccessFeeCents (2% capped $2,500,
-    // grandfathered pairs 1% capped $1,000) using the developer/vendor pair's
-    // relationship. RECORD ONLY (status 'accrued'); no money moves here. No-op
-    // when the flag is off, so today's behavior is unchanged.
-    if (PROCURE_MONETIZATION_V2) {
-      try {
-        const rel =
-          po.developer_company_id && po.vendor_company_id
-            ? await getByPair(po.developer_company_id, po.vendor_company_id)
-            : null;
-        const sf = computeSuccessFeeCents(amountCents, rel);
-        const sfRow = await q1<any>(
-          `update payment_authorizations
-              set award_cents = $2,
-                  success_fee_pct = $3,
-                  success_fee_cap_cents = $4,
-                  success_fee_cents = $5,
-                  success_fee_grandfathered = $6,
-                  success_fee_status = 'accrued'
-            where id = $1
-            returning *`,
-          [row.id, amountCents, sf.feePercentage, sf.capCents, sf.feeCents, sf.grandfathered],
-        );
-        if (sfRow) row = sfRow;
-      } catch {
-        // Recording the success fee must never break the authorization (no money
-        // moves either way). Leave the base authorization row in place on error.
-      }
-    }
-
-    // Write the platform_revenue ledger row, keyed to this authorization so the
-    // accrual is idempotent. For an auto-resolved fee this re-resolves and ties
-    // the existing accrual to the authorization id; for a manual fee it records
-    // the supplied amount as a 'manual' source accrual. Records only; no charge.
     let revenueId: string | null = null;
-    let recordedFeeCents = feeCents ?? 0;
+    let recordedFeeCents = manualFeeCents ?? 0;
     try {
-      const recorded = await resolveAndRecordFee({
+      // PLATFORM FEE: auto-resolve (grandfathered / enterprise matrix row /
+      // standard, capped) unless a manual override was supplied.
+      const platformFee = await resolveAndRecordFee({
         developerCompanyId: po.developer_company_id ?? null,
         vendorCompanyId: po.vendor_company_id ?? null,
         baseCents: amountCents,
@@ -421,23 +381,69 @@ router.post(
         actorUserId: auth.userId ?? null,
         actorEmail: auth.email ?? null,
       });
-      revenueId = recorded.revenueId;
-      // For a manual fee, the ledger should reflect the manual amount, not the
-      // re-resolved one. Override the just-written accrual to the manual values.
+      revenueId = platformFee.revenueId;
+
+      const finalFeePercentage = manualFeeSupplied ? manualFeePercentage : platformFee.feePercentage;
+      const finalFeeCents = manualFeeSupplied ? manualFeeCents : platformFee.feeCents;
+      recordedFeeCents = finalFeeCents ?? 0;
+
       if (manualFeeSupplied && revenueId) {
+        // The ledger should reflect the manual amount, not the auto-resolved one.
         await q(
           `update platform_revenue
               set fee_percentage = $1, fee_cents = $2, fee_source = 'manual', updated_at = now()
             where id = $3 and status = 'accrued'`,
-          [feePercentage, feeCents, revenueId],
+          [manualFeePercentage, manualFeeCents, revenueId],
         );
-        recordedFeeCents = feeCents ?? 0;
-      } else {
-        recordedFeeCents = recorded.feeCents;
       }
+
+      // PLATFORM INFRASTRUCTURE FEE: always auto-resolved, always its own line
+      // item, regardless of whether the platform fee above was manual.
+      const infraFee = await resolveAndRecordFee({
+        developerCompanyId: po.developer_company_id ?? null,
+        vendorCompanyId: po.vendor_company_id ?? null,
+        baseCents: amountCents,
+        purchaseOrderId: po.id,
+        paymentAuthorizationId: row.id,
+        ruleType: "platform_infrastructure_fee",
+        sourceType: "infrastructure_fee",
+        actorUserId: auth.userId ?? null,
+        actorEmail: auth.email ?? null,
+      });
+
+      const updated = await q1<any>(
+        `update payment_authorizations
+            set fee_percentage = $2,
+                fee_cents = $3,
+                award_cents = $4,
+                success_fee_pct = $5,
+                success_fee_cap_cents = $6,
+                success_fee_cents = $7,
+                success_fee_grandfathered = $8,
+                success_fee_status = 'accrued',
+                service_buffer_pct = $9,
+                service_buffer_cap_cents = $10,
+                service_buffer_cents = $11
+          where id = $1
+          returning *`,
+        [
+          row.id,
+          finalFeePercentage,
+          finalFeeCents,
+          amountCents,
+          finalFeePercentage,
+          platformFee.capCents,
+          finalFeeCents,
+          platformFee.grandfathered,
+          infraFee.feePercentage,
+          infraFee.capCents,
+          infraFee.feeCents,
+        ],
+      );
+      if (updated) row = updated;
     } catch {
-      // Recording the accrual must never break the authorization (no money moves
-      // either way). Leave revenueId null if the ledger write failed.
+      // Recording fees must never break the authorization (no money moves
+      // either way). Leave the base authorization row in place on error.
     }
 
     // Record a referral commission if the developer (the referred party for a

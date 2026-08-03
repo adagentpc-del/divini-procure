@@ -421,7 +421,7 @@ export default function Landing() {
             <div className="fstep"><div className="ic">$</div><h4>Developers</h4><p>Free. Post projects and receive bids from verified vendors.</p></div>
             <div className="fstep"><div className="ic">◷</div><h4>Vendors</h4><p>Free. Build a profile and submit up to 5 bids per quarter.</p></div>
             <div className="fstep"><div className="ic">★</div><h4>Vendor Pro</h4><p>$149 per month. Unlimited bids, project alerts, and priority matching.</p></div>
-            <div className="fstep"><div className="ic">✓</div><h4>You only pay when you win</h4><p>A 2 percent success fee on the awarded contract, capped at $2,500.</p></div>
+            <div className="fstep"><div className="ic">✓</div><h4>You only pay when you win</h4><p>A 5 percent platform fee on the awarded contract, capped at $25,000, plus a separate 0.1 percent infrastructure fee capped at $1,500.</p></div>
           </div>
           <div className="scale-note">No fees to browse, bid, or post. <a onClick={() => nav('/pricing')} style={{color:'var(--emerald)',fontWeight:600,cursor:'pointer'}}>See full pricing</a>.</div>
         </div>
@@ -435,7 +435,7 @@ export default function Landing() {
           <div style={{maxWidth:680,margin:'0 auto',display:'grid',gap:20,textAlign:'left'}}>
             {[
               { q: 'Is Divini Procure free for developers?', a: 'Yes. Developers post projects, receive bids, and award contracts at no cost. There are no monthly fees or per-project charges for developers.' },
-              { q: 'How does the success fee work?', a: 'When a vendor wins an awarded contract through Divini Procure, a 2% success fee applies to the award amount, capped at $2,500. There is no fee to browse, bid, or post.' },
+              { q: 'How does the platform fee work?', a: 'When a vendor wins an awarded contract through Divini Procure, a 5% platform fee applies to the award amount, capped at $25,000 (2% capped at $10,000 for an existing relationship), plus a separate 0.1% platform infrastructure fee capped at $1,500, always shown as its own line item. There is no fee to browse, bid, or post.' },
               { q: 'How are vendors verified?', a: 'We confirm license, insurance, and certifications before a vendor can submit bids. Vendors who go further with bonding, financials, and references earn a Verified+ badge.' },
               { q: 'Can vendors bid for free?', a: 'Yes. Vendors can build a profile and submit up to 5 bids per quarter at no cost. Vendor Pro ($149/month) unlocks unlimited bids, project alerts, and priority matching.' },
               { q: 'Is my data secure?', a: 'Yes. All data is encrypted in transit and at rest. Role-based access controls ensure developers only see their own projects, and vendors only see their own bids.' },

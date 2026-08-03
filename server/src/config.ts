@@ -239,8 +239,11 @@ export const emailEnabled = (): boolean =>
  * Monetization V2 (transaction-marketplace model) master flag. When true:
  *   - developers free; vendors free to join + 5 bids per quarter (no rollover,
  *     20/year terminating annually); Vendor Pro = unlimited.
- *   - SUCCESS FEE on platform-sourced awards: 2% of the award capped at $2,500,
- *     billed to the winning vendor (grandfathered pairs: 1% capped $1,000).
+ *   - SUCCESS FEE on platform-sourced awards: 5% of the award capped at
+ *     $25,000, billed to the winning vendor (grandfathered pairs: 2% capped
+ *     $10,000), plus a separate 0.1% service buffer capped at $1,500 shown as
+ *     its own line item (never merged into the success fee or represented as
+ *     a payment-processor fee).
  *   - verification is a mandatory free GATE before a vendor can bid / be matched
  *     / message / be recommended to a developer.
  *   - Vendor Pro $149/mo, Verified+ and Featured upsells.
@@ -249,12 +252,20 @@ export const emailEnabled = (): boolean =>
 export const PROCURE_MONETIZATION_V2 = process.env.PROCURE_MONETIZATION_V2 === "true";
 
 /** Standard success fee: percent of the award and the cap (cents). */
-export const PROCURE_SUCCESS_FEE_PCT = Number(process.env.PROCURE_SUCCESS_FEE_PCT || 2);
-export const PROCURE_SUCCESS_FEE_CAP_CENTS = Number(process.env.PROCURE_SUCCESS_FEE_CAP_CENTS || 250000);
+export const PROCURE_SUCCESS_FEE_PCT = Number(process.env.PROCURE_SUCCESS_FEE_PCT || 5);
+export const PROCURE_SUCCESS_FEE_CAP_CENTS = Number(process.env.PROCURE_SUCCESS_FEE_CAP_CENTS || 2500000);
 
 /** Grandfathered existing-relationship success fee: percent + cap (cents). */
-export const PROCURE_GRANDFATHERED_PCT = Number(process.env.PROCURE_GRANDFATHERED_PCT || 1);
-export const PROCURE_GRANDFATHERED_CAP_CENTS = Number(process.env.PROCURE_GRANDFATHERED_CAP_CENTS || 100000);
+export const PROCURE_GRANDFATHERED_PCT = Number(process.env.PROCURE_GRANDFATHERED_PCT || 2);
+export const PROCURE_GRANDFATHERED_CAP_CENTS = Number(process.env.PROCURE_GRANDFATHERED_CAP_CENTS || 1000000);
+
+/**
+ * Service buffer: a separate, always-shown-alone fee on top of the success
+ * fee (never merged into it, never labeled as a processor fee). Applies at
+ * the same rate regardless of grandfathered status.
+ */
+export const PROCURE_SERVICE_BUFFER_PCT = Number(process.env.PROCURE_SERVICE_BUFFER_PCT || 0.1);
+export const PROCURE_SERVICE_BUFFER_CAP_CENTS = Number(process.env.PROCURE_SERVICE_BUFFER_CAP_CENTS || 150000);
 
 /** Free-tier bid allowance per quarter (no rollover; 4x = annual allotment). */
 export const PROCURE_FREE_BIDS_PER_QUARTER = Number(process.env.PROCURE_FREE_BIDS_PER_QUARTER || 5);

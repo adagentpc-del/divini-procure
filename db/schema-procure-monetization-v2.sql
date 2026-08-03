@@ -5,9 +5,12 @@
 --   * Free vendors get 5 bids per quarter (no rollover; 20/year terminating
 --     annually). Usage tracked in vendor_bid_credits; enforcement in
 --     lib/bidCredits.ts. A win never consumes a credit; Pro = unlimited.
---   * SUCCESS FEE on platform-sourced awards billed to the winning vendor:
---     2% capped $2,500 standard, 1% capped $1,000 grandfathered. Recorded on
---     payment_authorizations.
+--   * PLATFORM FEE on platform-sourced awards billed to the winning vendor:
+--     5% capped $25,000 standard, 2% capped $10,000 existing-relationship,
+--     PLUS a separate 0.1% platform infrastructure fee capped $1,500 always
+--     shown as its own line item. Both are resolved from the fee_rules matrix
+--     (db/schema-fee-matrix.sql), never hard-coded, and always recorded
+--     (not flag-gated) on payment_authorizations.
 --   * Verification GATE: a vendor cannot bid / match / message / be recommended
 --     until verify_status = 'verified'. Credential expiry tracked + auto-revoke.
 --   * Vendor Pro $149/mo, Verified+ and Featured upsells (subscription_tiers +
@@ -62,7 +65,12 @@ alter table if exists vendor_credentials add column if not exists doc_status tex
 alter table if exists vendor_profiles add column if not exists verified_at timestamptz;
 alter table if exists vendor_profiles add column if not exists verification_expires_at timestamptz; -- earliest credential expiry
 
--- ---------- Success fee on awards (payment_authorizations) ----------
+-- ---------- Platform fee on awards (payment_authorizations) ----------
+-- Columns keep their original "success_fee_*" names for backward compatibility
+-- with existing readers, but now hold the SINGLE unified platform fee (5%
+-- capped $25,000 standard; 2% capped $10,000 existing-relationship), always
+-- resolved from the fee_rules matrix (db/schema-fee-matrix.sql), not a
+-- hard-coded constant.
 alter table if exists payment_authorizations add column if not exists award_cents bigint;
 alter table if exists payment_authorizations add column if not exists success_fee_pct numeric;
 alter table if exists payment_authorizations add column if not exists success_fee_cap_cents bigint;
@@ -70,6 +78,14 @@ alter table if exists payment_authorizations add column if not exists success_fe
 alter table if exists payment_authorizations add column if not exists success_fee_grandfathered boolean default false;
 alter table if exists payment_authorizations add column if not exists success_fee_status text default 'accrued'
   check (success_fee_status in ('accrued','invoiced','billed','paid','waived','void'));
+
+-- ---------- Platform infrastructure fee on awards (payment_authorizations) --
+-- Always a separate line item (0.1% capped $1,500), never merged into the
+-- platform fee above and never labeled as a payment-processor fee. Resolved
+-- from the fee_rules matrix (rule_type = 'platform_infrastructure_fee').
+alter table if exists payment_authorizations add column if not exists service_buffer_pct numeric;
+alter table if exists payment_authorizations add column if not exists service_buffer_cap_cents bigint;
+alter table if exists payment_authorizations add column if not exists service_buffer_cents bigint;
 
 -- ---------- Tier catalogue seeds (idempotent; never overwrite admin edits) ----------
 -- subscription_tiers exists (key, name, audience, price_cents, *_limit, seat_limit, ai_features...).

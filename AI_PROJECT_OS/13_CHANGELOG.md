@@ -6,6 +6,59 @@ the Authentik/Supabase era and does not reflect Monetization V2.)
 
 ---
 
+## 2026-08-03 - Unified platform fee model (single source of truth), always-on
+
+**What.** Replaced the three competing fee models (legacy uncapped 10%/2%,
+flag-gated Monetization V2's 2%-capped-$2,500/1%-capped-$1,000) with ONE
+database-driven model, always active (not flag-gated):
+- Standard platform fee: 5%, capped at $25,000.
+- Existing-relationship (grandfathered) fee: 2%, capped at $10,000.
+- Platform infrastructure fee: 0.1%, capped at $1,500, always its own line
+  item, never merged into the platform fee or labeled as a processor fee.
+- All three are resolved from the `fee_rules` database table
+  (`db/schema-fee-matrix.sql`, extended with a `cap_cents` column and a new
+  `platform_infrastructure_fee` rule type), with `config.ts` env constants as
+  the fallback default when no row exists yet. A developer- or vendor-scoped
+  `fee_rules` row is an enterprise custom fee schedule.
+- `payment_authorizations` gained `service_buffer_pct/cap_cents/cents`
+  columns alongside the existing `success_fee_*` ones (now holding the
+  unified platform fee, not a separate V2-only number).
+- `platform_revenue` now allows one ledger row per authorization PER fee type
+  (`source_type` in `procurement_fee`/`infrastructure_fee`/...), fixing a
+  latent bug where the old auto-resolve path wrote an orphaned ledger row
+  with a null `payment_authorization_id` on every award.
+- `AwardWorkflow.tsx` payment-authorization rows now have a "View breakdown"
+  toggle showing the full invoice (project amount, platform fee, platform
+  infrastructure fee, processing fee, taxes, total) and vendor payout (gross,
+  platform fee, processing allocation, infrastructure fee allocation, net)
+  line items.
+- Removed the now-dead legacy fee functions (`computeFeeCents`,
+  `computeSuccessFeeCents`, `computeServiceBufferCents`); `fee-matrix.ts`'s
+  `resolveContextFee` is the only remaining place a fee amount is computed.
+
+**Why.** Three parallel fee models with no single source of truth was
+flagged in the launch-readiness audit as a real risk; asked directly to
+consolidate on one model with the new percentages/caps above.
+
+**Files.** `server/src/config.ts`, `server/src/lib/{feeMath,fee-rules,
+fee-matrix,monetization}.ts`, `server/src/routes/award-workflow.ts`,
+`db/{schema-fee-matrix,schema-revenue,schema-procure-monetization-v2,
+apply-all}.sql`, `src/lib/monetization.ts`, `src/pages/{Pricing,Landing,
+Onboarding,AdminConsole,AwardWorkflow}.tsx`, `tests/feeMath.test.ts`.
+
+**Risks.** A pre-existing local/dev DB that already ran the old `fee_rules`
+seed (10%, uncapped) is migrated forward by an `update` statement scoped to
+rows that still exactly match the old seed values, never an admin edit.
+Payment processing fee display is a placeholder ("passed through at charge
+time") since no live processor charge is wired yet (Stripe is accrual-only
+per `16_TECH_DEBT.md`).
+
+**Next.** QA the new caps end-to-end once a production DB exists; consider
+extending the admin fee matrix UI (`AdminFeeMatrix.tsx`) to surface
+`cap_cents` for editing (currently DB/API-only).
+
+---
+
 ## 2026-06-24 - Monetization V2 build (W1-W5), behind PROCURE_MONETIZATION_V2
 
 **What.** Built the transaction-marketplace money + verification model, flag-gated.
