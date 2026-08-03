@@ -6,6 +6,83 @@ the Authentik/Supabase era and does not reflect Monetization V2.)
 
 ---
 
+## 2026-08-03 (5) - Divini Bid Studio (Slice 3 of the Divini deterministic business tools)
+
+**What.** A structured draft-build-then-submit workflow for a vendor's bid,
+extending the EXISTING `bids`/`bid_line_items` tables (`db/schema.sql`)
+rather than duplicating them - the existing simple submission path
+(`POST /api/packages/:id/bids` -> `submitPricedBid`) and the separate
+`bid_items`/`package_line_items` BOQ-pricing feature are both untouched and
+keep working. Bid Studio is an alternate path for a vendor who wants: line
+items with optional upgrades (buyer can include/exclude), tax/discount/
+deposit, a payment schedule (`bid_payment_milestones`), assumptions/
+exclusions/terms, an expiration date, versioned drafts (`bid_versions`,
+immutable snapshots), and reusable templates (`bid_templates` +
+`bid_template_line_items`, "save as template" / "apply template" actions).
+
+- **Deterministic totals** (`server/src/lib/bid-totals.ts`, pure, zero IO,
+  10 tests): subtotal = sum of qty x unit price for included line items (an
+  optional line item counts only if explicitly selected); total = subtotal
+  minus discount plus tax, never negative; deposit is either an explicit
+  amount or a percentage of the total. This is the one place in the codebase
+  that converts the existing DOLLAR-denominated `bids.price`/
+  `bid_line_items.unit_price` columns into integer CENTS, matching the
+  money convention used everywhere else built this session.
+- **Deterministic readiness score**, same checklist pattern as the previous
+  two slices: has a line item, total > 0, expiration set, terms set, deposit
+  terms set, assumptions/exclusions listed - 100 points, always shown with
+  its breakdown, never a gate beyond basic input validation (at least one
+  line item and a positive total are required to submit - that's input
+  validation, not a business judgment about the bid).
+- **On submit**, the computed total is written into the existing
+  `bids.price` column (dollars) alongside the new cents-based breakdown
+  columns, so award-workflow.ts, quote-compare, `bid_recommendations`, and
+  purchase-order creation all keep reading the same field they always have.
+
+**A real bug caught in self-review, fixed before commit.** The first draft
+let a vendor edit line items, milestones, or tax/discount/deposit on a bid
+AFTER it was already submitted - since `total_cents`/`price` are only
+recomputed at submit time, this would have silently desynced the stored
+total from the underlying line items. Found the existing convention for
+this in `change-orders.ts` ("fields are only editable while draft") and
+added the same guard (`draftEditBlockReason`) to every mutation endpoint.
+Also matched the `toTextArray()` + `::text[]`-cast pattern from
+`products.ts` for the `exclusions` array field, same as the Scope Builder
+fix last commit.
+
+**Files.** `db/schema-bid-studio.sql` (new, additive ALTERs + new tables,
+synced into `db/apply-all.sql`), `server/src/lib/bid-totals.ts`,
+`server/src/routes/bid-studio.ts` (mounted at `/api/bid-studio`),
+`src/pages/BidStudio.tsx`, nav entry in `src/components/Shell.tsx` (vendor
+Workspace section), route in `src/App.tsx`,
+`tests/bid-totals.test.ts` (10 new tests, all pure - no DB).
+
+**Permissions.** Same single-owner model as Pipeline and Scope Builder: a
+draft belongs to its `vendor_company_id`; access = member of that company,
+or admin. This is the vendor's own workspace for building a bid, not a
+shared record with the developer until submitted.
+
+**Tests completed.** Unit tests only (10, all passing) for the pure totals/
+readiness functions. Server and SPA typecheck clean. **Not tested against a
+live database or in a browser** - same sandbox limitation as the previous
+two slices (no Docker, no `DATABASE_URL`, nothing on 5432/5433). Verified by
+careful manual read of the SQL and route logic; still needs a real
+`apply-all.sql` run + UI smoke test.
+
+**Known gap, not fixed this pass.** The frontend doesn't yet hide the
+line-item edit/remove controls once a bid is submitted - the backend
+correctly rejects the request (400, "only a draft can be edited"), but the
+UI will show a now-disabled-looking action without explaining why until the
+user clicks it. Cosmetic, not a data-integrity issue.
+
+**Deferred.** Slice 4 (Divini Follow-Up Desk), Slice 5 (Divini Profit Map).
+No entitlement gating yet. No integration yet with Divini Scope Builder's
+line items (a published scope's structured fields don't auto-populate a Bid
+Studio draft's line items) - `bids.scope_instance_id` exists as a link but
+nothing reads it yet.
+
+---
+
 ## 2026-08-03 (4) - Divini Scope Builder (Slice 2 of the Divini deterministic business tools)
 
 **What.** Structured, trade-specific requirement definitions for a bid

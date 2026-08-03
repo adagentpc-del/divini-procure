@@ -84,6 +84,7 @@ import onboardingSamplesRouter from "./routes/onboarding-samples.js";
 import investmentGovernanceRouter from "./routes/investment-governance.js";
 import pipelineRouter from "./routes/pipeline.js";
 import scopeBuilderRouter from "./routes/scope-builder.js";
+import bidStudioRouter from "./routes/bid-studio.js";
 import teasersProfilesRouter from "./routes/teasers-profiles.js";
 import incentivesRouter from "./routes/incentives.js";
 import profileCollateralRouter from "./routes/profile-collateral.js";
@@ -184,6 +185,8 @@ router.use(investmentGovernanceRouter);
 router.use("/pipeline", pipelineRouter);
 // ---- Divini Scope Builder: structured procurement requirement definitions --
 router.use("/scope", scopeBuilderRouter);
+// ---- Divini Bid Studio: structured vendor bid draft-build workflow ---------
+router.use("/bid-studio", bidStudioRouter);
 router.use(teasersProfilesRouter);
 router.use("/incentives", incentivesRouter);
 router.use(profileCollateralRouter);
