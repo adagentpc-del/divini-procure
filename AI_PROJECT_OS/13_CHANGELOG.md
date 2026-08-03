@@ -6,6 +6,89 @@ the Authentik/Supabase era and does not reflect Monetization V2.)
 
 ---
 
+## 2026-08-03 (15) - Automated WCAG scan + SOC 2 readiness checklist
+
+**What.** Two follow-ups to entry (14): a proper automated accessibility
+scan (axe-core, the tool auditors and plaintiffs' experts actually use -
+not just the manual keyboard-nav check from entry 14), and a SOC 2
+readiness gap analysis.
+
+**WCAG scan.** Ran axe-core (WCAG 2.0/2.1 A+AA ruleset) via Playwright
+against the Vite dev server across all 14 public, unauthenticated pages
+(the highest-exposure surface for ADA claims). First pass found real
+issues on 8 of 14 pages; after fixes, 13 of 14 pages are fully clean and
+the 4 remaining flags on the last one are confirmed false positives (see
+below) - not left unresolved.
+
+- **A genuine bug, not just an accessibility nit**: `Landing.tsx`'s
+  "Vendors" animated demo list had an actually-invisible list item. Its
+  highlight keyframe (`hl4`) paired white text with a background at only
+  18% opacity, so the highlighted item's text was white-on-cream with a
+  contrast ratio of 1.16:1 - unreadable by anyone, not just screen-reader
+  or low-vision users. Confirmed with a before/after screenshot. Root
+  cause: the sibling keyframe for the other demo list (`hl5`) does this
+  correctly (opaque background, dark text); `hl4` just had the wrong
+  values. Fixed to match the working pattern.
+- Six legal pages (Privacy, Terms, PaymentPolicy, NonCircumvention,
+  Cookies, Accessibility) shared two issues: an "Effective [date]" line
+  at 3.93:1 contrast (needs 4.5:1) and inline links distinguished from
+  surrounding text by color alone. Fixed the gray to 4.9:1 and added
+  underline to every inline link across all six pages uniformly (not
+  just the ones flagged this pass, since the same pattern will keep
+  recurring as these pages are edited).
+- A near-miss pill component on Landing.tsx (4.39:1, needs 4.5:1) and
+  two unlabeled `<select>` filters plus their sibling `<input>`s on the
+  public `/opportunities` page (critical: screen-reader users had no way
+  to know what the controls did) were fixed with a slightly darker color
+  and `aria-label`s respectively.
+- **Investigated and deliberately left unchanged**: 4 remaining flags on
+  Landing.tsx's hero (heading, eyebrow badge, CTA button, trust line).
+  These render as white text over an autoplaying video with a dark
+  gradient scrim - confirmed via screenshot to have excellent real
+  contrast. axe-core's contrast check walks the DOM ancestor chain for
+  background color and can't see CSS backgrounds painted by
+  absolutely-positioned sibling elements (the video/scrim are siblings of
+  the text's container, not ancestors) - a documented false-positive
+  pattern for this common "background layer" CSS technique. "Fixing" the
+  text color based on the tool's number would have made it unreadable
+  against the actual rendered background.
+
+**SOC 2 readiness checklist.** Added a gap analysis to
+`AI_PROJECT_OS/52_COMPLIANCE.md` against the AICPA Trust Services
+Criteria (Security's CC1-CC9, plus Confidentiality), framed explicitly as
+prep work, not a certification - only a licensed CPA firm can issue a
+SOC 2 report. Maps what's already built (with file-level evidence: scrypt
+password hashing, IDOR checks, CORS allowlist, parameterized SQL, the SSRF
+guard, etc.) against what's still a written-policy/HR/vendor-contract gap
+no code change can supply (code of conduct, incident response plan,
+background checks, a subprocessor register). Closed two of its own
+findings with real automation instead of just noting them:
+- `ci.yml` now runs `npm audit --omit=dev` on every push/PR, report-only
+  (a hard-fail gate would block every merge on one currently-unfixable,
+  inapplicable react-router advisory - see entry 14).
+- `.github/dependabot.yml` now opens weekly update PRs for both npm
+  manifests and GitHub Actions versions - a real, recurring, automatic
+  remediation loop, not a one-time manual scan someone has to remember to
+  repeat.
+
+**Files.** `.github/workflows/ci.yml`, `.github/dependabot.yml` (new),
+`AI_PROJECT_OS/52_COMPLIANCE.md`, `src/pages/Landing.tsx`,
+`src/pages/Privacy.tsx`, `src/pages/Terms.tsx`,
+`src/pages/PaymentPolicy.tsx`, `src/pages/NonCircumvention.tsx`,
+`src/pages/Cookies.tsx`, `src/pages/Accessibility.tsx`,
+`src/pages/PublicOpportunities.tsx`.
+
+**Tests completed.** `npx tsc -p tsconfig.json --noEmit` and
+`npx tsc -p server/tsconfig.json --noEmit` (clean, same pre-existing
+unrelated `PartnerOnboarding.tsx` errors as every prior entry), `npm test`
+(163/163), and a full before/after axe-core re-scan of all 14 pages
+confirming the fixes actually resolved the flagged violations (not just
+inspected by eye) - the re-scan is the artifact that turns "I made
+changes I believe are correct" into "I verified the specific automated
+findings that motivated this pass are gone."
+
+---
+
 ## 2026-08-03 (14) - Security and legal-compliance scan: dependency fix, ADA keyboard accessibility, false-claim fixes
 
 **What.** A dependency vulnerability scan plus two background OWASP-style
