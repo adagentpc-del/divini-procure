@@ -87,6 +87,7 @@ import scopeBuilderRouter from "./routes/scope-builder.js";
 import bidStudioRouter from "./routes/bid-studio.js";
 import followUpRouter from "./routes/follow-up.js";
 import blueprintRouter from "./routes/blueprint.js";
+import blueprintPhase2Router from "./routes/blueprint-phase2.js";
 import marketplacePublicationRouter from "./routes/marketplace-publication.js";
 import teasersProfilesRouter from "./routes/teasers-profiles.js";
 import incentivesRouter from "./routes/incentives.js";
@@ -194,6 +195,8 @@ router.use("/bid-studio", bidStudioRouter);
 router.use("/follow-up", followUpRouter);
 // ---- Divini Blueprint: document classification + trade suggestions -------
 router.use("/blueprint", blueprintRouter);
+// ---- Divini Blueprint Phase 2: CSI divisions, budget import, quantities --
+router.use("/blueprint", blueprintPhase2Router);
 // ---- Marketplace publication: visibility, scheduling, urgency on packages -
 router.use("/marketplace", marketplacePublicationRouter);
 router.use(teasersProfilesRouter);

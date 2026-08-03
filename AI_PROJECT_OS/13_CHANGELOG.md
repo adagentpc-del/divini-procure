@@ -6,6 +6,85 @@ the Authentik/Supabase era and does not reflect Monetization V2.)
 
 ---
 
+## 2026-08-03 (10) - Divini Blueprint Phase 2: CSI divisions, budget import, quantities, inline preview
+
+**What.** The remaining pieces of the CAD/Drawing/Plan/Specification/Bid
+Intelligence master spec buildable with NO additional backend service or
+API key - explicitly scoped that way per the user's instruction to build
+everything possible now and add the rest once the additional backend
+support variables (a CAD-conversion/OCR service, an LLM key, etc.) exist.
+Everything here is pure deterministic logic, manual data entry, or
+browser-native rendering - no new external dependency, no new environment
+variable.
+
+- **CSI division tagging** (`server/src/lib/csi-divisions.ts`, pure, 9
+  tests): the standard MasterFormat division list, plus a guess derived
+  from a document's ALREADY-classified discipline (never content) - same
+  override-locking pattern as document category/discipline elsewhere in
+  Blueprint. `GET /blueprint/specification-index` also flags divisions a
+  project's drawing disciplines imply but no tagged specification document
+  covers - a classification-derived signal, explicitly labeled as such,
+  not proof anything is actually missing.
+- **Budget import, CSV only** (`server/src/lib/csv-parser.ts`, a small
+  dependency-free RFC-4180-ish parser, 12 tests, since this codebase has no
+  xlsx/exceljs/papaparse in package.json - an XLSX upload is rejected with
+  a clear message rather than silently misread). Each row is matched to an
+  existing package by deterministic keyword overlap
+  (`server/src/lib/budget-mapper.ts`, pure, 7 tests) - exact category-name
+  match is "medium" confidence, 2+ shared words "medium", exactly 1 shared
+  word "low", never auto-applied. `GET /blueprint/budget-reconciliation`
+  surfaces packages with no imported budget and budget lines still
+  unmapped to any package (spec section 17).
+  - **A real gap caught in self-review**: the line-reassignment endpoint
+    let a caller set `matchedPackageId` without also updating `status`,
+    but reconciliation only sums lines with `status = 'mapped'` - so a
+    manually-reassigned line would silently vanish from the totals. Fixed
+    by having a package reassignment imply the matching status
+    automatically unless the caller passes one explicitly.
+- **Quantity observations - manual only, deliberately not AI-assisted**
+  (`quantity_observations` table): this build cannot read drawing content,
+  so unlike every other Divini Blueprint feature there is no "suggested"
+  value here at all, only user entry. The `source` column is
+  hard-constrained in the schema to always equal `'user_entered'` as a
+  guardrail against a future change quietly repurposing it.
+- **Inline PDF/image preview** (`src/components/DocumentPanel.tsx`):
+  browsers can render PDF and common raster images natively with no
+  conversion service, so a "Preview" button now opens them inline
+  (`<iframe>`/`<img>` against the existing signed-URL endpoint) instead of
+  only a new-tab download. CAD file rows instead show an honest inline
+  note - "CAD preview requires a conversion service, not yet configured" -
+  rather than a broken or silent no-op button.
+
+**Files.** `db/schema-blueprint-phase2.sql` (new, synced into
+`db/apply-all.sql` after the blueprint-addenda block),
+`server/src/lib/csi-divisions.ts`, `server/src/lib/csv-parser.ts`,
+`server/src/lib/budget-mapper.ts`,
+`server/src/routes/blueprint-phase2.ts` (new, mounted at `/api/blueprint`
+alongside the existing blueprint router), `src/pages/Blueprint.tsx`
+(extended: specification index, budget import, quantity observations
+cards), `src/components/DocumentPanel.tsx` (inline preview),
+`tests/csi-divisions.test.ts` (9), `tests/csv-parser.test.ts` (12),
+`tests/budget-mapper.test.ts` (7).
+
+**Permissions.** Same single-owner model as the rest of Divini Blueprint:
+every new record resolves its owning organization through
+`building -> company_id`; access = member of that company, or admin.
+
+**Tests completed.** 28 new unit tests, all pure with no DB, full suite
+143/143 passing. Both server and SPA typecheck clean. Self-review caught
+the budget-line status-sync gap above before commit. **Not tested against
+a live database or in a browser** - same sandbox limitation as every prior
+slice this session.
+
+**Deferred, waiting on the backend variables the user will add**: XLSX/XLS
+budget import (needs a spreadsheet library), any AI-assisted quantity
+takeoff or specification-content reading (needs OCR/CAD-parsing/an LLM
+key), and CAD/BIM format preview beyond PDF/image (needs a CAD conversion
+service). None of these are safe to fake without the real capability
+behind them.
+
+---
+
 ## 2026-08-03 (9) - Marketplace publication: visibility, scheduling, and urgency
 
 **What.** Implements the master spec's "marketplace publication" sections

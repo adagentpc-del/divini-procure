@@ -53,6 +53,15 @@ export default function Blueprint() {
   const [addendumTitle, setAddendumTitle] = useState('');
   const [addendumDescription, setAddendumDescription] = useState('');
 
+  // Phase 2: CSI divisions, budget import/reconciliation, quantity observations.
+  const [packages, setPackages] = useState<{ id: string; category: string }[]>([]);
+  const [specIndex, setSpecIndex] = useState<{ specifications: any[]; missingDivisions: { code: string; name: string }[] } | null>(null);
+  const [budgetImports, setBudgetImports] = useState<any[]>([]);
+  const [currentBudgetImport, setCurrentBudgetImport] = useState<{ import: any; lines: any[] } | null>(null);
+  const [reconciliation, setReconciliation] = useState<any | null>(null);
+  const [quantities, setQuantities] = useState<any[]>([]);
+  const [qDesc, setQDesc] = useState(''); const [qQty, setQQty] = useState(''); const [qUnit, setQUnit] = useState(''); const [qPackageId, setQPackageId] = useState('');
+
   const [file, setFile] = useState<File | null>(null);
   const [projectDescription, setProjectDescription] = useState('');
   const [busy, setBusy] = useState(false);
@@ -106,11 +115,136 @@ export default function Blueprint() {
 
   useEffect(() => {
     void loadDocuments();
+    void loadPhase2();
     setCurrentRun(null);
     setRevisionSuggestions({});
     setSelectedDocIds(new Set());
+    setCurrentBudgetImport(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [buildingId]);
+
+  async function loadPhase2() {
+    if (!buildingId) return;
+    try {
+      const [pkgs, spec, imports, recon, qty] = await Promise.all([
+        apiGet<{ id: string; category: string }[]>(`/buildings/${buildingId}/packages`),
+        apiGet<{ specifications: any[]; missingDivisions: { code: string; name: string }[] }>(`/blueprint/specification-index?buildingId=${buildingId}`),
+        apiGet<{ imports: any[] }>(`/blueprint/budget-imports?buildingId=${buildingId}`),
+        apiGet<any>(`/blueprint/budget-reconciliation?buildingId=${buildingId}`),
+        apiGet<{ observations: any[] }>(`/blueprint/quantity-observations?buildingId=${buildingId}`),
+      ]);
+      setPackages(pkgs);
+      setSpecIndex(spec);
+      setBudgetImports(imports.imports);
+      setReconciliation(recon);
+      setQuantities(qty.observations);
+    } catch { /* non-fatal */ }
+  }
+
+  async function guessCsiDivisionFor(docId: string) {
+    setBusy(true); setErr('');
+    try {
+      await apiSend('POST', `/blueprint/documents/${docId}/guess-csi-division`, {});
+      await loadPhase2();
+    } catch (e: any) {
+      setErr(e.message ?? 'Could not guess division.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function setCsiDivisionFor(docId: string, code: string) {
+    setBusy(true); setErr('');
+    try {
+      await apiSend('PATCH', `/blueprint/documents/${docId}/csi-division`, { csiDivisionCode: code || null });
+      await loadPhase2();
+    } catch (e: any) {
+      setErr(e.message ?? 'Could not set division.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function uploadBudgetCsv(f: File) {
+    setBusy(true); setErr(''); setOk('');
+    try {
+      const text = await f.text();
+      const result = await apiSend<{ import: any; lines: any[] }>('POST', '/blueprint/budget-imports', {
+        buildingId, csvText: text, filename: f.name,
+      });
+      setCurrentBudgetImport(result);
+      setOk(`Imported ${result.lines.length} budget line${result.lines.length === 1 ? '' : 's'}.`);
+      await loadPhase2();
+    } catch (e: any) {
+      setErr(e.message ?? 'Could not import budget - only CSV files are supported (no XLSX parser is available in this build).');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function loadBudgetImport(id: string) {
+    setErr('');
+    try {
+      const r = await apiGet<{ import: any; lines: any[] }>(`/blueprint/budget-imports/${id}`);
+      setCurrentBudgetImport(r);
+    } catch (e: any) {
+      setErr(e.message ?? 'Could not load import.');
+    }
+  }
+
+  async function reassignBudgetLine(lineId: string, packageId: string) {
+    setBusy(true); setErr('');
+    try {
+      await apiSend('PATCH', `/blueprint/budget-import-lines/${lineId}`, { matchedPackageId: packageId || null });
+      if (currentBudgetImport) await loadBudgetImport(currentBudgetImport.import.id);
+      await loadPhase2();
+    } catch (e: any) {
+      setErr(e.message ?? 'Could not reassign.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function addQuantity() {
+    if (!buildingId || !qDesc.trim() || !qQty) return;
+    setBusy(true); setErr('');
+    try {
+      await apiSend('POST', '/blueprint/quantity-observations', {
+        buildingId, description: qDesc.trim(), quantity: Number(qQty),
+        unit: qUnit || undefined, packageId: qPackageId || undefined,
+      });
+      setQDesc(''); setQQty(''); setQUnit(''); setQPackageId('');
+      await loadPhase2();
+    } catch (e: any) {
+      setErr(e.message ?? 'Could not add quantity.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function verifyQuantity(id: string) {
+    setBusy(true); setErr('');
+    try {
+      await apiSend('PATCH', `/blueprint/quantity-observations/${id}`, { verificationStatus: 'verified' });
+      await loadPhase2();
+    } catch (e: any) {
+      setErr(e.message ?? 'Could not verify.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteQuantity(id: string) {
+    setBusy(true); setErr('');
+    try {
+      await apiSend('DELETE', `/blueprint/quantity-observations/${id}`, undefined);
+      await loadPhase2();
+    } catch (e: any) {
+      setErr(e.message ?? 'Could not delete.');
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function checkRevisionSuggestions(docId: string) {
     setErr('');
@@ -453,6 +587,149 @@ export default function Blueprint() {
                               <button className="btn primary" style={{ padding: '2px 8px', fontSize: 11 }} disabled={busy} onClick={() => publishAddendum(a.id)}>Publish</button>
                             </>
                           )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          {/* Specification index / CSI divisions */}
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div className="note" style={{ fontWeight: 700, marginBottom: 8 }}>Specification index (CSI divisions)</div>
+            <div className="note" style={{ fontSize: 12, marginBottom: 8 }}>
+              Division guesses come from each document's already-classified discipline, not from reading the
+              specification text - always low confidence, always correctable.
+            </div>
+            {specIndex && specIndex.missingDivisions.length > 0 && (
+              <div className="note" style={{ marginBottom: 10 }}>
+                <strong>Possibly missing specification sections:</strong>{' '}
+                {specIndex.missingDivisions.map((d) => `Division ${d.code} (${d.name})`).join(', ')}
+              </div>
+            )}
+            {(!specIndex || specIndex.specifications.length === 0) ? (
+              <div className="note">No documents classified as "specification" yet.</div>
+            ) : (
+              <table>
+                <thead><tr><th>Document</th><th>Discipline</th><th>CSI Division</th><th></th></tr></thead>
+                <tbody>
+                  {specIndex.specifications.map((s: any) => (
+                    <tr key={s.id}>
+                      <td>{s.name}</td>
+                      <td className="note">{s.discipline?.replace(/_/g, ' ') ?? '-'}</td>
+                      <td>
+                        <select value={s.csi_division_code ?? ''} onChange={(e) => setCsiDivisionFor(s.id, e.target.value)}>
+                          <option value="">Not set</option>
+                          {['00', '01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12', '13', '14',
+                            '21', '22', '23', '25', '26', '27', '28', '31', '32', '33'].map((c) => (
+                            <option key={c} value={c}>Division {c}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td>
+                        {!s.csi_division_overridden_by_user && (
+                          <button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} disabled={busy} onClick={() => guessCsiDivisionFor(s.id)}>Guess</button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          {/* Budget import (CSV only) and reconciliation */}
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div className="note" style={{ fontWeight: 700, marginBottom: 8 }}>Budget import (CSV)</div>
+            <div className="note" style={{ fontSize: 12, marginBottom: 8 }}>
+              Only CSV is supported - this build has no spreadsheet-parsing library, so an XLSX file will be rejected
+              rather than silently misread. Each row is matched to an existing package by keyword overlap; nothing
+              is applied without you being able to see and change the match.
+            </div>
+            <input type="file" accept=".csv,text/csv" onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadBudgetCsv(f); e.target.value = ''; }} disabled={busy} />
+            {budgetImports.length > 0 && (
+              <div style={{ marginTop: 10 }}>
+                <span className="note">Previous imports: </span>
+                {budgetImports.map((im: any) => (
+                  <button key={im.id} className="btn" style={{ padding: '2px 8px', fontSize: 11, marginLeft: 4 }} onClick={() => loadBudgetImport(im.id)}>
+                    {im.filename ?? new Date(im.created_at).toLocaleDateString()} ({im.row_count})
+                  </button>
+                ))}
+              </div>
+            )}
+            {currentBudgetImport && (
+              <table style={{ marginTop: 12 }}>
+                <thead><tr><th>Category</th><th>Description</th><th>Amount</th><th>Matched package</th><th>Status</th></tr></thead>
+                <tbody>
+                  {currentBudgetImport.lines.map((l: any) => (
+                    <tr key={l.id}>
+                      <td className="note">{l.raw_category || '-'}</td>
+                      <td className="note">{l.raw_description || '-'}</td>
+                      <td>${(l.amount_cents / 100).toLocaleString()}</td>
+                      <td>
+                        <select value={l.matched_package_id ?? ''} onChange={(e) => reassignBudgetLine(l.id, e.target.value)}>
+                          <option value="">Unmapped</option>
+                          {packages.map((p) => <option key={p.id} value={p.id}>{p.category}</option>)}
+                        </select>
+                      </td>
+                      <td><span className={`badge ${l.status === 'mapped' ? 'b-green' : l.status === 'ignored' ? 'b-neutral' : 'b-amber'}`}>{l.status}</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            {reconciliation && (
+              <div className="note" style={{ marginTop: 12, fontSize: 12 }}>
+                {reconciliation.packagesMissingBudget.length > 0 && (
+                  <div><strong>Packages with no imported budget:</strong> {reconciliation.packagesMissingBudget.map((p: any) => p.category).join(', ')}</div>
+                )}
+                {reconciliation.unmappedLines.length > 0 && (
+                  <div style={{ marginTop: 4 }}><strong>{reconciliation.unmappedLines.length}</strong> budget line(s) across all imports are still unmapped to any package.</div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Quantity observations - manual only, never AI-generated */}
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div className="note" style={{ fontWeight: 700, marginBottom: 8 }}>Quantity observations</div>
+            <div className="note" style={{ fontSize: 12, marginBottom: 8 }}>
+              Manual entry only - this build cannot read drawing content, so it never estimates a quantity for you.
+              Use this to record and share preliminary counts you have measured or been given.
+            </div>
+            <div className="two">
+              <div className="field"><label>Description</label><input value={qDesc} onChange={(e) => setQDesc(e.target.value)} placeholder="e.g. Exterior doors" /></div>
+              <div className="field"><label>Package (optional)</label>
+                <select value={qPackageId} onChange={(e) => setQPackageId(e.target.value)}>
+                  <option value="">None</option>
+                  {packages.map((p) => <option key={p.id} value={p.id}>{p.category}</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="two">
+              <div className="field"><label>Quantity</label><input value={qQty} onChange={(e) => setQQty(e.target.value)} placeholder="0" /></div>
+              <div className="field"><label>Unit</label><input value={qUnit} onChange={(e) => setQUnit(e.target.value)} placeholder="ea / sf / lf" /></div>
+            </div>
+            <button className="btn primary" disabled={busy || !qDesc.trim() || !qQty} onClick={addQuantity}>+ Add observation</button>
+
+            {quantities.length > 0 && (
+              <table style={{ marginTop: 12 }}>
+                <thead><tr><th>Description</th><th>Quantity</th><th>Package</th><th>Status</th><th></th></tr></thead>
+                <tbody>
+                  {quantities.map((q: any) => (
+                    <tr key={q.id}>
+                      <td>{q.description}</td>
+                      <td>{q.quantity} {q.unit || ''}</td>
+                      <td className="note">{packages.find((p) => p.id === q.package_id)?.category ?? '-'}</td>
+                      <td><span className={`badge ${q.verification_status === 'verified' ? 'b-green' : 'b-neutral'}`}>{q.verification_status}</span></td>
+                      <td>
+                        <div style={{ display: 'flex', gap: 4 }}>
+                          {q.verification_status !== 'verified' && (
+                            <button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} disabled={busy} onClick={() => verifyQuantity(q.id)}>Verify</button>
+                          )}
+                          <button className="btn" style={{ padding: '2px 8px', fontSize: 11, color: 'var(--red)' }} disabled={busy} onClick={() => deleteQuantity(q.id)}>Remove</button>
                         </div>
                       </td>
                     </tr>
