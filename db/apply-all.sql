@@ -4623,33 +4623,17 @@ create table if not exists app_config (
 );
 
 
--- ===== schema-investor-watchlist.sql =====
--- Investor Watchlist (saved search criteria + deal alerts)
--- -----------------------------------------------------------------------
--- Backs server/src/routes/watchlist.ts. Never checked into db/ before now;
--- only db/schema-watchlist-userid-fix.sql existed, which ALTERs a table
--- this file was supposed to CREATE first. On a fresh database that left
--- investor_watchlist (and the fix migration) both failing outright, and
--- the whole watchlist feature broken. Found via a from-scratch apply-all.sql
--- bootstrap test; see AI_PROJECT_OS/13_CHANGELOG.md.
---
--- One row per saved search a Capital Partner (investor) creates; the
--- /watchlist/matches endpoint matches these criteria against active
--- investment_programs. Idempotent: safe to re-run.
-
-create table if not exists investor_watchlist (
-  id uuid primary key default gen_random_uuid(),
-  user_id text not null references users(id) on delete cascade,
-  asset_class text,
-  location text,
-  min_target_return numeric,
-  max_min_investment_cents bigint,
-  investor_type text,
-  label text,
-  notify_email boolean not null default true,
-  created_at timestamptz not null default now()
-);
-create index if not exists idx_investor_watchlist_user on investor_watchlist (user_id);
+-- ===== schema-quick-hits.sql =====
+-- Investor watchlist (real original source, found via a case-sensitive
+-- grep miss earlier - it uses CREATE TABLE uppercase) + project health
+-- snapshots + progress photos. None of the three were spliced into this
+-- file at all; project_health_snapshots and progress_photos back real,
+-- routed features (server/src/routes/project-health.ts,
+-- progress-photos.ts) that were completely broken on a fresh database.
+-- investor_watchlist.user_id was uuid in the source file but users.id is
+-- text (same bug class as schema-sessions.sql) - fixed in
+-- db/schema-quick-hits.sql itself before splicing in here.
+\i db/schema-quick-hits.sql
 
 -- ===== schema-watchlist-userid-fix.sql =====
 -- Migration: fix investor_watchlist.user_id type mismatch (uuid -> text)
@@ -4720,3 +4704,58 @@ COMMIT;
 -- users.id is text (native email/password auth, not a UUID scheme) -
 -- fixed in db/schema-sessions.sql itself before splicing in here.
 \i db/schema-sessions.sql
+
+-- The following schema-*.sql files existed in db/ but were never included in
+-- this file at all, found by systematically diffing every db/schema-*.sql
+-- against what apply-all.sql actually splices in (after finding several
+-- individually via real end-to-end testing). Each was checked for real,
+-- routed application usage and safe dependency ordering (all depend only on
+-- tables created earlier in this file) before being added here. See
+-- AI_PROJECT_OS/13_CHANGELOG.md for detail on each.
+
+-- Certificate of Insurance tracking (server/src/routes/coi.ts, /coi-tracker).
+\i db/schema-coi.sql
+
+-- Dispute Center (server/src/routes/disputes.ts, /dispute-center).
+\i db/schema-disputes.sql
+
+-- Lender Portal + draw requests (server/src/routes/lender-portal.ts,
+-- /lender-portal, /lender-view/:token).
+\i db/schema-lender-portal.sql
+
+-- Retainage + lien waivers (server/src/routes/retainage.ts, /retainage).
+\i db/schema-retainage.sql
+
+-- Allows bids.status = withdrawn/rejected, which intel.ts and
+-- quote-comparison.ts already query for and filter out - both were
+-- unreachable states on a fresh database until this constraint was widened.
+\i db/schema-bid-status-fix.sql
+
+-- opportunity_teasers.company_id FK gap-closure (audit item #33).
+\i db/schema-fk-fixes.sql
+
+-- Stripe billing columns + stripe_checkout_sessions idempotency table
+-- (server/src/lib/stripe.ts, server/src/routes/subscriptions.ts). Without
+-- this the entire paid-subscription checkout/webhook path was broken on a
+-- fresh database - a core revenue path, not a peripheral feature.
+\i db/schema-stripe-billing.sql
+
+-- CAN-SPAM one-click unsubscribe (email_suppressions,
+-- campaign_recipients.unsubscribe_token; server/src/routes/campaigns.ts).
+-- The file's own header said "apply after db/apply-all.sql" as a separate
+-- manual step, but nothing about it actually requires that separation, and
+-- leaving it out silently broke the real unsubscribe mechanism this
+-- session's own compliance pass relied on and verified as working
+-- (AI_PROJECT_OS/13_CHANGELOG.md entry 14).
+\i db/schema-unsubscribe.sql
+
+-- NOT included on purpose: db/schema-rls.sql (Postgres Row-Level Security
+-- policies). It requires the app to call
+-- select set_config('app.user_id', $1, true) on every connection for the
+-- policies to scope correctly, and grep confirms server/src never does
+-- this anywhere. The file never calls ENABLE ROW LEVEL SECURITY either, so
+-- applying it is harmless (the policies stay inert) but provides no actual
+-- defense-in-depth today - it is unfinished work, not a bootstrap bug, and
+-- silently including it would create false confidence that RLS is active
+-- when it is not. Leave for a follow-up pass that also wires up the app.user_id
+-- GUC and enables RLS deliberately.

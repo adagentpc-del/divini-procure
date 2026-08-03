@@ -54,7 +54,7 @@ create index if not exists subscription_entitlements_stripe_cust_idx
 create table if not exists stripe_checkout_sessions (
   id               uuid primary key default gen_random_uuid(),
   session_id       text not null unique,          -- cs_... from Stripe
-  company_id       text references companies(id) on delete set null,
+  company_id       uuid references companies(id) on delete set null,
   tier_key         text,
   status           text not null default 'open'   -- open | complete | expired
     check (status in ('open','complete','expired')),
