@@ -6,6 +6,88 @@ the Authentik/Supabase era and does not reflect Monetization V2.)
 
 ---
 
+## 2026-08-03 (6) - Divini Follow-Up Desk (Slice 4 of the Divini deterministic business tools)
+
+**What.** A rules-based reminder/workflow engine covering the highest-value
+cases across the three tools built so far: a Divini Pipeline opportunity
+with no activity in 14 days, an unfinished Divini Bid Studio draft, a
+submitted bid expiring within 3 days, and a vendor credential (license/
+insurance/etc, from the existing verification system) expiring within 30
+days. Every workflow's WORDING comes from a fixed template with
+`{{merge_field}}` substitution (`server/src/lib/follow-up-scheduling.ts`
+`renderTemplate`) and every CONDITION is a named, deterministic check
+against the linked record's current state (`conditionMet()` in
+`follow-up.ts`) - nothing generated.
+
+- **No cron dependency**: this is a persistent Node process
+  (`app.listen`), not serverless, so `server/src/index.ts` runs the engine
+  on a real 15-minute `setInterval` in-process. Also triggerable on demand
+  via `POST /api/follow-up/process-due` (admin) for testing or an external
+  cron if a deployment prefers that instead.
+- **Deterministic scheduling** (`server/src/lib/follow-up-scheduling.ts`,
+  pure, zero IO, 9 tests): `addDelay()` supports business-day-aware delays
+  (skips Saturday/Sunday); `renderTemplate()` does plain `{{key}}`
+  substitution and leaves an unmatched token visibly broken rather than
+  silently dropping it; `isApproaching`/`isStale` are the two date-window
+  checks every seeded condition is built from.
+- **User controls**, per the spec's Layer 4 requirements: pause, resume,
+  stop any active enrollment (`PATCH /follow-up/enrollments/:id`); enroll a
+  specific record into a workflow on demand
+  (`POST /follow-up/enroll`, idempotent per workflow+record); full action
+  history per enrollment (`GET /follow-up/actions`).
+- **Manual approval gate**: a step with `requires_approval=true` pauses the
+  enrollment and marks its action `awaiting_approval` rather than sending -
+  `POST /follow-up/actions/:id/approve` executes it and resumes the
+  sequence. None of the 4 seeded workflows use this yet, but the mechanism
+  is real and tested by inspection (see bugs below).
+
+**Two real bugs caught in self-review, fixed before commit** (both in the
+approval-gate path, which none of the seeded workflows exercise, so neither
+would have surfaced until a custom `requires_approval` workflow was
+created):
+1. The first draft fell through and advanced the enrollment past a
+   `requires_approval` step regardless of whether it had actually been
+   approved - the gated message would never send, but the workflow would
+   silently move on as if it had. Fixed by pausing the enrollment instead of
+   advancing, and adding the missing `/approve` endpoint that executes the
+   action and resumes the sequence.
+2. Once that was fixed, the action row itself was still never updated from
+   `pending` to `awaiting_approval` - so the new approve endpoint's own
+   status check would have permanently rejected every approval attempt.
+   Caught on the same re-read; fixed with the missing `UPDATE`.
+
+**Files.** `db/schema-follow-up-desk.sql` (new, synced into
+`db/apply-all.sql`), `server/src/lib/follow-up-scheduling.ts`,
+`server/src/routes/follow-up.ts` (mounted at `/api/follow-up`),
+`server/src/index.ts` (the interval), `src/pages/FollowUpDesk.tsx`, nav
+entries in `src/components/Shell.tsx` (buyer + vendor), route in
+`src/App.tsx`, `tests/follow-up-scheduling.test.ts` (9 new tests, all
+pure - no DB).
+
+**Permissions.** An enrollment belongs to exactly one `organization_id`;
+access = member of that company, or admin. `POST /process-due` is
+admin-only (it processes every organization's due enrollments at once).
+
+**Tests completed.** Unit tests only (9, all passing) for the pure
+scheduling/template functions. Server and SPA typecheck clean. **Not
+tested against a live database or in a browser** - same sandbox limitation
+as the previous three slices (no Docker, no `DATABASE_URL`, nothing on
+5432/5433). The condition-evaluation and action-execution logic in
+`follow-up.ts` (DB-dependent, not pure) was checked by careful manual
+re-read only, which is exactly how the two bugs above were found - this
+underlines that a real database run is still needed before considering any
+of these four slices actually verified.
+
+**Deferred.** Slice 5 (Divini Profit Map). No automatic enrollment yet - a
+Pipeline opportunity, Bid Studio draft, Scope Builder scope, or vendor
+credential does not auto-enroll itself into its workflow on creation; a
+user (or a future hook in those three route files) must call
+`POST /follow-up/enroll` explicitly. No entitlement gating (workflow
+automation is a Plus/Pro feature per the spec's plan table; every org
+currently gets it for free).
+
+---
+
 ## 2026-08-03 (5) - Divini Bid Studio (Slice 3 of the Divini deterministic business tools)
 
 **What.** A structured draft-build-then-submit workflow for a vendor's bid,

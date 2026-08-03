@@ -55,6 +55,7 @@ const DiviniScores = lazy(() => import('./pages/DiviniScores'));
 const Pipeline = lazy(() => import('./pages/Pipeline'));
 const ScopeBuilder = lazy(() => import('./pages/ScopeBuilder'));
 const BidStudio = lazy(() => import('./pages/BidStudio'));
+const FollowUpDesk = lazy(() => import('./pages/FollowUpDesk'));
 const WarRoom = lazy(() => import('./pages/WarRoom'));
 const RelationshipGraph = lazy(() => import('./pages/RelationshipGraph'));
 const InvestmentProfile = lazy(() => import('./pages/InvestmentProfile'));
@@ -169,6 +170,7 @@ function Routed() {
         <Route path="/pipeline" element={<Gate><Pipeline /></Gate>} />
         <Route path="/scope-builder" element={<Gate><ScopeBuilder /></Gate>} />
         <Route path="/bid-studio" element={<Gate><BidStudio /></Gate>} />
+        <Route path="/follow-up-desk" element={<Gate><FollowUpDesk /></Gate>} />
         <Route path="/divini-scores" element={<Gate><DiviniScores /></Gate>} />
         <Route path="/war-room" element={<Gate><WarRoom /></Gate>} />
         <Route path="/relationship-graph" element={<Gate><RelationshipGraph /></Gate>} />

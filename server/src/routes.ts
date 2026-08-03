@@ -85,6 +85,7 @@ import investmentGovernanceRouter from "./routes/investment-governance.js";
 import pipelineRouter from "./routes/pipeline.js";
 import scopeBuilderRouter from "./routes/scope-builder.js";
 import bidStudioRouter from "./routes/bid-studio.js";
+import followUpRouter from "./routes/follow-up.js";
 import teasersProfilesRouter from "./routes/teasers-profiles.js";
 import incentivesRouter from "./routes/incentives.js";
 import profileCollateralRouter from "./routes/profile-collateral.js";
@@ -187,6 +188,8 @@ router.use("/pipeline", pipelineRouter);
 router.use("/scope", scopeBuilderRouter);
 // ---- Divini Bid Studio: structured vendor bid draft-build workflow ---------
 router.use("/bid-studio", bidStudioRouter);
+// ---- Divini Follow-Up Desk: rules-based reminder/workflow engine ----------
+router.use("/follow-up", followUpRouter);
 router.use(teasersProfilesRouter);
 router.use("/incentives", incentivesRouter);
 router.use(profileCollateralRouter);
