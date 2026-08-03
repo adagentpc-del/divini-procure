@@ -6,6 +6,65 @@ the Authentik/Supabase era and does not reflect Monetization V2.)
 
 ---
 
+## 2026-08-03 (3) - Divini Pipeline (Slice 1 of the Divini deterministic business tools spec)
+
+**What.** First build from the "Divini deterministic business tools" spec
+(construction-domain adaptation: no LLM dependency, branded tools, deterministic
+scoring, structured data capture). Divini Pipeline is a user-facing sales/
+procurement CRM, distinct from the existing `crm_records` (`db/schema-crm.sql`),
+which is Divini's own INTERNAL pipeline for signing up customers - Divini
+Pipeline is what a vendor or developer uses to run their OWN funnel:
+- **Vendor profile_type**: bid opportunities pursued, stage new -> reviewing ->
+  qualified -> info_needed -> bid_in_progress -> bid_submitted -> negotiation ->
+  awarded/lost.
+- **Developer profile_type**: vendor-sourcing funnel per package, stage new ->
+  reviewing -> info_needed -> sourcing_vendors -> bids_in -> comparing ->
+  negotiation -> awarded/lost.
+- One shared schema/engine serves both profile types (stage definitions are
+  org-customizable with a seeded global default per profile type), per the
+  spec's "reusable shared engine, not a duplicate per profile" principle.
+- **Deterministic readiness score** (`server/src/lib/pipeline-score.ts`, pure,
+  zero IO): 8 fixed-point factors (estimated value, next action + date,
+  expected close date, category, linked to a real bid/package, client contact
+  on file, recent activity within 14 days, an open non-overdue task) summing to
+  exactly 100. Never a prediction - always shown with the exact positives/
+  missing list that produced it, per spec requirement 8 ("clearly show how
+  every output was calculated").
+- Full CRUD: opportunities, append-only stage history (never overwritten,
+  audit trail for time-in-stage), activities (call/email/note/meeting/
+  site_visit), tasks, tags, org-configurable loss reasons and lead sources.
+- Stage transitions into a stage flagged `is_won`/`is_lost` automatically set
+  `status`/`won_at`/`lost_at` - `status` has no direct free-form write path,
+  it only ever derives from a real stage transition.
+
+**Files.** `db/schema-pipeline.sql` (new, synced into `db/apply-all.sql`),
+`server/src/lib/pipeline-score.ts`, `server/src/routes/pipeline.ts` (mounted
+at `/api/pipeline` in `routes.ts`), `src/pages/Pipeline.tsx`, nav entries in
+`src/components/Shell.tsx` (buyer + vendor Quick Actions/Workspace), route in
+`src/App.tsx`, `tests/pipeline-score.test.ts` (8 new tests, all pure - no DB).
+
+**Permissions.** An opportunity belongs to exactly one `organization_id`
+(unlike a purchase order, this is not a shared record between two companies).
+Access = member of that company, or admin.
+
+**Tests completed.** Unit tests only (8, all passing) for the pure scoring
+function - exact-100 factor sum, empty-input zero score, recency threshold
+boundary, overdue-vs-no-task distinction, both-required next-action check.
+Server and SPA typecheck clean. **Not tested**: no live Postgres is available
+in this sandbox (checked - no Docker, no `DATABASE_URL`, nothing listening on
+5432/5433), so the schema and routes were not exercised against a real
+database or verified in a browser. Reviewed the SQL and route logic carefully
+by hand as the only available substitute; this still needs a real
+apply-all.sql run + manual UI smoke test before considering it verified.
+
+**Deferred (per the spec's own build order).** Slice 2 (Divini Scope Builder),
+Slice 3 (Divini Bid Studio), Slice 4 (Divini Follow-Up Desk), Slice 5 (Divini
+Profit Map), and the rest of the 12-slice roadmap. Entitlement gating
+(Free/Plus/Pro limits on opportunity count, custom stages, automation) is not
+implemented yet - every org currently gets the full feature set.
+
+---
+
 ## 2026-08-03 (2) - Capital Partner module: rename + compliance boundary + tier ladder
 
 **What.** Product-facing rename of "Investor"/"Investment" to "Capital

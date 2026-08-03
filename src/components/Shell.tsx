@@ -21,6 +21,7 @@ const BUYER_SECTIONS: Section[] = [
     ['/app',      'Dashboard',        '▦'],
     ['/projects', 'Projects',         '▣'],
     ['/app/marketplace', 'Find Vendors', '⌕'],
+    ['/pipeline', 'Divini Pipeline',  '☰'],
     ['/award',    'Award & POs',      '◰'],
     ['/reports',  'Reports',          '▥'],
   ]},
@@ -79,6 +80,7 @@ const VENDOR_SECTIONS: Section[] = [
   { label: 'Workspace', items: [
     ['/app',     'Dashboard',  '▦'],
     ['/search',  'Search Bids','⌕'],
+    ['/pipeline','Divini Pipeline','☰'],
     ['/bids',    'My Bids',    '◧'],
     ['/my-invites','Invitations','✉'],
   ]},

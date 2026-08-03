@@ -82,6 +82,7 @@ import projectRolesRouter from "./routes/project-roles.js";
 import projectTemplatesRouter from "./routes/project-templates.js";
 import onboardingSamplesRouter from "./routes/onboarding-samples.js";
 import investmentGovernanceRouter from "./routes/investment-governance.js";
+import pipelineRouter from "./routes/pipeline.js";
 import teasersProfilesRouter from "./routes/teasers-profiles.js";
 import incentivesRouter from "./routes/incentives.js";
 import profileCollateralRouter from "./routes/profile-collateral.js";
@@ -178,6 +179,8 @@ router.use(projectRolesRouter);
 router.use(projectTemplatesRouter);
 router.use(onboardingSamplesRouter);
 router.use(investmentGovernanceRouter);
+// ---- Divini Pipeline: user-facing sales/procurement CRM (not crm_records) ---
+router.use("/pipeline", pipelineRouter);
 router.use(teasersProfilesRouter);
 router.use("/incentives", incentivesRouter);
 router.use(profileCollateralRouter);
