@@ -28,3 +28,10 @@ jobs:
 
       - name: Run tests
         run: npm test
+
+      - name: Dependency vulnerability scan (production dependencies)
+        # Report-only: does not fail the build. Scoped to production deps so
+        # it reflects what's actually shipped, not desktop/mobile build
+        # tooling. Review output manually; see AI_PROJECT_OS/52_COMPLIANCE.md
+        # (SOC 2 CC4/CC7) for the triage process.
+        run: npm audit --omit=dev || true
