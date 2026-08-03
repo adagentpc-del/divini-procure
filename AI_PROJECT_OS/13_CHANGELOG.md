@@ -6,6 +6,62 @@ the Authentik/Supabase era and does not reflect Monetization V2.)
 
 ---
 
+## 2026-08-03 (17) - Close the gaps from the launch-readiness audit
+
+**What.** Direct follow-up to entry 16 ("ok fix gaps"): worked through the
+items that audit named as unverified or deliberately left open, using the
+same method - actually driving the running app, not re-reading code.
+
+- **Onboarding lost all progress on any interruption.** The prior entry
+  flagged this as untested; tested it directly this time by filling step
+  1, advancing to step 2 (plan selection), closing the tab, and reopening
+  it in the same browser session (first attempt gave a false negative from
+  a Playwright test bug - `browser.newPage()` creates an isolated context
+  per call and does not share cookies; fixed by reusing one
+  `browser.newContext()`). Confirmed real: it restarted from a blank step
+  1, losing the company name and every choice already made. Given this
+  flow requires leaving the app to check email for verification - exactly
+  when a tab is most likely to get closed - this was a plausible, silent
+  way to lose signups. Fixed by snapshotting progress to localStorage as
+  the user moves through the flow (expires after 48h; the Vendor Agreement
+  checkbox is deliberately never restored, so accepting it stays a fresh
+  action each time) and restoring it on return. Re-ran the same
+  abandon/reopen test: now correctly resumes on step 2.
+- **Verified two more flows live**: creating a project as a buyer (fills a
+  real row, appears in the Projects list, zero API errors) and reaching
+  the admin console as an allow-listed email (correctly skips onboarding
+  entirely, lands on a fully-populated Super Admin sidebar, zero errors).
+- **Row-Level Security: investigated properly, still not wired up, and
+  said plainly why.** Traced what closing this gap would actually take:
+  `server/src/pool.ts` calls `pool.query()` directly at roughly 150 call
+  sites with no per-request transaction wrapping, but the RLS policies'
+  `set_config('app.user_id', ..., true)` is transaction-scoped. Making it
+  correct means either wrapping every request in an explicit
+  checkout/BEGIN/COMMIT (a real query-layer refactor) or using a
+  session-scoped GUC with careful reset on every pooled-connection
+  release - get that reset wrong once and one user's authorization
+  context leaks into another user's query on a reused connection. That's
+  a concurrency bug class, not a slot-in fix, and the app's existing
+  code-layer authorization (confirmed solid in the security audit,
+  changelog entry 14) means this would be genuine defense-in-depth, not a
+  patch for an actual hole. Left flagged for a dedicated task with real
+  concurrency/load testing rather than rushed into this pass.
+
+**Deliverable.** Updated the same published audit report (not a new one)
+with a "Gaps closed" section and revised framing on the RLS item and the
+top-line "what was verified" summary.
+
+**Files.** `src/pages/Onboarding.tsx`.
+
+**Tests completed.** `npx tsc --noEmit` clean on both SPA and server,
+`npm test` 163/163, and each fix re-verified against the real running
+stack: rebuilt, redeployed, and re-ran the exact Playwright scenario that
+found the bug (abandon-and-resume with a shared browser context) to
+confirm the fix, plus fresh live runs of project-creation and
+admin-console access.
+
+---
+
 ## 2026-08-03 (16) - Full launch-readiness audit: found by actually running the app
 
 **What.** A "full audit — copy, functionality, everything" request, done by
