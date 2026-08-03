@@ -112,7 +112,9 @@ export default function Privacy() {
         </li>
         <li>
           <strong>Right to opt out of sale or sharing</strong> – We do not sell personal information and do not
-          share it for cross-context behavioral advertising. You do not need to opt out.
+          share it for cross-context behavioral advertising. You do not need to opt out, and we honor
+          Global Privacy Control signals as an opt-out preference where applicable, though the practical
+          effect today is nil since no sale or sharing occurs.
         </li>
         <li>
           <strong>Right to non-discrimination</strong> – We will not discriminate against you for exercising any

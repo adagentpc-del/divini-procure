@@ -47,6 +47,7 @@ import {
   type Tier,
 } from "../lib/entitlements.js";
 import { sendEmail } from "../lib/email.js";
+import { inviteLookupRateLimit } from "../lib/rateLimit.js";
 
 /** Vendor-facing self-serve tiers (the "upgrade to Pro / buy Verified+" set). */
 const SELF_SERVE_TIER_KEYS = new Set(["vendor_pro", "verified_plus", "vendor_featured"]);
@@ -232,6 +233,7 @@ router.get(
 // sync with what admins actually configure via /admin/subscriptions/tiers.
 router.get(
   "/public/subscription-tiers",
+  inviteLookupRateLimit,
   h(async (_req, res) => {
     res.json({ tiers: await listTiers() });
   }),

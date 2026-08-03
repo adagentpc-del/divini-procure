@@ -93,8 +93,6 @@ export default function Pricing() {
     nav(`/register?role=${activeKind}&tier=${tierKey}`);
   }
 
-  const go = () => nav('/login');
-
   return (
     <div className="pp">
       <style>{`
@@ -187,16 +185,16 @@ export default function Pricing() {
 
       <header>
         <div className="wrap bar">
-          <div className="logo" onClick={() => nav('/')}>
+          <Link to="/" className="logo">
             <img className="mkimg" src="/brand/mark-emerald.png" alt="Divini Procure" />
             <div>
               <div className="nm">Divini Procure</div>
               <div className="tg">Procurement Marketplace</div>
             </div>
-          </div>
+          </Link>
           <div className="navlinks">
-            <a className="hide" onClick={() => nav('/')}>Home</a>
-            <a onClick={go}>Log in</a>
+            <Link className="hide" to="/">Home</Link>
+            <Link to="/login">Log in</Link>
             <button className="btn primary" onClick={() => nav('/register')}>Get started</button>
           </div>
         </div>
@@ -310,11 +308,13 @@ export default function Pricing() {
               <div className="kicker" style={{ textAlign: 'left' }}>Trust and verification</div>
               <h2>Every vendor is verified before they reach a developer</h2>
               <p className="sectsub">
-                We confirm license and insurance before any vendor can submit a bid, so developers
-                only see qualified makers and trades.
+                Our team reviews license and insurance documents before any vendor can submit a bid,
+                so developers only see qualified makers and trades. Verification is a document review
+                by our team, not an independent government-registry check or a guarantee - always
+                confirm current licensing and insurance directly with a vendor before you award work.
               </p>
               <ul className="tlist">
-                <li>License verified against public records</li>
+                <li>License documents reviewed by our team</li>
                 <li>Insurance confirmed and tracked for expiry</li>
                 <li>Certifications reviewed for the work being bid</li>
                 <li><strong>Verified+</strong> adds bonding, financials, references, and background checks</li>

@@ -6,6 +6,142 @@ the Authentik/Supabase era and does not reflect Monetization V2.)
 
 ---
 
+## 2026-08-03 (14) - Security and legal-compliance scan: dependency fix, ADA keyboard accessibility, false-claim fixes
+
+**What.** A dependency vulnerability scan plus two background OWASP-style
+security and legal-compliance audits, followed by fixing everything real
+that turned up. Framed honestly at the outset and worth repeating here:
+SOC 2 and ISO 27001 are third-party audit certifications, not something a
+code pass grants, and nothing here is a guarantee against complaints or
+lawsuits - it materially reduces concrete, checkable risk.
+
+**Dependency scan.**
+- Upgraded `react-router-dom` 6.30.4 -> 7.18.2, fixing three real
+  advisories that apply to this app's actual usage (classic `<Link>` /
+  `useNavigate`, not the newer data-router APIs): an open redirect via
+  backslash in `<Link>`/`useNavigate` (GHSA-wrjc-x8rr-h8h6), an open
+  redirect leading to XSS (GHSA-jjmj-jmhj-qwj2), and arbitrary
+  constructor injection via SSR hydration error deserialization
+  (GHSA-337j-9hxr-rhxg). Verified with a clean typecheck, the full test
+  suite, and a Playwright smoke test confirming client-side `<Link>`
+  navigation still works with no full page reload.
+  - A newly-surfaced advisory in the same package family
+    (GHSA-qwww-vcr4-c8h2, an RSC-mode CSRF bypass) does NOT apply and was
+    left unfixed on purpose: this app has zero React Router
+    framework-mode/Server Actions usage (confirmed: no loaders, actions,
+    or fetchers anywhere in `src/`), and no fix is available regardless -
+    `react-router-dom` has not published a v8 to pick up the underlying
+    `react-router@8.3.0` fix. Documented here to revisit when it does.
+- Left ~15 vulnerabilities (including one critical, in `tar`) in the
+  Capacitor mobile-build and Electron desktop-build devDependency trees
+  as accepted risk: these are build-time tooling, never shipped to or
+  reachable by an end user of the live product, and a blind
+  `npm audit fix --force` on them pulled in a 3,700+ line unrelated
+  lockfile resync that was reverted rather than committed blindly.
+- `exceljs`'s transitive `uuid` moderate vulnerability (server) remains
+  the previously-documented accepted risk from an earlier session - no
+  fix exists without a breaking downgrade of exceljs itself.
+
+**Security audit (background agent, OWASP Top 10 style).** The codebase
+was already largely solid: parameterized SQL everywhere (no string-built
+queries), scrypt + `timingSafeEqual` password hashing, httpOnly/Secure/
+SameSite session cookies, `helmet` with a real CSP and CORS allowlist (no
+wildcard-plus-credentials), IDOR checks on every spot-checked resource
+route, no `dangerouslySetInnerHTML` anywhere, and no mass-assignment
+(every dynamic `UPDATE ... SET` builder uses an explicit field allowlist).
+Two real, low-severity gaps found and fixed:
+- `POST /auth/reset` had no dedicated rate limiter (only the blanket
+  20/min `/api/auth` limiter). Added `resetPasswordRateLimit` (10 per IP
+  per 15 min) - defense in depth, since reset tokens are 32-byte random
+  hex and brute force was already impractical.
+- `GET /public/subscription-tiers` (added last session for the public
+  Pricing page) had zero rate limiting, unlike the comparable public
+  lookup endpoints. Added the existing `inviteLookupRateLimit`.
+- Documented, not changed: CSRF protection relies on `SameSite=Lax` alone
+  with no double-submit token, judged adequate since no state-changing
+  route is reachable via a top-level GET; CSP's `style-src` allows
+  `unsafe-inline` for CSS-in-JS, a known and accepted tradeoff.
+
+**Legal/compliance audit (background agent).**
+- **ADA Title III - ADA nav items were keyboard-invisible (fixed).**
+  `Landing.tsx`, `Pricing.tsx`, and `SuperAdminDashboard.tsx` had
+  navigation rendered as `<a>`/`<div>` elements with an `onClick` handler
+  but no `href`, `role`, or `tabIndex` - invisible to the keyboard tab
+  order and unusable by screen-reader users, which is exactly the pattern
+  targeted by ADA Title III demand letters. Real navigation now uses
+  `<Link>`, the sign-out action uses a real `<button>`, and the
+  scroll-to-section anchors got real `href="#..."` targets with the
+  smooth-scroll JS as progressive enhancement on top. Verified with
+  Playwright: the link is keyboard-focusable and activates on Enter.
+- **Overstated "verified" vendor claims (fixed, was the audit's
+  highest-priority finding).** `Landing.tsx` and `Pricing.tsx` stated
+  flatly that vendors are "license and insurance verified" and even
+  "verified against public records." `AdminVerification.tsx` confirms
+  this is actually a manual admin review of documents the vendor
+  uploads, not an automated registry check or a guarantee - a developer
+  relying on the unqualified marketing claim who is later harmed by an
+  actually-unlicensed vendor has a real negligent-misrepresentation
+  argument. Added an accurate qualifier next to the claims and in the
+  "How are vendors verified?" FAQ.
+- **A false "encrypted at rest" claim (fixed).** Found while verifying
+  the item above: `Landing.tsx`'s FAQ claimed "all data is encrypted in
+  transit and at rest." Checked the actual infrastructure code, not just
+  the page copy: object-storage encryption is opt-in and off by default
+  (`STORAGE_ENCRYPTION_KEY` unset means files are stored as plaintext),
+  and database at-rest encryption is entirely dependent on whichever
+  managed Postgres host is used - the application has no control over or
+  visibility into it. This is exactly the kind of claim that turns into
+  an FTC/state-UDAP deception claim after a breach. Corrected to only
+  claim what's actually true (in-transit TLS, password hashing, access
+  controls).
+- **A non-functional "reply to unsubscribe" claim (fixed).** The generic
+  transactional-email footer (`server/src/lib/email.ts`) told recipients
+  to "reply with Unsubscribe in the subject line," but no inbound-email
+  automation exists anywhere in the codebase to act on that - the
+  campaign system's real one-click unsubscribe (`server/src/routes/
+  campaigns.ts`) is separate infrastructure this generic footer never
+  used. Replaced with an accurate description: email support@, a
+  human-monitored inbox that already handles account/privacy requests
+  elsewhere in the app.
+- **Global Privacy Control mention added** to `Privacy.tsx`'s state
+  privacy-rights section - newer state laws (e.g. Colorado's CPA) expect
+  GPC signal recognition; practical effect is nil today since the app
+  doesn't sell or share data, but the policy now says so.
+- **Checked, no gap found, nothing changed:** Terms/Privacy acceptance is
+  already a proper clickwrap flow (`Register.tsx` disables submit until
+  an unchecked-by-default checkbox is checked); no third-party analytics
+  or tracking scripts exist anywhere to disclose; a dedicated
+  `/accessibility` statement with a real accommodation contact already
+  exists (`Accessibility.tsx`).
+
+**Not done, flagged for the business/legal owner rather than guessed at:**
+whether to make storage-at-rest encryption mandatory-by-default (currently
+opt-in; flipping the default is an infra/ops decision with deployment
+implications, not a legal requirement under current US law, which
+generally asks for "reasonable" security rather than mandating a specific
+control); whether a CSRF double-submit token is worth adding as
+defense-in-depth beyond `SameSite=Lax`; any state-specific licensing,
+lien-law, or money-transmission questions beyond what Terms/Payment
+Policy/Non-Circumvention already disclaim.
+
+**Files.** `package.json`, `package-lock.json`,
+`server/src/lib/email.ts`, `server/src/lib/rateLimit.ts`,
+`server/src/routes/auth-native.ts`, `server/src/routes/subscriptions.ts`,
+`src/pages/Landing.tsx`, `src/pages/Pricing.tsx`, `src/pages/Privacy.tsx`,
+`src/pages/dashboards/SuperAdminDashboard.tsx`.
+
+**Tests completed.** `npx tsc -p tsconfig.json --noEmit` and
+`npx tsc -p server/tsconfig.json --noEmit` (both clean, aside from the
+same pre-existing unrelated `PartnerOnboarding.tsx` errors noted in prior
+entries), `npm test` (163/163, unchanged - no test files touched), and a
+manual Playwright smoke test against the Vite dev server confirming: SPA
+navigation works post-react-router-upgrade with no full reloads, the new
+`Link`-based nav items are keyboard-focusable and Enter-activate, and the
+new verification-qualifier copy renders on both Landing and Pricing with
+zero console page errors.
+
+---
+
 ## 2026-08-03 (13) - Copy audit: fee figures, Capital Partner terminology, AI/OCR disclosures, real plan data everywhere
 
 **What.** A full copy pass across pages, FAQs, and legal policies to bring

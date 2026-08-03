@@ -63,7 +63,7 @@ function wrapHtml(subject: string, text: string): string {
   <div style="margin-top:22px;border-top:1px solid #e7e1d6;padding-top:14px;font-size:12px;color:#7d776c">
     Divini Procure by Divini Group &bull; Miami, FL &bull; support@diviniprocure.com<br/>
     You are receiving this email because you have an account on Divini Procure.
-    To unsubscribe from non-transactional emails, reply with "Unsubscribe" in the subject line.
+    To unsubscribe from non-transactional emails, email support@diviniprocure.com and we will remove you.
   </div>
 </div>`;
 }

@@ -85,6 +85,14 @@ export const forgotRateLimit = rateLimit({ windowMs: 60 * 60_000, max: 5 });
 export const resendVerifyRateLimit = rateLimit({ windowMs: 60 * 60_000, max: 5 });
 
 /**
+ * Strict limiter for the password-reset submission endpoint (token + new
+ * password): 10 attempts per IP per 15 minutes. Reset tokens are 32-byte
+ * random hex so brute force is impractical regardless, but this adds
+ * defense-in-depth alongside the blanket /api/auth limiter.
+ */
+export const resetPasswordRateLimit = rateLimit({ windowMs: 15 * 60_000, max: 10 });
+
+/**
  * Invite and referral code public lookup rate limit (#27).
  * 20 lookups per IP per 10 minutes prevents brute-force enumeration of short
  * codes while still allowing legitimate page refreshes and mobile retries.

@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import VendorBadges from '../components/VendorBadges';
 import LanguageSwitcher from '../components/LanguageSwitcher';
 
@@ -193,13 +193,13 @@ export default function Landing() {
             </div>
           </div>
           <div className="navlinks">
-            <a className="hidelink" onClick={() => document.getElementById('why')?.scrollIntoView({behavior:'smooth'})}>Why Divini</a>
-            <a className="hidelink" onClick={() => document.getElementById('how')?.scrollIntoView({behavior:'smooth'})}>How it works</a>
-            <a className="hidelink" onClick={() => document.getElementById('tools')?.scrollIntoView({behavior:'smooth'})}>Tools</a>
-            <a onClick={() => nav('/opportunities')}>Browse deals</a>
-            <a onClick={() => nav('/pricing')}>Pricing</a>
+            <a className="hidelink" href="#why" onClick={(e) => { e.preventDefault(); document.getElementById('why')?.scrollIntoView({behavior:'smooth'}); }}>Why Divini</a>
+            <a className="hidelink" href="#how" onClick={(e) => { e.preventDefault(); document.getElementById('how')?.scrollIntoView({behavior:'smooth'}); }}>How it works</a>
+            <a className="hidelink" href="#tools" onClick={(e) => { e.preventDefault(); document.getElementById('tools')?.scrollIntoView({behavior:'smooth'}); }}>Tools</a>
+            <Link to="/opportunities">Browse deals</Link>
+            <Link to="/pricing">Pricing</Link>
             <LanguageSwitcher />
-            <a onClick={go}>Log in</a>
+            <Link to="/login">Log in</Link>
             <button className="btn primary" onClick={go}>Get started</button>
           </div>
         </div>
@@ -448,6 +448,9 @@ export default function Landing() {
               </div>
             </div>
             <div className="seats">Featured vendors earn top placement once verified.</div>
+            <p className="sub" style={{fontSize:13,opacity:0.75,marginTop:10}}>
+              Verification is based on the license, insurance, and other documents a vendor submits and our team's review of them - it is not an independent government-registry check or a guarantee. Always confirm current licensing and insurance directly with a vendor before you award work.
+            </p>
             <div className="cta" style={{marginTop:24}}>
               <button className="btn gold lg" onClick={go}>Join as a verified vendor</button>
             </div>
@@ -467,9 +470,9 @@ export default function Landing() {
             <div className="fstep"><div className="ic">★</div><h4>Vendor Pro</h4><p>$149 per month. Unlimited bids, project alerts, and priority matching.</p></div>
             <div className="fstep"><div className="ic">✓</div><h4>You only pay when you win</h4><p>A 5 percent platform fee on the awarded contract, capped at $25,000, plus a separate 0.1 percent infrastructure fee capped at $1,500.</p></div>
           </div>
-          <div className="scale-note">No fees to browse, bid, or post. <a onClick={() => nav('/pricing')} style={{color:'var(--emerald)',fontWeight:600,cursor:'pointer'}}>See full pricing</a>.</div>
+          <div className="scale-note">No fees to browse, bid, or post. <Link to="/pricing" style={{color:'var(--emerald)',fontWeight:600}}>See full pricing</Link>.</div>
           <div className="scale-note" style={{marginTop:6}}>
-            Sourcing capital for a project? <a onClick={() => nav('/pricing')} style={{color:'var(--emerald)',fontWeight:600,cursor:'pointer'}}>Capital Partner plans</a> connect developers with passive capital for introductions only - Divini Procure never brokers, structures, or executes an investment.
+            Sourcing capital for a project? <Link to="/pricing" style={{color:'var(--emerald)',fontWeight:600}}>Capital Partner plans</Link> connect developers with passive capital for introductions only - Divini Procure never brokers, structures, or executes an investment.
           </div>
         </div>
       </section>
@@ -483,9 +486,9 @@ export default function Landing() {
             {[
               { q: 'Is Divini Procure free for developers?', a: 'Yes. Developers post projects, receive bids, and award contracts at no cost. There are no monthly fees or per-project charges for developers.' },
               { q: 'How does the platform fee work?', a: 'When a vendor wins an awarded contract through Divini Procure, a 5% platform fee applies to the award amount, capped at $25,000 (2% capped at $10,000 for an existing relationship), plus a separate 0.1% platform infrastructure fee capped at $1,500, always shown as its own line item. There is no fee to browse, bid, or post.' },
-              { q: 'How are vendors verified?', a: 'We confirm license, insurance, and certifications before a vendor can submit bids. Vendors who go further with bonding, financials, and references earn a Verified+ badge.' },
+              { q: 'How are vendors verified?', a: 'Our team reviews the license, insurance, and certification documents a vendor submits before they can bid - this is a document review, not an independent government-registry check, so always confirm current licensing and insurance directly with a vendor before you award work. Vendors who go further with bonding, financials, and references earn a Verified+ badge.' },
               { q: 'Can vendors bid for free?', a: 'Yes. Vendors can build a profile and submit up to 5 bids per quarter at no cost. Vendor Pro ($149/month) unlocks unlimited bids, project alerts, and priority matching.' },
-              { q: 'Is my data secure?', a: 'Yes. All data is encrypted in transit and at rest. Role-based access controls ensure developers only see their own projects, and vendors only see their own bids.' },
+              { q: 'Is my data secure?', a: 'Yes. All data is encrypted in transit (HTTPS/TLS), passwords are hashed, and role-based access controls ensure developers only see their own projects and vendors only see their own bids. See our Privacy Policy for full details.' },
               { q: 'What markets does Divini Procure serve?', a: 'Divini Procure currently focuses on real estate development and construction projects. We match developers with verified trade vendors, specialty contractors, and suppliers.' },
               { q: 'What are the Divini tools (Pipeline, Scope Builder, Bid Studio, Follow-Up Desk, Blueprint)?', a: 'Purpose-built tools included with your account that run procurement end to end: track opportunities, build complete scopes of work, compare and finalize bids, get automatic follow-up reminders, and turn uploaded plans and documents into a preliminary project summary. Every score and suggestion is computed deterministically from your own data, and any AI-assisted step is optional, clearly labeled, and requires your review before anything is created.' },
               { q: 'Is Divini Procure an investment platform?', a: 'No. Divini Procure facilitates introductions between developers and Capital Partners only. We do not broker, structure, underwrite, or execute investments, and we are not a securities intermediary.' },

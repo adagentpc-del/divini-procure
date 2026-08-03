@@ -23,7 +23,7 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { randomUUID } from "node:crypto";
 import { getAuth, requireUser } from "../auth.js";
-import { loginRateLimit, registerRateLimit, forgotRateLimit, resendVerifyRateLimit } from "../lib/rateLimit.js";
+import { loginRateLimit, registerRateLimit, forgotRateLimit, resendVerifyRateLimit, resetPasswordRateLimit } from "../lib/rateLimit.js";
 import * as db from "../db.js";
 import { sendEmail } from "../lib/email.js";
 import {
@@ -345,6 +345,7 @@ router.post(
 // ===========================================================================
 router.post(
   "/auth/reset",
+  resetPasswordRateLimit,
   h(async (req, res) => {
     const { token, password, passwordConfirm } = (req.body ?? {}) as {
       token?: string;

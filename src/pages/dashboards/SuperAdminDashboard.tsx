@@ -1,5 +1,5 @@
 import { ReactNode } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../lib/auth';
 
 // Super-admin nav shell. Procure has no DashboardShell, so this is a simple
@@ -48,13 +48,13 @@ export default function SuperAdminDashboard({ children }: { children?: ReactNode
         <div className="nav-label">Administration</div>
         <nav className="nav">
           {NAV.map(([path, label, icon]) => (
-            <a key={path} className={loc.pathname === path ? 'active' : ''} onClick={() => nav(path)}>
+            <Link key={path} to={path} className={loc.pathname === path ? 'active' : ''}>
               <span>{icon}</span> {label}
-            </a>
+            </Link>
           ))}
         </nav>
         <div className="foot">
-          <a onClick={signOut} style={{ cursor: 'pointer' }}>Sign out</a>
+          <button onClick={signOut} style={{ background: 'none', border: 'none', font: 'inherit', color: 'inherit', cursor: 'pointer', padding: 0 }}>Sign out</button>
         </div>
       </aside>
 
@@ -65,7 +65,7 @@ export default function SuperAdminDashboard({ children }: { children?: ReactNode
         </div>
         <div className="mtop">
           <span className="nm">Divini Procure</span>
-          <a onClick={signOut} style={{ color: '#fff', cursor: 'pointer', fontSize: 13 }}>Sign out</a>
+          <button onClick={signOut} style={{ background: 'none', border: 'none', font: 'inherit', color: '#fff', cursor: 'pointer', fontSize: 13, padding: 0 }}>Sign out</button>
         </div>
         <div className="content">{children}</div>
         <nav className="mbottom">
