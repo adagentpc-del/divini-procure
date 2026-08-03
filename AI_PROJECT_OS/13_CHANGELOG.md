@@ -6,6 +6,125 @@ the Authentik/Supabase era and does not reflect Monetization V2.)
 
 ---
 
+## 2026-08-03 (12) - Pricing/plan selection, locked-feature teasers, usage counters, onboarding nudges
+
+**What.** Live pricing pages, tier selection at registration, a reusable
+"locked feature with an upgrade CTA" pattern, real usage counters, and
+onboarding nudges toward the plan page - built on the existing (and
+already solid) entitlements/Stripe subscription engine rather than a new
+one. Explicitly scoped away from dark patterns: no fabricated scarcity, no
+fake countdown timers, no fake testimonials or "X people just signed up"
+social proof, and no fake currency conversion without real FX data. Real
+signals only - actual usage, actual tier data, actual locale.
+
+- **A real pre-existing bug fixed along the way**: the Dashboard's "Plan"
+  metric card showed a hardcoded `$100/mo, first 2 mo 50% off` for every
+  vendor regardless of their actual plan or price (Vendor Pro is really
+  $149/mo) - never wired to the entitlements engine at all. Replaced with
+  the company's real plan name and price from `GET /subscriptions/mine`.
+- **A second pre-existing bug fixed**: `verified_plus` and
+  `vendor_featured` are documented in `entitlements.ts` as vendor add-ons
+  purchased on top of a base plan, but both `Subscription.tsx` and the old
+  static `Pricing.tsx` sorted every tier by price into one ladder - mixing
+  them in as if they were alternative starting plans a vendor picks
+  instead of `vendor_free`/`vendor_pro`. Both pages now exclude add-on
+  keys from the base-plan comparison (`ADDON_TIER_KEYS` in the new
+  `src/lib/tiers.ts`). Actually exposing an add-on *purchase* flow was
+  deliberately NOT built: `subscription_entitlements` stores one
+  `tier_key` per company, so "buying" verified_plus today would silently
+  REPLACE (not add to) a vendor's real plan and its limits - a real
+  architectural gap, documented in code rather than papered over with a
+  button that would quietly break a vendor's account.
+- **`GET /public/subscription-tiers`** (new, no auth) - the public Pricing
+  page needed real tier data, but `GET /subscriptions/tiers` requires a
+  signed-in session. Tier pricing/limits are not sensitive, so this is a
+  plain read of the same catalogue with no auth gate, keeping Pricing
+  permanently in sync with whatever an admin configures in
+  AdminSubscriptions instead of a hand-maintained copy that drifts.
+- **`src/lib/tiers.ts`** - shared `Tier`/`Entitlement`/`LimitCheck` types
+  and `money()`/`limitText()`/`basePlansFor()`/`audienceForKind()`
+  helpers, used by Subscription, Onboarding, Pricing, and Dashboard so
+  they can never disagree about tier shape or the add-on exclusion rule.
+- **`src/components/UsageMeter.tsx`** - the usage-bar pattern extracted
+  from Subscription.tsx into a reusable component (now also used on
+  Dashboard), with a new near-limit (80%+) amber warning state that didn't
+  exist before - previously a bar only changed color once you were
+  already AT the limit, with no earlier warning.
+- **`src/components/UpgradeGate.tsx`** - the "darken a locked feature with
+  a lock icon and an Upgrade button" pattern requested for gated features:
+  `<UpgradeGate locked={...} featureName="...">` blurs/dims its children
+  behind an overlay when locked, always driven by a real entitlement flag
+  the caller checked - never a fabricated claim about what's behind it.
+  Applied to the AI COO page (`entitlement.ai_features`) as a concrete,
+  representative example of the pattern, not to every gated feature in the
+  app - extending it further is straightforward from here but is a much
+  larger pass than this one covered.
+- **Registration now includes a plan-selection step** (Onboarding.tsx
+  gains a step between company info and contact details): shows the real
+  base-plan ladder for whichever role was picked, defaults to that role's
+  free tier, and after the company is created calls the EXISTING
+  `POST /subscriptions/checkout` (free tiers assign immediately; paid
+  tiers redirect to Stripe Checkout) - no new billing code, reusing
+  exactly what Subscription.tsx already does for in-app upgrades. A plan
+  choice made on the public Pricing page is stashed to localStorage
+  (`procure_onboard_tier`, alongside the existing `procure_onboard_role`
+  convention) since registration requires email verification that can
+  happen minutes or days later in a different tab - a query param alone
+  would not survive that gap. Validated against the real loaded plan list
+  before being trusted, never applied blindly.
+  - **A real bug caught in self-review**: the existing `?role=` URL-hint
+    effect set `kind` directly, bypassing the reset helper that keeps
+    `selectedTierKey` in sync with the audience - a vendor arriving via
+    `?role=vendor` would have kept a stale developer-tier default
+    selected. Fixed by updating the tier hint in that same effect.
+- **Pricing page rebuilt** (`src/pages/Pricing.tsx`): audience tabs
+  (Developers / Vendors / Capital Partners) over the live tier catalogue
+  instead of a hardcoded plan list that only ever covered vendors: an
+  FAQ/objection-handling section (change plans anytime, what happens at
+  your limit, no lock-in contract, how the plan relates to the separate
+  success fee, do you need to pay to start) answers the questions a real
+  visitor has before committing, replacing what would otherwise be
+  manufactured urgency. The existing honest fee-structure and
+  trust/verification sections were kept as-is since they were already
+  real, accurate content.
+- **Dashboard usage counters**: a "Usage this period" card
+  (`UsageMeterList`) showing the 2-3 limits most relevant to that
+  company's role, linking to Subscription for full detail.
+- **Onboarding checklist nudge**: every role's checklist
+  (`OnboardingChecklist.tsx`) gained a "See what your plan unlocks" step
+  linking to Subscription - a real, dismissible suggestion, not a modal
+  interruption.
+
+**Deliberately NOT built, and why**: IP-geolocation/VPN-based personalization
+that changes marketing copy or prices per visitor. Doing this honestly
+would need either a geo-IP service (a real API key the user would need to
+provide - none configured) for country detection, or real-time FX rates
+for accurate currency conversion (also not configured) - faking either
+with guessed values or a static conversion table would show visitors
+wrong prices, which is worse than showing one honest USD price to
+everyone. If/when a geo-IP or FX-rate provider is configured, Pricing.tsx
+is the file to extend with real per-region pricing.
+
+**Files.** `server/src/routes/subscriptions.ts` (new public tiers route),
+`src/lib/tiers.ts` (new), `src/components/UsageMeter.tsx` (new),
+`src/components/UpgradeGate.tsx` (new), `src/pages/Subscription.tsx`
+(refactored onto the shared module + component), `src/pages/Onboarding.tsx`
+(new plan-selection step), `src/pages/Pricing.tsx` (rebuilt on live data),
+`src/pages/Dashboard.tsx` (real plan card + usage counters, fixed
+duplicate `apiGet`/`money()` introduced then caught in the same pass),
+`src/pages/CooDashboard.tsx` (UpgradeGate applied), `src/components/
+OnboardingChecklist.tsx` (plan-nudge step per role).
+
+**Tests completed.** Both server and SPA typecheck clean; full suite
+163/163 passing (no new pure logic needing unit tests this pass - the one
+backend change is a plain read of the already-covered tier catalogue).
+Not tested against a live database, a real Stripe account, or in a
+browser - same sandbox limitation as every prior slice this session; the
+checkout flow reuses Subscription.tsx's already-shipped, unchanged Stripe
+integration rather than adding a new one.
+
+---
+
 ## 2026-08-03 (11) - Real content extraction: PDF text, OCR, DXF entities, safe XLSX
 
 **What.** A genuine capability upgrade, not just another filename-based

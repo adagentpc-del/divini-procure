@@ -17,6 +17,8 @@ import {
   extractProfileFromUrl,
   type CompanyPayload,
 } from '../lib/db';
+import { apiGet, apiSend } from '../lib/api';
+import { type Tier, audienceForKind, basePlansFor, freeTierKeyForAudience, money, limitText } from '../lib/tiers';
 
 const VENDOR_SERVICES = [
   'Millwork', 'Cabinetry', 'Doors', 'Furniture', 'Lighting',
@@ -44,6 +46,20 @@ function readRoleHint(): Kind | null {
     if (fromQuery) return fromQuery;
     const stored = localStorage.getItem('procure_onboard_role');
     return normalizeRole(stored);
+  } catch {
+    return null;
+  }
+}
+
+// Stashed by the Pricing page when a visitor picks a specific plan before
+// signing up - registration requires email verification, which can happen
+// minutes or days later in a different tab, so a query param would not
+// survive; localStorage does (same pattern as procure_onboard_role above).
+function readTierHint(): string | null {
+  try {
+    const q = new URLSearchParams(window.location.search).get('tier');
+    if (q) return q;
+    return localStorage.getItem('procure_onboard_tier');
   } catch {
     return null;
   }
@@ -80,7 +96,11 @@ export default function Onboarding() {
   const [pulling, setPulling] = useState(false);
   const [pullMsg, setPullMsg] = useState('');
 
-  // Step 2 fields
+  // Step 2 (plan) fields
+  const [tiers, setTiers] = useState<Tier[]>([]);
+  const [selectedTierKey, setSelectedTierKey] = useState<string>(freeTierKeyForAudience(audienceForKind('buyer')));
+
+  // Step 3 fields
   const [contact, setContact] = useState('');
   const [contactTitle, setContactTitle] = useState('');
   const [email, setEmail] = useState(session?.user.email ?? '');
@@ -95,9 +115,32 @@ export default function Onboarding() {
     const hint = readRoleHint();
     if (hint) {
       setKind(hint);
+      setSelectedTierKey(freeTierKeyForAudience(audienceForKind(hint)));
       setStep(0);
     }
   }, []);
+
+  // Plan catalogue - loaded once; the user is already authenticated at this
+  // point (they just have not created a company/role yet), so the same
+  // requireUser-gated /subscriptions/tiers endpoint the rest of the app uses
+  // works here too.
+  useEffect(() => {
+    apiGet<{ tiers: Tier[] }>('/subscriptions/tiers').then((d) => setTiers(d.tiers ?? [])).catch(() => {});
+  }, []);
+
+  const plans = useMemo(() => basePlansFor(tiers, audienceForKind(kind)), [tiers, kind]);
+
+  // Apply a stashed plan hint from the Pricing page once the catalogue has
+  // loaded and only if it's a real, selectable plan for the resolved
+  // audience - never trust the hint blindly.
+  useEffect(() => {
+    if (plans.length === 0) return;
+    const tierHint = readTierHint();
+    if (tierHint && plans.some((p) => p.key === tierHint)) {
+      setSelectedTierKey(tierHint);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plans]);
 
   // Apply one-time prefill stashed by the invite claim page
   useEffect(() => {
@@ -133,6 +176,7 @@ export default function Onboarding() {
     setStep(0);
     setErr('');
     setAgreed(false);
+    setSelectedTierKey(freeTierKeyForAudience(audienceForKind(k)));
   }
 
   async function pullFromWebsite() {
@@ -174,6 +218,11 @@ export default function Onboarding() {
     setStep(1);
   }
 
+  function nextFromPlan() {
+    setErr('');
+    setStep(2);
+  }
+
   async function submit() {
     setErr('');
     if (!name.trim()) { setErr('Company name is required.'); setStep(0); return; }
@@ -203,8 +252,35 @@ export default function Onboarding() {
         payload.asset_types = assetTypes;
       }
 
-      await createCompanyForUser(session!.user.id, payload);
+      const created = await createCompanyForUser(session!.user.id, payload);
       await refreshCompany();
+
+      // Free tier: nothing further to do. Paid tier: kick off checkout - a
+      // Stripe redirect for a real price, or an immediate record-only
+      // assignment when Stripe isn't configured for this tier yet. Either
+      // way the account already exists, so a failure here never blocks
+      // access - just report it and let the user upgrade later from
+      // Subscription.
+      const freeKey = freeTierKeyForAudience(audienceForKind(kind));
+      if (selectedTierKey && selectedTierKey !== freeKey) {
+        try {
+          const successUrl = `${window.location.origin}/subscription?session_id={CHECKOUT_SESSION_ID}`;
+          const cancelUrl = `${window.location.origin}/app`;
+          const r = await apiSend<{ url?: string | null }>('POST', '/subscriptions/checkout', {
+            companyId: created.id,
+            tierKey: selectedTierKey,
+            successUrl,
+            cancelUrl,
+          });
+          if (r.url) {
+            window.location.href = r.url;
+            return;
+          }
+        } catch {
+          // Non-fatal: the account was created successfully on the free
+          // tier default. The user can pick a plan from Subscription.
+        }
+      }
       nav('/app');
     } catch (e: any) {
       setErr(e?.message ?? 'Could not create your company. Please try again.');
@@ -217,7 +293,7 @@ export default function Onboarding() {
   const progress = useMemo(
     () => (
       <div style={{ display: 'flex', gap: 6, marginBottom: 22 }}>
-        {[0, 1].map((i) => (
+        {[0, 1, 2].map((i) => (
           <div
             key={i}
             style={{
@@ -240,19 +316,17 @@ export default function Onboarding() {
         {/* Header */}
         <div style={{ marginBottom: 6 }}>
           <div style={{ fontSize: 12, color: 'var(--muted)', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 4 }}>
-            Step {step + 1} of 2
+            Step {step + 1} of 3
           </div>
           <h1 style={{ fontSize: 24, marginBottom: 2 }}>
-            {step === 0
-              ? 'Set up your organization'
-              : kind === 'investor'
-                ? 'Your contact details'
-                : 'Your contact details'}
+            {step === 0 ? 'Set up your organization' : step === 1 ? 'Choose your plan' : 'Your contact details'}
           </h1>
           <div className="note">
             {step === 0
               ? "Takes under a minute. You can add documents and media from your dashboard."
-              : "We'll use this to personalize your account."}
+              : step === 1
+                ? 'Start free, or pick a plan now - you can change this anytime from Subscription.'
+                : "We'll use this to personalize your account."}
           </div>
         </div>
 
@@ -379,9 +453,74 @@ export default function Onboarding() {
         )}
 
         {/* ================================================================
-            STEP 2: Contact + (Vendor Agreement)
+            STEP 2: Choose a plan
             ================================================================ */}
         {step === 1 && (
+          <>
+            <div style={{ display: 'grid', gap: 10 }}>
+              {plans.length === 0 ? (
+                <div className="note">Loading plans...</div>
+              ) : (
+                plans.map((t) => {
+                  const selected = selectedTierKey === t.key;
+                  return (
+                    <div
+                      key={t.key}
+                      onClick={() => setSelectedTierKey(t.key)}
+                      style={{
+                        cursor: 'pointer',
+                        border: `1px solid ${selected ? 'var(--emerald)' : 'var(--line)'}`,
+                        borderRadius: 10,
+                        padding: '12px 14px',
+                        background: selected ? 'rgba(16,185,129,0.06)' : 'transparent',
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span
+                            style={{
+                              width: 16, height: 16, borderRadius: '50%',
+                              border: `2px solid ${selected ? 'var(--emerald)' : 'var(--muted)'}`,
+                              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                            }}
+                          >
+                            {selected && <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--emerald)' }} />}
+                          </span>
+                          <strong>{t.name}</strong>
+                        </div>
+                        <span className="note">{money(t.price_cents)}</span>
+                      </div>
+                      <div className="note" style={{ fontSize: 12, marginTop: 6, paddingLeft: 24 }}>
+                        {t.bid_package_limit !== undefined && kind !== 'investor' && `${limitText(t.bid_package_limit)} bid packages`}
+                        {kind === 'buyer' && ` · ${limitText(t.active_project_limit)} active projects`}
+                        {kind === 'vendor' && ` · ${limitText(t.vendor_invite_limit)} vendor invites`}
+                        {kind === 'investor' && `${limitText(t.investor_match_limit)} Capital Partner matches`}
+                        {(t.ai_features || t.reporting_access || t.white_glove) && ' · '}
+                        {t.ai_features && 'AI features '}
+                        {t.reporting_access && 'Reporting '}
+                        {t.white_glove && 'White glove'}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+            <div className="note" style={{ marginTop: 10 }}>
+              {selectedTierKey === freeTierKeyForAudience(audienceForKind(kind))
+                ? "You're on the free plan - upgrade anytime from Subscription."
+                : 'A paid plan checks out securely through Stripe right after your account is created.'}
+            </div>
+            <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
+              <button type="button" className="btn lg" onClick={() => setStep(0)} style={{ flex: 1 }}>Back</button>
+              <button type="button" className="btn primary lg" onClick={nextFromPlan} style={{ flex: 2 }}>Continue</button>
+            </div>
+          </>
+        )}
+
+        {/* ================================================================
+            STEP 3: Contact + (Vendor Agreement)
+            ================================================================ */}
+        {step === 2 && (
           <>
             <div className="two">
               <div className="field">
@@ -474,7 +613,7 @@ export default function Onboarding() {
               <button
                 type="button"
                 className="btn lg"
-                onClick={() => { setErr(''); setStep(0); }}
+                onClick={() => { setErr(''); setStep(1); }}
                 disabled={busy}
                 style={{ flex: 1 }}
               >

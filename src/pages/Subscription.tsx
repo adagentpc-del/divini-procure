@@ -7,58 +7,14 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../lib/auth';
 import { apiGet, apiSend } from '../lib/api';
+import { type Tier, type Entitlement, type LimitCheck, LIMIT_LABELS, ADDON_TIER_KEYS, money, limitText } from '../lib/tiers';
+import { UsageMeterList } from '../components/UsageMeter';
 
-type Tier = {
-  key: string;
-  name: string;
-  audience: 'developer' | 'vendor' | 'investor';
-  price_cents: number;
-  ai_features: boolean;
-  reporting_access: boolean;
-  white_glove: boolean;
-  active_project_limit: number | null;
-  bid_package_limit: number | null;
-  vendor_invite_limit: number | null;
-  investment_program_limit: number | null;
-  investor_match_limit: number | null;
-  seat_limit: number | null;
-};
-type Entitlement = Tier & {
-  company_id: string;
-  tier_key: string | null;
-  is_default: boolean;
-  subscription_status: string | null;
-};
-type LimitCheck = {
-  key: string;
-  limit: number | null;
-  used: number;
-  remaining: number | null;
-  allowed: boolean;
-};
 type Mine = {
   entitlement: Entitlement;
   usage: Record<string, number>;
   limits: Record<string, LimitCheck>;
 };
-
-const LIMIT_LABELS: Record<string, string> = {
-  active_project_limit: 'Active projects',
-  bid_package_limit: 'Bid packages',
-  vendor_invite_limit: 'Vendor invites',
-  investment_program_limit: 'Capital programs',
-  investor_match_limit: 'Capital Partner matches',
-  seat_limit: 'Team seats',
-};
-
-function money(cents: number): string {
-  if (!cents) return 'Free';
-  return `$${(cents / 100).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}/mo`;
-}
-
-function limitText(n: number | null): string {
-  return n === null ? 'Unlimited' : String(n);
-}
 
 export default function Subscription() {
   const { company } = useAuth();
@@ -168,11 +124,18 @@ export default function Subscription() {
 
   const ent = mine?.entitlement;
   const audience = ent?.audience ?? (company.kind === 'vendor' ? 'vendor' : 'developer');
+  // Base plans only - verified_plus/vendor_featured are excluded here rather
+  // than mixed into this price-sorted ladder. They're meant to be add-ons
+  // purchased on top of a base vendor plan, but subscription_entitlements
+  // only stores a single tier_key per company today, so actually "buying"
+  // one through this same checkout flow would silently REPLACE (not add to)
+  // a vendor's real plan and its limits - a pre-existing gap in the tier
+  // model, not something safe to expose as a purchase button yet.
   const relevant = tiers
-    .filter((t) => t.audience === audience)
+    .filter((t) => t.audience === audience && !ADDON_TIER_KEYS.has(t.key))
     .sort((a, b) => a.price_cents - b.price_cents);
 
-  const limitOrder = Object.keys(LIMIT_LABELS).filter((k) => mine?.limits?.[k]);
+  const limitOrder = Object.keys(LIMIT_LABELS);
 
   const isPastDue = ent?.subscription_status === 'past_due';
 
@@ -212,54 +175,8 @@ export default function Subscription() {
             </div>
           </div>
 
-          <div style={{ marginTop: 18, display: 'grid', gap: 14 }}>
-            {limitOrder.length === 0 ? (
-              <div className="note">No metered limits on this plan.</div>
-            ) : (
-              limitOrder.map((k) => {
-                const lc = mine!.limits[k];
-                const unlimited = lc.limit === null;
-                const pct = unlimited || lc.limit === 0
-                  ? (lc.used > 0 ? 100 : 0)
-                  : Math.min(100, Math.round((lc.used / (lc.limit || 1)) * 100));
-                const over = !lc.allowed;
-                return (
-                  <div key={k}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-                      <strong>{LIMIT_LABELS[k]}</strong>
-                      <span className="note">
-                        {lc.used} / {limitText(lc.limit)}
-                        {!unlimited && (
-                          <span
-                            className={`badge ${over ? 'b-red' : 'b-green'}`}
-                            style={{ marginLeft: 8 }}
-                          >
-                            {over ? 'At limit' : `${lc.remaining} left`}
-                          </span>
-                        )}
-                      </span>
-                    </div>
-                    <div
-                      style={{
-                        height: 8,
-                        borderRadius: 6,
-                        background: 'rgba(255,255,255,0.08)',
-                        overflow: 'hidden',
-                        marginTop: 4,
-                      }}
-                    >
-                      <div
-                        style={{
-                          width: `${unlimited ? 0 : pct}%`,
-                          height: '100%',
-                          background: over ? '#c0504d' : 'var(--accent, #b8924a)',
-                        }}
-                      />
-                    </div>
-                  </div>
-                );
-              })
-            )}
+          <div style={{ marginTop: 18 }}>
+            {mine && <UsageMeterList limits={mine.limits} labels={LIMIT_LABELS} order={limitOrder} />}
           </div>
         </div>
       )}

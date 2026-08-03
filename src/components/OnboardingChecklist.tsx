@@ -55,6 +55,13 @@ const BUYER_STEPS: Step[] = [
     href: '/app/settings/company',
     cta: 'Complete profile',
   },
+  {
+    id: 'explore_plan',
+    label: 'See what your plan unlocks',
+    detail: 'Compare plans and see what higher limits, AI tools, and reporting look like when you need them.',
+    href: '/subscription',
+    cta: 'View plans',
+  },
 ];
 
 const VENDOR_STEPS: Step[] = [
@@ -86,6 +93,13 @@ const VENDOR_STEPS: Step[] = [
     href: '/app/marketplace',
     cta: 'Submit a bid',
   },
+  {
+    id: 'explore_plan',
+    label: 'See what your plan unlocks',
+    detail: 'Compare plans and see what unlimited bidding, AI tools, and priority verification look like when you need them.',
+    href: '/subscription',
+    cta: 'View plans',
+  },
 ];
 
 const INVESTOR_STEPS: Step[] = [
@@ -109,6 +123,13 @@ const INVESTOR_STEPS: Step[] = [
     detail: 'Track deals and get email alerts on matching opportunities.',
     href: '/investor-watchlist',
     cta: 'Add to watchlist',
+  },
+  {
+    id: 'explore_plan',
+    label: 'See what your plan unlocks',
+    detail: 'Compare plans and see what higher match limits and reporting look like when you need them.',
+    href: '/subscription',
+    cta: 'View plans',
   },
 ];
 

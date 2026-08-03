@@ -226,6 +226,17 @@ router.get(
   }),
 );
 
+// GET /public/subscription-tiers -> the same catalogue, no auth required.
+// Tier pricing/limits are not sensitive data, and the public Pricing page
+// needs real numbers rather than a hand-maintained copy that drifts out of
+// sync with what admins actually configure via /admin/subscriptions/tiers.
+router.get(
+  "/public/subscription-tiers",
+  h(async (_req, res) => {
+    res.json({ tiers: await listTiers() });
+  }),
+);
+
 // GET /subscriptions/mine?companyId= -> entitlement + usage + per-key limits.
 router.get(
   "/subscriptions/mine",
