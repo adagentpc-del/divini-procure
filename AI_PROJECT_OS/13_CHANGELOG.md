@@ -6,6 +6,113 @@ the Authentik/Supabase era and does not reflect Monetization V2.)
 
 ---
 
+## 2026-08-03 (9) - Marketplace publication: visibility, scheduling, and urgency
+
+**What.** Implements the master spec's "marketplace publication" sections
+(20-25) on top of the pre-existing `packages` table, rather than a new
+parallel listing system. Before this slice, a package with `status='open'`
+was already visible to every vendor via `getOpenPackages()` with no
+visibility tiers, no validation gate, no scheduling, and no urgency
+concept - `POST /packages/:id/status` was the entire "publish" mechanism.
+This adds all four, matching the spec's "one controlled submission action,
+never automatic" framing.
+
+- **A real correctness bug caught before it shipped**: the natural way to
+  add a `visibility` column defaults it to `'private_draft'`, but Postgres
+  backfills that default onto every EXISTING row too - which would have
+  instantly hidden every already-published package from the marketplace
+  the moment this migration ran, since the new `getOpenPackages()` filter
+  also checks visibility. Caught in review before writing the route logic;
+  fixed by defaulting `visibility` to `'public_marketplace'` instead, so
+  every package already open (and every package created through the
+  unchanged legacy `createPackage()` path, which still defaults status to
+  `'open'`) stays exactly as visible as it always was. `status` remains the
+  master gate on whether a package is listed at all; `visibility` only
+  narrows WHO can see it once status allows listing.
+- **A second bug caught in self-review**: the publish-readiness "has
+  documents" check only counted `documents.package_id`, but Divini
+  Blueprint's `create-package` action (previous slice) links documents
+  through `blueprint_document_package_links` only, never sets
+  `documents.package_id` - so a Blueprint-originated package would always
+  report "no documents attached" even with several linked. Fixed by
+  unioning both sources in `readinessFor()`.
+- **Validation gate** (`server/src/lib/marketplace-validation.ts`, pure, 8
+  tests): a fixed, hedge-free checklist - visibility chosen, bid due date
+  present, question deadline not after the bid due date, review
+  acknowledgment given are BLOCKING errors; missing scope or documents are
+  WARNINGS only, per the spec's own "do not prevent all bidding if
+  documents are incomplete" rule. `POST /packages/:id/publish` always runs
+  this first and refuses with the exact errors on failure - it never
+  publishes silently.
+- **Urgency, gated by a configurable monthly limit**: reuses the existing
+  subscription-tier entitlement engine (`server/src/lib/entitlements.ts`)
+  rather than a hardcoded number - `urgentListingMonthlyLimit()` /
+  `urgentListingsUsedThisMonth()` / `checkUrgentListingLimit()` follow the
+  exact override-wins-else-tier-default pattern already used for every
+  other limit there. This codebase's real developer tier ladder is
+  `developer_free` / `developer_pro` / `developer_enterprise` (not the
+  master spec's five-tier Explorer/Starter/Growth/Professional/Enterprise
+  naming), so the spec's limits are adapted onto these three: free =
+  unavailable (0/month), pro = 5/month, enterprise = unlimited by default
+  (contract-defined per company via the existing override column). Usage is
+  counted by PUBLISH time, not creation or urgency-flagging time, since the
+  limit is about how many urgent listings actually go live in a month.
+- **Scheduling with no external cron**: `publish_at` keeps a package in
+  draft; a new 5-minute interval in `server/src/index.ts` (same
+  in-process pattern as Divini Follow-Up Desk) calls
+  `publishDueScheduledPackages()`, which RE-VALIDATES each due package
+  (visibility/dates/urgency limit can all have changed since it was
+  scheduled) and skips - never force-publishes - anything no longer ready,
+  logging why.
+- **Publication snapshot**: publishing writes `publication_snapshot`
+  (a locked jsonb copy of the package at that moment) so the listing
+  content the spec calls for stays fixed even as the working record keeps
+  evolving afterward.
+- **Batch publish**: `POST /packages/publish-batch` applies shared
+  publication settings to a list of packages then attempts each
+  independently - one package's validation failure or urgent-limit
+  rejection never blocks the others (spec section 25).
+- Frontend: `src/pages/PackageDetail.tsx` gains an owner-only "Marketplace
+  publication" panel - status/visibility/urgency badges, the live readiness
+  checklist (errors block, warnings do not), the urgent-listing usage
+  counter, visibility/urgency/date/NDA fields, the spec's exact
+  human-review acknowledgment checkbox, and Save / Publish (or
+  Save & Schedule, when a future publish date is set) actions.
+- **Deferred, not built in this slice**: vendor notification on publish
+  (the spec's "notify matched vendors" step). This codebase does not yet
+  have a general "new listing matches this vendor's saved trade/geography
+  criteria, send an alert" mechanism to hook into - Divini Blueprint's
+  addendum publish (previous slice) notifies vendors because it already
+  has a concrete audience (existing `bid_invites`/`bids` rows on the
+  affected package); a brand-new listing has no such audience yet.
+  Building that properly means vendor-matching/saved-search infrastructure
+  this slice does not attempt to fake. Pause/close/reopen/extend/clone
+  listing controls (spec section 21) also remain out of scope beyond the
+  pre-existing `POST /packages/:id/status`.
+
+**Files.** `db/schema-marketplace-publication.sql` (new, synced into
+`db/apply-all.sql` right after the subscriptions block, since it extends
+`subscription_tiers`/`subscription_entitlements`), `server/src/lib/
+marketplace-validation.ts`, `server/src/lib/entitlements.ts` (extended),
+`server/src/routes/marketplace-publication.ts` (new, mounted at
+`/api/marketplace`), `server/src/db.ts` (`getOpenPackages` visibility
+filter), `server/src/index.ts` (the scheduler interval),
+`src/pages/PackageDetail.tsx` (extended), `tests/marketplace-
+validation.test.ts` (8 tests).
+
+**Permissions.** Same single-owner model as the rest of this build: a
+package's owning organization is resolved through
+`packages -> buildings -> company_id`; access = member of that company, or
+admin. `GET /marketplace/urgent-limit` is scoped the same way.
+
+**Tests completed.** 8 new unit tests (validation gate, pure, no DB), full
+suite 115/115 passing. Both server and SPA typecheck clean. Self-review
+caught the two real bugs described above before commit. **Not tested
+against a live database or in a browser** - same sandbox limitation as
+every prior slice this session.
+
+---
+
 ## 2026-08-03 (8) - Divini Blueprint: revision linking and addendum publishing (Phase 2 slice)
 
 **What.** Continues the CAD/Drawing/Plan/Specification/Bid Intelligence spec

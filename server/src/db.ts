@@ -670,9 +670,17 @@ export async function getPackages(_userId: string, buildingId: string) {
 
 export async function getOpenPackages(_userId: string, categories?: string[]) {
   const params: any[] = [];
+  // Status is the master gate on whether a package is listed at all.
+  // visibility (see db/schema-marketplace-publication.sql) further narrows
+  // the general public/discoverable browse to only the tiers meant to be
+  // reachable that way - organization-only, invite-only, selected-team,
+  // preferred-vendor, and private-group listings are distributed through
+  // their own explicit channel (bid_invites / "My Invites"), never surfaced
+  // here regardless of status.
   let sql = `select p.*, to_jsonb(b) - 'id' as _b, b.name as _bname, b.location as _bloc, b.developer as _bdev
              from packages p join buildings b on b.id = p.building_id
-             where p.status in ('open','shortlisting')`;
+             where p.status in ('open','shortlisting')
+               and p.visibility in ('public_marketplace', 'qualified_vendors', 'divini_verified')`;
   if (categories && categories.length) {
     params.push(categories);
     sql += ` and p.category = any($1)`;

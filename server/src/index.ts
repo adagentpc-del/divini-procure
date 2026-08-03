@@ -1,6 +1,7 @@
 import app from "./app.js";
 import { PORT } from "./config.js";
 import { processDueFollowUps } from "./routes/follow-up.js";
+import { publishDueScheduledPackages } from "./routes/marketplace-publication.js";
 
 app.listen(PORT, () => {
   // eslint-disable-next-line no-console
@@ -18,3 +19,14 @@ setInterval(() => {
     console.error("[follow-up] processDueFollowUps failed", e);
   });
 }, FOLLOW_UP_INTERVAL_MS);
+
+// Marketplace publication scheduling: same in-process interval pattern, no
+// external cron dependency. Runs every 5 minutes so a scheduled publish_at
+// goes live reasonably promptly.
+const MARKETPLACE_PUBLISH_INTERVAL_MS = 5 * 60_000;
+setInterval(() => {
+  publishDueScheduledPackages().catch((e) => {
+    // eslint-disable-next-line no-console
+    console.error("[marketplace-publication] publishDueScheduledPackages failed", e);
+  });
+}, MARKETPLACE_PUBLISH_INTERVAL_MS);

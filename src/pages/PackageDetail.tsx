@@ -9,7 +9,7 @@ import {
 import DocumentPanel from '../components/DocumentPanel';
 import FeeBadge from '../components/FeeBadge';
 import ExistingRelationshipCheckbox from '../components/ExistingRelationshipCheckbox';
-import { apiGet } from '../lib/api';
+import { apiGet, apiSend } from '../lib/api';
 import {
   getBidCredits, getVerification, subscribeToTier,
   canBid, isVerified, bidsLeftLabel, verificationLabel,
@@ -43,6 +43,13 @@ export default function PackageDetail() {
   const [upgrading, setUpgrading] = useState(false);
   const [upgradeMsg, setUpgradeMsg] = useState('');
 
+  // Marketplace publication (owner only): visibility, scheduling, urgency.
+  const [pubForm, setPubForm] = useState<any>({});
+  const [readiness, setReadiness] = useState<{ ready: boolean; errors: string[]; warnings: string[] } | null>(null);
+  const [urgentLimit, setUrgentLimit] = useState<{ limit: number | null; used: number; remaining: number | null; allowed: boolean } | null>(null);
+  const [pubBusy, setPubBusy] = useState(false);
+  const [pubMsg, setPubMsg] = useState('');
+
   const isOwner = company && p && p.building?.company_id === company.id;
   const isVendor = company?.kind === 'vendor';
   const myBid = bids.find(b => b.vendor_company_id === company?.id);
@@ -63,10 +70,62 @@ export default function PackageDetail() {
           (d.relationships ?? []).forEach((r) => { map[r.vendor_company_id] = r; });
           setRels(map);
         } catch { /* non-fatal */ }
+        setPubForm({
+          visibility: pk.visibility ?? 'public_marketplace',
+          bidDueDate: pk.deadline ? String(pk.deadline).slice(0, 10) : '',
+          questionDeadline: pk.question_deadline ? String(pk.question_deadline).slice(0, 10) : '',
+          siteVisitAt: pk.site_visit_at ? String(pk.site_visit_at).slice(0, 10) : '',
+          ndaRequired: !!pk.nda_required,
+          urgency: pk.urgency ?? 'standard',
+          urgencyReason: pk.urgency_reason ?? '',
+          publishAt: pk.publish_at ? String(pk.publish_at).slice(0, 10) : '',
+          termsAcknowledged: !!pk.terms_acknowledged_at,
+        });
+        loadPublicationExtras(pk.id, devCompanyId);
       }
     }
   }
   useEffect(() => { load(); }, [id]);
+
+  async function loadPublicationExtras(packageId: string, ownerCompanyId: string) {
+    try {
+      const [r, u] = await Promise.all([
+        apiGet<{ ready: boolean; errors: string[]; warnings: string[] }>(`/marketplace/packages/${packageId}/readiness`),
+        apiGet<{ limit: number | null; used: number; remaining: number | null; allowed: boolean }>(`/marketplace/urgent-limit?companyId=${ownerCompanyId}`),
+      ]);
+      setReadiness(r);
+      setUrgentLimit(u);
+    } catch { /* non-fatal */ }
+  }
+
+  async function savePublication() {
+    if (!id) return;
+    setPubBusy(true); setPubMsg('');
+    try {
+      await apiSend('PATCH', `/marketplace/packages/${id}/publication`, pubForm);
+      setPubMsg('Saved.');
+      await load();
+    } catch (e: any) {
+      setPubMsg(e.message ?? 'Could not save.');
+    } finally {
+      setPubBusy(false);
+    }
+  }
+
+  async function publishPackage() {
+    if (!id) return;
+    setPubBusy(true); setPubMsg('');
+    try {
+      await apiSend('PATCH', `/marketplace/packages/${id}/publication`, pubForm);
+      const r = await apiSend<{ package: any; scheduled: boolean }>('POST', `/marketplace/packages/${id}/publish`, {});
+      setPubMsg(r.scheduled ? `Scheduled to publish on ${pubForm.publishAt}.` : 'Published to the marketplace.');
+      await load();
+    } catch (e: any) {
+      setPubMsg(e.message ?? 'Could not publish - see the readiness checklist above.');
+    } finally {
+      setPubBusy(false);
+    }
+  }
 
   // Vendor-only: load bid credits + verification status (tolerate absence).
   async function loadEntitlements() {
@@ -140,6 +199,103 @@ export default function PackageDetail() {
           </div>
         )}
       </div>
+
+      {/* Marketplace publication (owner only) */}
+      {isOwner && (
+        <>
+          <div className="sectitle">Marketplace publication</div>
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+              <span className="badge b-neutral">{p.status}</span>
+              <span className="badge b-neutral">{(p.visibility ?? 'public_marketplace').replace(/_/g, ' ')}</span>
+              {p.urgency && p.urgency !== 'standard' && <span className="badge b-amber">{p.urgency}</span>}
+              {p.published_at && <span className="badge b-green">Published {new Date(p.published_at).toLocaleDateString()}</span>}
+              {!p.published_at && p.publish_at && <span className="badge b-amber">Scheduled {new Date(p.publish_at).toLocaleDateString()}</span>}
+            </div>
+
+            {readiness && (
+              <div style={{ marginBottom: 10 }}>
+                {readiness.errors.length > 0 && (
+                  <div className="err" style={{ marginBottom: 6 }}>
+                    <strong>Not ready to publish:</strong>
+                    <ul style={{ margin: '4px 0 0 18px' }}>{readiness.errors.map((e, i) => <li key={i}>{e}</li>)}</ul>
+                  </div>
+                )}
+                {readiness.warnings.length > 0 && (
+                  <div className="note" style={{ marginBottom: 6 }}>
+                    <strong>Warnings:</strong>
+                    <ul style={{ margin: '4px 0 0 18px' }}>{readiness.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="two">
+              <div className="field"><label>Visibility</label>
+                <select value={pubForm.visibility ?? ''} onChange={(e) => setPubForm({ ...pubForm, visibility: e.target.value })}>
+                  {['private_draft', 'organization_only', 'selected_team', 'invite_only', 'preferred_vendors',
+                    'qualified_vendors', 'divini_verified', 'public_marketplace', 'private_group'].map((v) => (
+                    <option key={v} value={v}>{v.replace(/_/g, ' ')}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="field"><label>Urgency</label>
+                <select value={pubForm.urgency ?? 'standard'} onChange={(e) => setPubForm({ ...pubForm, urgency: e.target.value })}>
+                  {['standard', 'priority', 'urgent', 'emergency'].map((u) => <option key={u} value={u}>{u}</option>)}
+                </select>
+              </div>
+            </div>
+            {pubForm.urgency && pubForm.urgency !== 'standard' && (
+              <div className="field"><label>Reason for urgency</label>
+                <input value={pubForm.urgencyReason ?? ''} onChange={(e) => setPubForm({ ...pubForm, urgencyReason: e.target.value })} />
+              </div>
+            )}
+            {urgentLimit && (
+              <div className="note" style={{ marginBottom: 10 }}>
+                Urgent listings this month: {urgentLimit.used}{urgentLimit.limit === null ? ' (unlimited)' : ` / ${urgentLimit.limit}`}
+                {!urgentLimit.allowed && <span style={{ color: 'var(--red)' }}> - limit reached, upgrade your plan or wait until next month</span>}
+              </div>
+            )}
+
+            <div className="two">
+              <div className="field"><label>Bid due date</label>
+                <input type="date" value={pubForm.bidDueDate ?? ''} onChange={(e) => setPubForm({ ...pubForm, bidDueDate: e.target.value })} />
+              </div>
+              <div className="field"><label>Question deadline</label>
+                <input type="date" value={pubForm.questionDeadline ?? ''} onChange={(e) => setPubForm({ ...pubForm, questionDeadline: e.target.value })} />
+              </div>
+            </div>
+            <div className="two">
+              <div className="field"><label>Site visit date</label>
+                <input type="date" value={pubForm.siteVisitAt ?? ''} onChange={(e) => setPubForm({ ...pubForm, siteVisitAt: e.target.value })} />
+              </div>
+              <div className="field"><label>Schedule publication for (optional)</label>
+                <input type="date" value={pubForm.publishAt ?? ''} onChange={(e) => setPubForm({ ...pubForm, publishAt: e.target.value })} />
+              </div>
+            </div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+              <input type="checkbox" checked={!!pubForm.ndaRequired} onChange={(e) => setPubForm({ ...pubForm, ndaRequired: e.target.checked })} />
+              <span className="note">Require an NDA before vendors can access full details</span>
+            </label>
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginBottom: 10 }}>
+              <input type="checkbox" checked={!!pubForm.termsAcknowledged} onChange={(e) => setPubForm({ ...pubForm, termsAcknowledged: e.target.checked })} />
+              <span className="note">
+                I have reviewed the project information, bid scope, attached documents, dates, budget visibility,
+                and vendor requirements. I understand that AI-generated information may be incomplete or inaccurate
+                and that I am responsible for confirming the bidding information.
+              </span>
+            </label>
+
+            {pubMsg && <div className="note" style={{ marginBottom: 10 }}>{pubMsg}</div>}
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button className="btn" disabled={pubBusy} onClick={savePublication}>Save</button>
+              <button className="btn primary" disabled={pubBusy} onClick={publishPackage}>
+                {pubForm.publishAt ? 'Save & schedule publication' : 'Publish to marketplace'}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* Documents / CAD */}
       {isOn('cad_documents') && (
