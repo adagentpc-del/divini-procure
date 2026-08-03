@@ -6,6 +6,85 @@ the Authentik/Supabase era and does not reflect Monetization V2.)
 
 ---
 
+## 2026-08-03 (18) - Drive the core transaction end to end: award workflow was completely 404
+
+**What.** Direct follow-up to entry 17 ("do it" - the three remaining
+unverified flows: the full bid-award-payment cycle, live Stripe checkout,
+messaging). Same method throughout: drive the real running app rather than
+read the code.
+
+- **The entire award → purchase order → payment-authorization path 404'd.**
+  Drove the full cycle live: buyer creates a project and bid package
+  (confirmed it auto-publishes with no separate step - status "open,"
+  visibility "public marketplace" - immediately), a vendor finds it in
+  Search Bids, gets verified, and submits a $42,000 bid with zero errors.
+  Confirming the award is where it broke: every `/api/award/*` call
+  404'd. Root cause: `award-workflow.ts` defines its 8 routes with short
+  relative paths ("/confirm", "/purchase-orders", ...) clearly written to
+  be mounted under an "/award" prefix, but `routes.ts` mounted it with
+  `router.use(awardWorkflowRouter)` - no prefix - so the routes were only
+  reachable at bare paths like `/api/confirm`. Checked every sibling
+  router mounted the same way (change orders, products, vendor import,
+  fee matrix, vendor pricing, featured listings, project roles): all of
+  them already embed their own full path prefix inline, so this was an
+  isolated authoring inconsistency in one file, not a pattern needing a
+  broader audit. Fixed: `router.use("/award", awardWorkflowRouter)`.
+  Re-ran the full cycle after the fix: award confirms, a $42,000 draft PO
+  is created automatically, and recording the payment authorization
+  produces the exact documented fee structure (5% capped at $25,000 ->
+  $2,100 owed; 0.1% infrastructure fee capped at $1,500 -> $42.00),
+  confirmed by querying the real `payment_authorizations` row.
+- **Two smaller bugs found while a vendor browsed the listing before
+  bidding**: `DocumentPanel.tsx` treated a legitimate 403 (a vendor not
+  yet a party to the package fetching its documents - correct
+  server-side authorization) as an unhandled promise rejection instead
+  of "nothing to show yet." Bid deadlines rendered as raw ISO timestamps
+  in three places (`PackageDetail.tsx`, `SearchBids.tsx`,
+  `BuildingDetail.tsx`) instead of a readable date. Both fixed and
+  re-verified.
+- **"Messaging" doesn't exist as a general feature - clarified, not a
+  bug.** Went looking for the company-to-company messaging the prior
+  entry listed as untested. Real `messages`/`threads` tables exist in
+  the schema, but zero backend routes anywhere expose them - dead schema
+  from an earlier design, never built out. What actually serves this
+  role is per-package Q&A ("Clarifications"): tested directly - a vendor
+  asked a real question, it appeared correctly attributed and "Awaiting
+  answer," and the buyer could see it with zero errors. The real
+  mechanism works; the "gap" was a mismatch between what the prior audit
+  assumed existed and what was actually built.
+- **Noted, not fixed**: a package created via the quick-create flow is
+  immediately live (open/public marketplace, vendors can already find and
+  bid on it - confirmed), but the same page's "Marketplace publication"
+  panel shows a red "Not ready to publish" box right below those badges,
+  because a separate `termsAcknowledged` checkbox (part of a more
+  deliberate, scheduling/urgency-aware publish flow) was never checked.
+  Nothing is actually broken, but the two messages read as contradictory.
+  Whether to unify these into one publish path or soften the copy is a
+  product decision, not something to guess at inside a QA pass -
+  documented for a deliberate call instead.
+- **Live Stripe checkout**: not testable - this environment has no
+  `STRIPE_SECRET_KEY`, and a real charge needs real test-mode credentials.
+  Confirmed the code path degrades honestly instead of crashing:
+  selecting a paid plan during onboarding without Stripe configured
+  creates the account on the free tier and reports the checkout attempt
+  as non-fatal, matching the source's documented intent. Structurally
+  sound by review; still needs real credentials to verify a live charge.
+
+**Deliverable.** Updated the same published audit report with a new "The
+core transaction, driven end to end" section covering all of the above.
+
+**Files.** `server/src/routes.ts`, `src/components/DocumentPanel.tsx`,
+`src/pages/PackageDetail.tsx`, `src/pages/SearchBids.tsx`,
+`src/pages/BuildingDetail.tsx`.
+
+**Tests completed.** `npx tsc --noEmit` clean on both SPA and server,
+`npm test` 163/163, and the fix re-verified against the real running
+stack: rebuilt, redeployed, and re-ran the exact same buyer-post ->
+vendor-bid -> buyer-award -> payment-authorization sequence that found
+the bug, confirming a real database row with the correct fee math.
+
+---
+
 ## 2026-08-03 (17) - Close the gaps from the launch-readiness audit
 
 **What.** Direct follow-up to entry 16 ("ok fix gaps"): worked through the
