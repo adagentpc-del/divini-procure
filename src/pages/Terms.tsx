@@ -54,13 +54,17 @@ export default function Terms() {
         or money-transmission services.
       </p>
       <p>
-        The platform fee shown at checkout is a technology and facilitation fee for use of the
-        Platform. We are not responsible for, and disclaim all liability arising from, payment
-        processor errors, delays, holds, reversals, chargebacks, fraud, account freezes, fund
-        availability, or any act or omission of a payment processor or financial institution. You
-        are solely responsible for all taxes applicable to your transactions. Refunds, cancellations,
-        retainage, lien matters, and payment disputes are governed by the agreement between the
-        transacting users and the applicable processor's policies, not by Divini Procure.
+        Any platform fee, platform infrastructure fee, and any optional paid subscription plan are
+        technology and facilitation fees for use of the Platform. Current fee percentages, caps, and
+        subscription plan pricing are described in the{' '}
+        <Link to="/payment-policy" style={{ color: '#1f6f50' }}>Payment Policy</Link> and shown in
+        the product before you incur them. We are not responsible for, and disclaim all liability
+        arising from, payment processor errors, delays, holds, reversals, chargebacks, fraud, account
+        freezes, fund availability, or any act or omission of a payment processor or financial
+        institution. You are solely responsible for all taxes applicable to your transactions.
+        Refunds, cancellations, retainage, lien matters, and payment disputes are governed by the
+        agreement between the transacting users and the applicable processor's policies, not by
+        Divini Procure.
       </p>
 
       <h2 style={h2}>3. Disputes between users</h2>
@@ -141,6 +145,17 @@ export default function Terms() {
         worldwide, non-exclusive license to host, store, display, and process your content solely to
         operate and provide the Platform. You are responsible for having the rights to the content
         you submit and for ensuring it does not violate any law or third-party right.
+      </p>
+      <p>
+        Certain documents you upload (for example, PDFs, images, and CAD drawing files) may be
+        automatically processed to power Platform features: extracting text, reading document
+        content, and classifying or organizing files, in some cases using AI-assisted analysis. This
+        automated processing is used to help you organize and review your own documents faster; it is
+        never a substitute for review by you or, where appropriate, a licensed professional, and any
+        AI-generated summary or classification is clearly labeled as preliminary and requires your
+        review before you rely on it. See the{' '}
+        <Link to="/privacy" style={{ color: '#1f6f50' }}>Privacy Policy</Link> for more on how
+        uploaded content is processed and retained.
       </p>
 
       <h2 style={h2}>10. Governing law and dispute resolution</h2>

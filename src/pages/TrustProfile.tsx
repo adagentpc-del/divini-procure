@@ -1,6 +1,6 @@
 /**
  * Developer / sponsor TRUST PROFILE editor. This is the reputational surface a
- * passive investor vets before requesting an introduction: verification, track
+ * passive Capital Partner vets before requesting an introduction: verification, track
  * record, team, and alignment (co-invest, rate caps, true preferred return). It
  * pre-answers the red-flag checklist LPs use. It is reputational only — it never
  * describes a specific offering or promises a return, so it stays public-safe.
@@ -80,7 +80,7 @@ export default function TrustProfile() {
         preferred_return_structure: prefStructure,
       });
       setTrust(r.trust);
-      setMsg('Saved. Your trust profile is what investors see before requesting an introduction.');
+      setMsg('Saved. Your trust profile is what Capital Partners see before requesting an introduction.');
     } catch (e: any) { setErr(e?.message ?? 'Could not save.'); }
     finally { setBusy(false); }
   }
@@ -98,7 +98,7 @@ export default function TrustProfile() {
     <>
       <div className="page-head"><div>
         <h1>Trust profile</h1>
-        <div className="sub">This is what investors see before they request an introduction. Only ~38% of sponsors share a full-cycle track record — the ones who do stand out. Reputational only; never describe a specific offering here.</div>
+        <div className="sub">This is what Capital Partners see before they request an introduction. A full-cycle track record is one of the strongest trust signals you can share. Reputational only; never describe a specific offering here.</div>
       </div></div>
 
       {err && <div className="err">{err}</div>}
@@ -124,10 +124,10 @@ export default function TrustProfile() {
           )}
 
           <h3 style={{ fontSize: 16, margin: '16px 0 8px' }}>Alignment</h3>
-          <div className="note" style={{ marginBottom: 8 }}>These pre-answer the questions investors ask first.</div>
+          <div className="note" style={{ marginBottom: 8 }}>These pre-answer the questions Capital Partners ask first.</div>
           <label className="note" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <input type="checkbox" style={{ width: 'auto' }} checked={coInvests} onChange={(e) => setCoInvests(e.target.checked)} />
-            I co-invest my own capital alongside investors
+            I co-invest my own capital alongside Capital Partners
           </label>
           <label className="note" style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6 }}>
             <input type="checkbox" style={{ width: 'auto' }} checked={rateCaps} onChange={(e) => setRateCaps(e.target.checked)} />
@@ -144,7 +144,7 @@ export default function TrustProfile() {
           <div className="note" style={{ textTransform: 'capitalize', marginBottom: 14 }}>{trust?.band ?? ''}</div>
           {trust?.factors?.map((f) => <ScoreBar key={f.label} f={f} />)}
           <div className="note" style={{ marginTop: 10 }}>
-            Higher score means better placement in investor matches and a trust badge on your card. This scores your transparency and credibility as an operator — never any investment or expected return.
+            Higher score means better placement in Capital Partner matches and a trust badge on your card. This scores your transparency and credibility as an operator — never any investment or expected return.
           </div>
         </div>
       </div>

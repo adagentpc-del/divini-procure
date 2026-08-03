@@ -6,6 +6,99 @@ the Authentik/Supabase era and does not reflect Monetization V2.)
 
 ---
 
+## 2026-08-03 (13) - Copy audit: fee figures, Capital Partner terminology, AI/OCR disclosures, real plan data everywhere
+
+**What.** A full copy pass across pages, FAQs, and legal policies to bring
+every page in line with what was actually built this session (the Divini
+tool suite, the Capital Partner rename, the real tiered fee structure, the
+subscription/entitlement engine, and the real PDF/OCR/DXF content
+extraction). Scoped by first running a read-only audit to find every
+stale or inconsistent reference rather than guessing, then triaging: real
+bugs first, terminology second, legal accuracy third, marketing gaps
+fourth.
+
+- **Two more fake-data bugs fixed (same class as the Dashboard bug in
+  entry 12)**: `Profile.tsx` showed a hardcoded "Plan: Vendor - Beta,
+  $100/mo first 2 months 50% off, Bids: Unlimited, Billing via PayPal" and
+  "1 of 1 seat used" for every company, never wired to the entitlements
+  engine and shown only for vendors. Replaced with real data from
+  `GET /subscriptions/mine`, a "Manage plan" link to `/subscription`, and
+  now shown for every company kind, not just vendors.
+- **A factually wrong infrastructure claim fixed in `Privacy.tsx`**: the
+  policy named Supabase (database/file storage) and Vercel (hosting) as
+  data processors. This codebase migrated off Supabase to native
+  Postgres/Express with pluggable object storage long before this session
+  (confirmed via the session's own auth model, the `STORAGE_PROVIDER` env
+  var, and `CHANGES.md`'s own note that it's stale). Replaced with an
+  accurate, appropriately generic description, and added a new "Automated
+  document processing" section disclosing the real PDF-text/OCR/DXF
+  extraction and AI-assisted drafting built earlier this session,
+  including an explicit "we do not use the content of your documents to
+  train any AI model" statement (accurate: OCR/PDF extraction run locally,
+  and the LLM step only ever receives classification labels/counts and
+  user-typed text, never raw file content).
+- **A fabricated statistic removed from `TrustProfile.tsx`**: a "~38% of
+  sponsors share a full-cycle track record" claim with no data source
+  behind it, replaced with a plain, honest sentence about why a full-cycle
+  track record matters.
+- **"Investor" renamed to "Capital Partner" in remaining user-facing text**
+  (`TrustProfile.tsx`, `PublicDeveloperProfile.tsx`,
+  `OnboardingChecklist.tsx`, `MessagingPolicy.tsx`, and the rendered
+  `reason`/`rule` strings in `server/src/lib/messaging-policy.ts`) -
+  internal role keys and DB values (`company.kind === 'investor'`,
+  `investor_profiles`, the `MessagingRole` type) are unchanged by design,
+  matching the established rename convention from earlier this session.
+- **Legal pages updated to the real fee/subscription structure**:
+  `PaymentPolicy.tsx` no longer says "a flat platform fee is added at
+  checkout" (it isn't flat) - now states the actual 5%/$25k standard,
+  2%/$10k existing-relationship, and 0.1%/$1.5k infrastructure figures,
+  plus a new "Subscription plans" section covering Stripe billing,
+  monthly-in-advance, and cancel/downgrade behavior that the policy never
+  covered before (it previously only described per-transaction fees).
+  `Terms.tsx` Section 2 now cross-references Payment Policy instead of
+  staying fully generic, and Section 9 discloses automated document
+  processing with the same "always preliminary, always requires your
+  review" framing used throughout the platform. `NonCircumvention.tsx`
+  replaced an unstated "grandfathered-fee treatment" with the real 2%
+  capped at $10,000 figure and a link to Payment Policy.
+- **`Blueprint.tsx` header comment fixed** - it still said the codebase
+  "has no CAD/OCR parser," which was true when it was written but is no
+  longer true; updated to describe the real filename-default classification
+  plus on-request PDF text/OCR/DXF extraction, while still honestly noting
+  DWG/RVT/IFC binary CAD formats have no reader.
+- **`Landing.tsx` (public homepage) extended, not redesigned** - it
+  predated the Divini tool suite entirely and never mentioned Capital
+  Partners. Added, preserving the existing custom CSS/animation system: a
+  new "Tools" section with 5 cards (Pipeline, Scope Builder, Bid Studio,
+  Follow-Up Desk, Blueprint), a nav link to it, a Capital Partner sentence
+  near the pricing summary reinforcing that Divini Procure only makes
+  introductions and never brokers or structures an investment, and 2 new
+  FAQ entries (what the tool suite is; an explicit "is this an investment
+  platform? No" answer).
+- **Deliberately skipped**: the `roleInvestor` i18n key exists untranslated
+  in ~12 locale files, but a repo-wide search confirmed it has zero call
+  sites anywhere in the app, including in the English locale where it
+  would be correctly translated - it is dead, so translating it would fix
+  nothing a user could ever see. Left as-is rather than spending effort on
+  unreachable code.
+
+**Files.** `src/pages/Profile.tsx`, `src/pages/TrustProfile.tsx`,
+`src/pages/PublicDeveloperProfile.tsx`, `src/components/OnboardingChecklist.tsx`,
+`src/pages/MessagingPolicy.tsx`, `server/src/lib/messaging-policy.ts`,
+`src/pages/PaymentPolicy.tsx`, `src/pages/Terms.tsx`, `src/pages/Privacy.tsx`,
+`src/pages/NonCircumvention.tsx`, `src/pages/Blueprint.tsx`, `src/pages/Landing.tsx`.
+
+**Tests completed.** `npx tsc -p tsconfig.json --noEmit` (clean, aside from
+pre-existing `PartnerOnboarding.tsx` errors that predate this session and
+this change set), `npx tsc -p server/tsconfig.json --noEmit` (clean),
+`npm test` (163/163 passing - no test files touched in this pass, since it
+was copy-only with two data-source swaps that reuse already-tested
+endpoints). Not manually verified in a browser this pass; the two live-data
+swaps (Profile.tsx, Dashboard.tsx) call the same `GET /subscriptions/mine`
+endpoint already exercised in entry 12.
+
+---
+
 ## 2026-08-03 (12) - Pricing/plan selection, locked-feature teasers, usage counters, onboarding nudges
 
 **What.** Live pricing pages, tier selection at registration, a reusable

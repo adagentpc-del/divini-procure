@@ -1,8 +1,11 @@
 /**
  * Divini Blueprint - upload plans, CAD files, specs, budgets, and photos for
- * a project; the platform classifies what was uploaded (by filename/
- * extension, not file content - this codebase has no CAD/OCR parser),
- * suggests likely trade bid packages, and drafts an editable preliminary
+ * a project. The platform classifies every document from its filename by
+ * default, and can go further on request: reading a PDF's real text layer,
+ * OCRing a scanned page or image, or reading a DXF's real text/layers
+ * ("Extract content" per document) - never for binary CAD formats like
+ * DWG/RVT/IFC, which still have no reader in this build. The platform then
+ * suggests likely trade bid packages and drafts an editable preliminary
  * project summary. Every suggestion requires review before it becomes a
  * real Divini Scope Builder scope, Divini Pipeline opportunity, or bid
  * package. Nothing here publishes automatically.

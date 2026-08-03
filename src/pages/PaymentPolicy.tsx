@@ -23,10 +23,27 @@ export default function PaymentPolicy() {
 
       <h2 style={h2}>Platform fee</h2>
       <p>
-        A flat platform fee is added at checkout, on top of the vendor's price. The vendor receives
-        their full quoted amount; the buyer sees the fee clearly before paying. The platform fee is a
-        technology and facilitation fee for use of the Platform and is non-refundable except where
-        required by law.
+        There are no fees to browse, bid, or post. When a vendor wins work sourced through the
+        Platform, a platform fee is billed to the winning vendor on the awarded contract value: 5%,
+        capped at $25,000, or 2%, capped at $10,000, when the buyer and vendor have an existing
+        relationship on file. A separate platform infrastructure fee of 0.1%, capped at $1,500, also
+        applies and is always shown as its own line item, never merged into the platform fee. Both
+        fees are technology and facilitation fees for use of the Platform and are non-refundable
+        except where required by law. Current fee percentages, caps, and any enterprise-specific fee
+        schedule are also shown in your invoice and vendor payout summary and on the{' '}
+        <Link to="/pricing" style={a}>Pricing</Link> page; if this Payment Policy and an amount shown
+        to you in the product ever conflict, the amount shown in the product controls for that
+        transaction.
+      </p>
+
+      <h2 style={h2}>Subscription plans</h2>
+      <p>
+        Separately from the platform fee above, Divini Procure offers optional paid subscription
+        plans that raise account limits and unlock features. Paid plans are billed monthly in advance
+        through Stripe, renew automatically until cancelled, and can be cancelled at any time from
+        Subscription in your account; you keep access through the end of the period you already paid
+        for. Downgrading takes effect at the end of your current billing period. Subscription charges
+        are separate from, and unaffected by, the per-transaction platform fee described above.
       </p>
 
       <h2 style={h2}>Refunds, retainage, cancellations, and chargebacks</h2>

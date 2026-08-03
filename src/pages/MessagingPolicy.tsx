@@ -5,7 +5,7 @@
  * served from GET /admin/messaging-policy (a public-to-authed read). Three
  * statuses: allowed (open), conditional (needs an approval/permission), and
  * blocked (no channel). Admins can always message everyone; developer <->
- * investor needs an approved introduction.
+ * Capital Partner needs an approved introduction.
  */
 import { useEffect, useState } from 'react';
 import { apiGet } from '../lib/api';
@@ -17,7 +17,10 @@ type Row = {
   rule: string;
 };
 
-const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+// The backend role key stays "investor" (matches companies.kind and the
+// historical DB field), but the product-facing name is "Capital Partner"
+// everywhere else - this is the one place that key is ever displayed.
+const cap = (s: string) => (s === 'investor' ? 'Capital Partner' : s.charAt(0).toUpperCase() + s.slice(1));
 
 const badgeCls = (s: string) =>
   s === 'allowed' ? 'badge b-green' : s === 'blocked' ? 'badge b-red' : 'badge b-amber';
@@ -47,7 +50,7 @@ export default function MessagingPolicy() {
           <h1>Messaging Boundaries</h1>
           <div className="sub">
             Who may message whom on Divini Procure. These boundaries keep the platform the broker
-            of record. Admins may always message everyone. Developer and investor messaging opens
+            of record. Admins may always message everyone. Developer and Capital Partner messaging opens
             only after an introduction is approved, and a designer or general contractor may reach a
             vendor only when permissioned on the project.
           </div>

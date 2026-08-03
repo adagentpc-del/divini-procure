@@ -6,14 +6,18 @@
  *   - developer <-> vendor          allowed (the core procurement relationship)
  *   - admin     <-> everyone        allowed (platform operator)
  *   - developer <-> investor        allowed ONLY when an introduction is approved
+ *                                    (product-facing name: "Capital Partner")
  *   - vendor    <-> investor        blocked (no direct channel)
  *   - designer/gc <-> vendor        allowed ONLY when explicitly permissioned on
  *                                    the project
  *   - everything else               denied by default
  *
  * Roles are intentionally small: developer | vendor | investor | admin |
- * designer | gc. canMessage is symmetric in spirit but evaluated directionally
- * so callers can pass fromRole/toRole as they appear in a thread.
+ * designer | gc - "investor" is the internal role key (matches
+ * companies.kind and the historical DB field); every user-facing string
+ * below says "Capital Partner" instead. canMessage is symmetric in spirit
+ * but evaluated directionally so callers can pass fromRole/toRole as they
+ * appear in a thread.
  *
  * Zero em dashes by convention.
  */
@@ -78,20 +82,20 @@ export function canMessage(
     return { allowed: true, reason: "Developers and vendors may message about procurement." };
   }
 
-  // Investor introductions are gated by an approved introduction.
+  // Capital Partner introductions are gated by an approved introduction.
   if (pair(a, b, "developer", "investor")) {
     if (context.introApproved === true) {
-      return { allowed: true, reason: "Introduction approved. Developer and investor may message." };
+      return { allowed: true, reason: "Introduction approved. Developer and Capital Partner may message." };
     }
     return {
       allowed: false,
-      reason: "Developer and investor messaging requires an approved introduction.",
+      reason: "Developer and Capital Partner messaging requires an approved introduction.",
     };
   }
 
-  // Vendors and investors have no direct channel.
+  // Vendors and Capital Partners have no direct channel.
   if (pair(a, b, "vendor", "investor")) {
-    return { allowed: false, reason: "Vendors and investors may not message directly." };
+    return { allowed: false, reason: "Vendors and Capital Partners may not message directly." };
   }
 
   // Designers / general contractors may reach vendors only when permissioned.
@@ -141,7 +145,7 @@ export const MESSAGING_MATRIX: MessagingMatrixRow[] = [
     status: "conditional",
     rule: "Allowed only after an introduction is approved.",
   },
-  { from: "vendor", to: "investor", status: "blocked", rule: "No direct channel." },
+  { from: "vendor", to: "investor", status: "blocked", rule: "No direct channel between vendors and Capital Partners." },
   {
     from: "designer",
     to: "vendor",

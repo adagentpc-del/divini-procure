@@ -22,7 +22,7 @@ export default function Privacy() {
       <ul>
         <li><strong>Account &amp; contact details</strong> – your email, name, phone, company name, role, and city.</li>
         <li><strong>Company &amp; marketplace data</strong> – projects, bid packages, bids, line items, messages, reviews, and subscription/plan status.</li>
-        <li><strong>Uploaded content</strong> – documents and images you upload (e.g. drawings, credentials).</li>
+        <li><strong>Uploaded content</strong> – documents and images you upload (e.g. drawings, credentials, specifications, CAD files, budgets).</li>
         <li><strong>Consent records</strong> – when you agreed to our Terms of Service, the version you agreed to, and the IP address used at registration (Florida E-SIGN Act compliance).</li>
         <li><strong>Technical data</strong> – standard log and device information needed to operate and secure the service.</li>
       </ul>
@@ -31,10 +31,27 @@ export default function Privacy() {
       <ul>
         <li>To create and manage your account and company profile.</li>
         <li>To run core features: posting packages, submitting and comparing bids, messaging, and reviews.</li>
-        <li>To process vendor subscriptions and related billing.</li>
+        <li>To process subscriptions and related billing.</li>
         <li>To secure the service, prevent abuse, and meet legal obligations.</li>
         <li>To send transactional emails (verification, password reset, purchase confirmation). Marketing emails include an unsubscribe link.</li>
       </ul>
+
+      <h2 style={h2}>Automated document processing</h2>
+      <p>
+        Some document types you upload are automatically processed to power specific features you use:
+      </p>
+      <ul>
+        <li>PDF documents may have their text content read to help classify and index them.</li>
+        <li>Scanned documents and images may be processed with optical character recognition (OCR) to extract text.</li>
+        <li>CAD drawing files (DXF) may have their text labels and layer names read to help organize drawings.</li>
+        <li>Where an AI-assisted drafting feature is enabled, classification results and text you explicitly provide may be sent to a language-model provider to draft an editable summary. Raw file content is never sent to a language-model provider.</li>
+      </ul>
+      <p>
+        This processing happens automatically when you use the relevant feature, is used solely to
+        help you organize and review your own documents, and every result is labeled with its
+        confidence and source and requires your review before you rely on it or take further action.
+        We do not use the content of your documents to train any AI model.
+      </p>
 
       <h2 style={h2}>Vendor data imported by developers</h2>
       <p>
@@ -51,10 +68,13 @@ export default function Privacy() {
 
       <h2 style={h2}>How it's stored and who processes it</h2>
       <p>
-        Your data is stored with our infrastructure providers, who process it on our behalf:
-        <strong> Supabase</strong> (database and file storage), <strong>Vercel</strong> (web hosting),
-        and <strong>Stripe</strong> (subscription and platform payments — we do not store full card or bank details).
-        We do not sell your personal information. We do not share it with third parties for their own marketing.
+        Your data is stored in a PostgreSQL database and, for uploaded files, in encrypted object
+        storage, hosted by our infrastructure providers on our behalf. Subscription and platform
+        payments are processed by <strong>Stripe</strong> (we do not store full card or bank
+        details). Where an optional AI-assisted drafting feature is enabled, the limited inputs
+        described above may be processed by a language-model provider we have configured. We do not
+        sell your personal information. We do not share it with third parties for their own
+        marketing.
       </p>
 
       <h2 style={h2}>Visibility within the marketplace</h2>
