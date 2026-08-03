@@ -4703,3 +4703,12 @@ COMMIT;
 
 -- Referral partner onboarding (agreement e-sign + banking)
 \i db/schema-referral-partner-onboarding.sql
+
+-- Consent records (Florida E-SIGN Act) + ownership-transfer/campaign audit
+-- logs. Was never spliced into this file at all - registration writes
+-- users.terms_agreed_at unconditionally (server/src/db.ts
+-- upsertUserForRegistration), so a fresh database's registration flow
+-- failed outright with "column terms_agreed_at does not exist" until this
+-- was added. Found via a from-scratch apply-all.sql + real server
+-- bootstrap test; see AI_PROJECT_OS/13_CHANGELOG.md.
+\i db/schema-consent-and-audit.sql

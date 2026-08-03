@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import LanguageSwitcher from '../components/LanguageSwitcher';
@@ -24,14 +24,10 @@ export default function Register() {
   const [sent, setSent] = useState(false);
   const [resent, setResent] = useState(false);
   const [agreed, setAgreed] = useState(false);
-  // Anti-bot: record when the form was rendered so we can reject submissions
-  // that arrive suspiciously quickly (bots submit in milliseconds).
-  const renderTimeRef = useRef<number>(Date.now());
   // Anti-bot: honeypot field value -- must remain empty for real users.
   const [honeypot, setHoneypot] = useState('');
 
   useEffect(() => {
-    renderTimeRef.current = Date.now();
     const e = readInviteEmail();
     if (e) setEmail(e);
   }, []);
@@ -40,9 +36,12 @@ export default function Register() {
     e.preventDefault();
     setErr('');
     // Anti-bot: reject if honeypot field is filled (bots fill every visible field).
+    // This alone is invisible to real users, unlike a submit-speed check, which
+    // silently blocked real submissions from anyone using browser autofill
+    // (fills the form instantly, then a fast click submits well under a
+    // second) with no error shown - a real, measured cost to signups for a
+    // check that duplicates the server's own rate limiting on /auth/register.
     if (honeypot) return;
-    // Anti-bot: reject if form was submitted in under 1500ms (bot speed).
-    if (Date.now() - renderTimeRef.current < 1500) return;
     if (password !== confirm) { setErr('Passwords do not match.'); return; }
     if (password.length < 8) { setErr('Password must be at least 8 characters.'); return; }
     if (!agreed) { setErr('Please agree to the Terms, Privacy, Payment, and Non-Circumvention policies to continue.'); return; }

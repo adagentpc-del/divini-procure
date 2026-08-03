@@ -19,7 +19,7 @@ export default function CookieBanner() {
   if (!show) return null;
   return (
     <div role="dialog" aria-label="Cookie consent" style={{
-      position: 'fixed', left: 16, right: 16, bottom: 16, maxWidth: 560, margin: '0 auto', zIndex: 9999,
+      position: 'fixed', right: 16, bottom: 16, width: 'min(400px, calc(100vw - 32px))', zIndex: 9999,
       background: '#123c2e', color: '#f3efe6', borderRadius: 16, padding: '18px 20px',
       fontFamily: 'Inter, system-ui, sans-serif', fontSize: 14, lineHeight: 1.5,
       boxShadow: '0 30px 60px -30px rgba(0,0,0,.5)',

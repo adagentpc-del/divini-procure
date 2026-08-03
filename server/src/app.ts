@@ -55,9 +55,12 @@ app.use(
         defaultSrc: ["'self'"],
         // Stripe.js must be loaded from js.stripe.com (their CDN requirement).
         scriptSrc: ["'self'", "https://js.stripe.com"],
-        styleSrc: ["'self'", "'unsafe-inline'"], // allow CSS-in-JS / inline styles from React
+        // 'unsafe-inline' for CSS-in-JS / inline styles from React; the Google
+        // Fonts stylesheet (index.html) is loaded from googleapis.com, and its
+        // @font-face rules point at gstatic.com for the actual font files.
+        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
         imgSrc: ["'self'", "data:", "blob:"],
-        fontSrc: ["'self'"],
+        fontSrc: ["'self'", "https://fonts.gstatic.com"],
         // Allow calls to the Supabase project URL (auth, storage, realtime).
         // VITE_SUPABASE_URL is available server-side only as SUPABASE_URL.
         // Without this the browser blocks all fetch() to *.supabase.co.
