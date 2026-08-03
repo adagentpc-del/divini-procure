@@ -1078,7 +1078,7 @@ create index if not exists idx_scope_change_events_instance on scope_change_even
 -- exists yet. Organizations can add their own via POST /scope/templates.
 -- ---------------------------------------------------------------------------
 insert into scope_templates (organization_id, category, name, description, created_by)
-select null, v.category, v.name, 'Divini default template.', 'seed'
+select null, v.category, v.name, 'Divini default template.', null
 from (values
   ('electrical',     'Electrical Rough-In & Trim'),
   ('plumbing',        'Plumbing Rough-In & Fixtures'),
@@ -1344,7 +1344,7 @@ create index if not exists idx_follow_up_actions_enrollment on follow_up_actions
 
 -- 1) A Divini Pipeline opportunity with no logged activity in 14 days.
 insert into follow_up_templates (organization_id, template_key, channel, subject, body)
-select null, 'pipeline_stale_opportunity_step1', 'notify', null,
+select null, 'pipeline_stale_opportunity_step1', 'in_app_notification', null,
        'No activity logged on "{{opportunityName}}" in 14 days. Log a call, note, or next action to keep it moving.'
 where not exists (select 1 from follow_up_templates where organization_id is null and template_key = 'pipeline_stale_opportunity_step1');
 
@@ -1361,7 +1361,7 @@ select w.id, 0, 14, 'days', 'no_recent_activity_14d', 'notify', t.id, 'owner'
 
 -- 2) A Divini Bid Studio draft left unsubmitted for 5 days.
 insert into follow_up_templates (organization_id, template_key, channel, subject, body)
-select null, 'bid_draft_stale_step1', 'notify', null,
+select null, 'bid_draft_stale_step1', 'in_app_notification', null,
        'Your bid draft has been sitting for 5 days. Finish it in Divini Bid Studio before the package closes.'
 where not exists (select 1 from follow_up_templates where organization_id is null and template_key = 'bid_draft_stale_step1');
 
@@ -1987,6 +1987,113 @@ create table if not exists submittal_history (
 create index if not exists idx_submittals_package on submittals(package_id);
 create index if not exists idx_submittal_history_submittal on submittal_history(submittal_id);
 
+-- ===== schema-grandfathered-fee.sql =====
+-- Divini Procure - GRANDFATHERED EXISTING-RELATIONSHIP FEE
+-- =========================================================
+-- Tracks a SPECIFIC developer (buyer company) <-> vendor company relationship
+-- and, when the developer attests the relationship pre-existed Divini Procure
+-- (already under contract, already working together, already in active
+-- negotiations, or already selected/shortlisted), grandfathers THAT pair into a
+-- 2% payment-authorization fee forever. The 2% applies ONLY to that one
+-- developer-vendor pair, never globally to the vendor and never to other
+-- developers.
+--
+-- Extends the EXISTING model: developers are companies(kind='buyer'),
+-- vendors are companies(kind='vendor'), projects are buildings(id). This does
+-- NOT touch referral_partners / partner_commissions (those stay as-is).
+--
+-- Idempotent: safe to re-run. Apply standalone via psql, e.g.
+--   docker exec -i aibos_postgres psql -U aibos -d divini_procure < db/schema-grandfathered-fee.sql
+-- Zero em dashes by convention.
+
+create table if not exists developer_vendor_relationships (
+  id uuid primary key default gen_random_uuid(),
+  developer_company_id uuid not null references companies(id) on delete cascade,
+  vendor_company_id    uuid not null references companies(id) on delete cascade,
+  project_id           uuid references buildings(id) on delete set null,
+
+  -- no_prior_relationship | existing_relationship_claimed |
+  -- existing_relationship_under_review | grandfathered_2_percent |
+  -- standard_fee | disputed | inactive
+  relationship_status  text not null default 'no_prior_relationship',
+
+  -- developer attestation that the relationship pre-existed the platform
+  existing_relationship_confirmed boolean default false,
+  -- active_contract | active_negotiation | already_working_together |
+  -- already_selected_or_shortlisted | prior_vendor_relationship | other
+  existing_relationship_type      text,
+  existing_relationship_confirmed_by text references users(id) on delete set null,
+  existing_relationship_confirmed_at timestamptz,
+  existing_relationship_notes     text,
+  supporting_document_url         text,
+
+  -- granular pre-platform flags (one or more may be true)
+  active_contract_before_platform              boolean default false,
+  active_negotiations_before_platform          boolean default false,
+  already_working_together_before_platform     boolean default false,
+  already_selected_or_shortlisted_before_platform boolean default false,
+
+  -- grandfathered 2% fee state (relationship-specific, forever)
+  grandfathered_fee_eligible        boolean default false,
+  grandfathered_fee_percentage      numeric not null default 2.00,
+  grandfathered_fee_applies_forever boolean default true,
+  grandfathered_fee_started_at      timestamptz,
+
+  -- standard fee captured for contrast/reporting (nullable; resolved from
+  -- platform settings at calc time when null)
+  standard_fee_percentage numeric,
+
+  -- developer_checkbox | admin_override | contract_upload | negotiation_proof |
+  -- legacy_relationship | manual_adjustment
+  fee_rule_source text,
+
+  -- not_required | pending_review | approved | rejected | needs_more_info
+  admin_review_status text not null default 'not_required',
+  admin_reviewed_by   text references users(id) on delete set null,
+  admin_reviewed_at   timestamptz,
+  admin_notes         text,
+
+  audit_log_id uuid,
+  created_by   text references users(id) on delete set null,
+  created_at   timestamptz default now(),
+  updated_at   timestamptz default now(),
+
+  -- one canonical relationship row per developer-vendor pair
+  unique (developer_company_id, vendor_company_id)
+);
+
+create index if not exists dvr_developer_idx on developer_vendor_relationships(developer_company_id);
+create index if not exists dvr_vendor_idx    on developer_vendor_relationships(vendor_company_id);
+create index if not exists dvr_review_idx    on developer_vendor_relationships(admin_review_status);
+create index if not exists dvr_status_idx    on developer_vendor_relationships(relationship_status);
+
+-- Append-only audit trail for every relationship/fee event.
+create table if not exists dvr_audit_log (
+  id uuid primary key default gen_random_uuid(),
+  relationship_id uuid references developer_vendor_relationships(id) on delete cascade,
+  developer_company_id uuid,
+  vendor_company_id    uuid,
+  actor_user_id text,
+  actor_email   text,
+  -- relationship_created | existing_relationship_confirmed | status_change |
+  -- admin_review | fee_override | fee_change | document_uploaded | disputed |
+  -- deactivated
+  action text not null,
+  detail jsonb,
+  created_at timestamptz default now()
+);
+
+create index if not exists dvr_audit_rel_idx on dvr_audit_log(relationship_id);
+
+-- Safety: ensure columns exist if an older partial version of the table was
+-- created previously (no-ops when already present).
+alter table developer_vendor_relationships add column if not exists project_id uuid references buildings(id) on delete set null;
+alter table developer_vendor_relationships add column if not exists supporting_document_url text;
+alter table developer_vendor_relationships add column if not exists standard_fee_percentage numeric;
+alter table developer_vendor_relationships add column if not exists fee_rule_source text;
+alter table developer_vendor_relationships add column if not exists admin_reviewed_by text;
+alter table developer_vendor_relationships add column if not exists admin_reviewed_at timestamptz;
+
 -- ===== schema-agreements.sql =====
 -- ============================================================================
 -- Divini Procure - AGREEMENTS + native e-signature.
@@ -2347,112 +2454,28 @@ where not exists (
 );
 
 
--- ===== schema-grandfathered-fee.sql =====
--- Divini Procure - GRANDFATHERED EXISTING-RELATIONSHIP FEE
--- =========================================================
--- Tracks a SPECIFIC developer (buyer company) <-> vendor company relationship
--- and, when the developer attests the relationship pre-existed Divini Procure
--- (already under contract, already working together, already in active
--- negotiations, or already selected/shortlisted), grandfathers THAT pair into a
--- 2% payment-authorization fee forever. The 2% applies ONLY to that one
--- developer-vendor pair, never globally to the vendor and never to other
--- developers.
---
--- Extends the EXISTING model: developers are companies(kind='buyer'),
--- vendors are companies(kind='vendor'), projects are buildings(id). This does
--- NOT touch referral_partners / partner_commissions (those stay as-is).
---
--- Idempotent: safe to re-run. Apply standalone via psql, e.g.
---   docker exec -i aibos_postgres psql -U aibos -d divini_procure < db/schema-grandfathered-fee.sql
--- Zero em dashes by convention.
-
-create table if not exists developer_vendor_relationships (
+-- (moved earlier: referral_partners must exist before partner_commissions/partner_payouts reference it)
+-- ---------- referral partners ----------
+-- A business partner who refers customers in exchange for a revenue share or a
+-- flat fee. `company_id` is nullable so a partner need not be a registered
+-- company. revenue_share_pct is fully editable post-create (PATCH).
+create table if not exists referral_partners (
   id uuid primary key default gen_random_uuid(),
-  developer_company_id uuid not null references companies(id) on delete cascade,
-  vendor_company_id    uuid not null references companies(id) on delete cascade,
-  project_id           uuid references buildings(id) on delete set null,
-
-  -- no_prior_relationship | existing_relationship_claimed |
-  -- existing_relationship_under_review | grandfathered_2_percent |
-  -- standard_fee | disputed | inactive
-  relationship_status  text not null default 'no_prior_relationship',
-
-  -- developer attestation that the relationship pre-existed the platform
-  existing_relationship_confirmed boolean default false,
-  -- active_contract | active_negotiation | already_working_together |
-  -- already_selected_or_shortlisted | prior_vendor_relationship | other
-  existing_relationship_type      text,
-  existing_relationship_confirmed_by text references users(id) on delete set null,
-  existing_relationship_confirmed_at timestamptz,
-  existing_relationship_notes     text,
-  supporting_document_url         text,
-
-  -- granular pre-platform flags (one or more may be true)
-  active_contract_before_platform              boolean default false,
-  active_negotiations_before_platform          boolean default false,
-  already_working_together_before_platform     boolean default false,
-  already_selected_or_shortlisted_before_platform boolean default false,
-
-  -- grandfathered 2% fee state (relationship-specific, forever)
-  grandfathered_fee_eligible        boolean default false,
-  grandfathered_fee_percentage      numeric not null default 2.00,
-  grandfathered_fee_applies_forever boolean default true,
-  grandfathered_fee_started_at      timestamptz,
-
-  -- standard fee captured for contrast/reporting (nullable; resolved from
-  -- platform settings at calc time when null)
-  standard_fee_percentage numeric,
-
-  -- developer_checkbox | admin_override | contract_upload | negotiation_proof |
-  -- legacy_relationship | manual_adjustment
-  fee_rule_source text,
-
-  -- not_required | pending_review | approved | rejected | needs_more_info
-  admin_review_status text not null default 'not_required',
-  admin_reviewed_by   text references users(id) on delete set null,
-  admin_reviewed_at   timestamptz,
-  admin_notes         text,
-
-  audit_log_id uuid,
-  created_by   text references users(id) on delete set null,
-  created_at   timestamptz default now(),
-  updated_at   timestamptz default now(),
-
-  -- one canonical relationship row per developer-vendor pair
-  unique (developer_company_id, vendor_company_id)
-);
-
-create index if not exists dvr_developer_idx on developer_vendor_relationships(developer_company_id);
-create index if not exists dvr_vendor_idx    on developer_vendor_relationships(vendor_company_id);
-create index if not exists dvr_review_idx    on developer_vendor_relationships(admin_review_status);
-create index if not exists dvr_status_idx    on developer_vendor_relationships(relationship_status);
-
--- Append-only audit trail for every relationship/fee event.
-create table if not exists dvr_audit_log (
-  id uuid primary key default gen_random_uuid(),
-  relationship_id uuid references developer_vendor_relationships(id) on delete cascade,
-  developer_company_id uuid,
-  vendor_company_id    uuid,
-  actor_user_id text,
-  actor_email   text,
-  -- relationship_created | existing_relationship_confirmed | status_change |
-  -- admin_review | fee_override | fee_change | document_uploaded | disputed |
-  -- deactivated
-  action text not null,
-  detail jsonb,
+  company_id uuid references companies(id) on delete set null,
+  name text not null,
+  partner_email text,
+  referral_code text unique not null,
+  referral_link text,
+  commission_type text default 'percent',  -- percent | flat
+  revenue_share_pct numeric,                -- when commission_type = percent
+  flat_fee_cents bigint,                    -- when commission_type = flat
+  applies_to text,
+  status text default 'active',             -- active | disabled
+  terms text,
+  created_by text,
   created_at timestamptz default now()
 );
-
-create index if not exists dvr_audit_rel_idx on dvr_audit_log(relationship_id);
-
--- Safety: ensure columns exist if an older partial version of the table was
--- created previously (no-ops when already present).
-alter table developer_vendor_relationships add column if not exists project_id uuid references buildings(id) on delete set null;
-alter table developer_vendor_relationships add column if not exists supporting_document_url text;
-alter table developer_vendor_relationships add column if not exists standard_fee_percentage numeric;
-alter table developer_vendor_relationships add column if not exists fee_rule_source text;
-alter table developer_vendor_relationships add column if not exists admin_reviewed_by text;
-alter table developer_vendor_relationships add column if not exists admin_reviewed_at timestamptz;
+create index if not exists referral_partners_status_idx on referral_partners (status);
 
 -- ===== schema-procure-rev.sql =====
 -- ============================================================================
@@ -2808,6 +2831,57 @@ create table if not exists profile_programs (
 -- ---------------------------------------------------------------------------
 create index if not exists idx_profile_decks_company_id on profile_decks (company_id);
 create index if not exists idx_profile_programs_company_id on profile_programs (company_id);
+
+-- (moved earlier: investment_programs must exist before opportunity_teasers references it)
+-- ---------------------------------------------------------------------------
+-- An individual investment program / offering (a deal). Optionally tied to a
+-- project (buildings.id). Visibility + status drive what investors can see.
+-- ---------------------------------------------------------------------------
+create table if not exists investment_programs (
+  id uuid primary key default gen_random_uuid(),
+  company_id uuid references companies(id) on delete cascade,
+  project_id uuid references buildings(id) on delete set null,
+  name text,
+  program_type text,
+  asset_class text,
+  location text,
+  project_stage text,
+  target_raise_cents bigint,
+  min_investment_cents bigint,
+  max_investment_cents bigint,
+  investor_type_accepted text,
+  accredited_only boolean,
+  non_accredited_accepted boolean,
+  offering_type text,
+  investment_vehicle text,
+  projected_return text,
+  preferred_return text,
+  equity_multiple text,
+  irr_target text,
+  hold_period text,
+  distribution_schedule text,
+  use_of_funds text,
+  capital_stack text,
+  risk_level text,
+  exit_strategy text,
+  qualification_requirements text,
+  nda_required boolean,
+  kyc_required boolean,
+  proof_of_funds_required boolean,
+  visibility text default 'public_teaser' check (visibility in (
+    'public_teaser','approved_investor_preview','nda_required','accredited_only',
+    'non_accredited_program','family_office_only','admin_approved_only',
+    'private_invite_only','closed'
+  )),
+  status text default 'draft' check (status in (
+    'draft','submitted_for_review','needs_edits','approved','active','paused','closed','rejected'
+  )),
+  admin_review_status text default 'not_required',
+  admin_notes text,
+  created_by text,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
 
 -- ===== schema-teasers-profiles.sql =====
 -- Divini Procure - OPPORTUNITY TEASERS + PUBLIC/PRIVATE DEVELOPER PROFILES +
@@ -3379,6 +3453,22 @@ select 'specialty_fabrication',
   'Custom and specialty fabrication. Shop drawings and a sample required before production.'
 where not exists (select 1 from vendor_onboarding_templates where category = 'specialty_fabrication');
 
+-- (moved earlier: invite_codes must exist before schema-invite-prefill.sql ALTERs it)
+-- ---------- invite codes ----------
+-- Admin-generated invitations to onboard a buyer/vendor company. The `code`
+-- powers a public claim link (PUBLIC_APP_URL + /join/:code).
+create table if not exists invite_codes (
+  id uuid primary key default gen_random_uuid(),
+  code text unique not null,
+  email text,
+  company_kind text,                 -- 'buyer' | 'vendor' (advisory; not enforced)
+  status text default 'pending',     -- pending | claimed | revoked
+  created_by text,                   -- admin email
+  claimed_at timestamptz,
+  created_at timestamptz default now()
+);
+create index if not exists invite_codes_status_idx on invite_codes (status);
+
 -- ===== schema-invite-prefill.sql =====
 -- ============================================================================
 -- Divini Procure — INVITE PRE-FILL columns (idempotent add-on)
@@ -3507,55 +3597,6 @@ create table if not exists developer_investment_profiles (
   updated_at timestamptz default now()
 );
 
--- ---------------------------------------------------------------------------
--- An individual investment program / offering (a deal). Optionally tied to a
--- project (buildings.id). Visibility + status drive what investors can see.
--- ---------------------------------------------------------------------------
-create table if not exists investment_programs (
-  id uuid primary key default gen_random_uuid(),
-  company_id uuid references companies(id) on delete cascade,
-  project_id uuid references buildings(id) on delete set null,
-  name text,
-  program_type text,
-  asset_class text,
-  location text,
-  project_stage text,
-  target_raise_cents bigint,
-  min_investment_cents bigint,
-  max_investment_cents bigint,
-  investor_type_accepted text,
-  accredited_only boolean,
-  non_accredited_accepted boolean,
-  offering_type text,
-  investment_vehicle text,
-  projected_return text,
-  preferred_return text,
-  equity_multiple text,
-  irr_target text,
-  hold_period text,
-  distribution_schedule text,
-  use_of_funds text,
-  capital_stack text,
-  risk_level text,
-  exit_strategy text,
-  qualification_requirements text,
-  nda_required boolean,
-  kyc_required boolean,
-  proof_of_funds_required boolean,
-  visibility text default 'public_teaser' check (visibility in (
-    'public_teaser','approved_investor_preview','nda_required','accredited_only',
-    'non_accredited_program','family_office_only','admin_approved_only',
-    'private_invite_only','closed'
-  )),
-  status text default 'draft' check (status in (
-    'draft','submitted_for_review','needs_edits','approved','active','paused','closed','rejected'
-  )),
-  admin_review_status text default 'not_required',
-  admin_notes text,
-  created_by text,
-  created_at timestamptz default now(),
-  updated_at timestamptz default now()
-);
 
 -- ---------------------------------------------------------------------------
 -- Offering documents attached to a program. May be NDA-gated or
@@ -4301,20 +4342,6 @@ create index if not exists idx_relationship_edges_to on relationship_edges(to_co
 
 create extension if not exists "pgcrypto";
 
--- ---------- invite codes ----------
--- Admin-generated invitations to onboard a buyer/vendor company. The `code`
--- powers a public claim link (PUBLIC_APP_URL + /join/:code).
-create table if not exists invite_codes (
-  id uuid primary key default gen_random_uuid(),
-  code text unique not null,
-  email text,
-  company_kind text,                 -- 'buyer' | 'vendor' (advisory; not enforced)
-  status text default 'pending',     -- pending | claimed | revoked
-  created_by text,                   -- admin email
-  claimed_at timestamptz,
-  created_at timestamptz default now()
-);
-create index if not exists invite_codes_status_idx on invite_codes (status);
 
 -- ---------- discount codes ----------
 create table if not exists discount_codes (
@@ -4332,27 +4359,6 @@ create table if not exists discount_codes (
 );
 create index if not exists discount_codes_status_idx on discount_codes (status);
 
--- ---------- referral partners ----------
--- A business partner who refers customers in exchange for a revenue share or a
--- flat fee. `company_id` is nullable so a partner need not be a registered
--- company. revenue_share_pct is fully editable post-create (PATCH).
-create table if not exists referral_partners (
-  id uuid primary key default gen_random_uuid(),
-  company_id uuid references companies(id) on delete set null,
-  name text not null,
-  partner_email text,
-  referral_code text unique not null,
-  referral_link text,
-  commission_type text default 'percent',  -- percent | flat
-  revenue_share_pct numeric,                -- when commission_type = percent
-  flat_fee_cents bigint,                    -- when commission_type = flat
-  applies_to text,
-  status text default 'active',             -- active | disabled
-  terms text,
-  created_by text,
-  created_at timestamptz default now()
-);
-create index if not exists referral_partners_status_idx on referral_partners (status);
 
 -- ---------- per-user referral codes + referrals + credits ----------
 create table if not exists referral_codes (
@@ -4616,6 +4622,34 @@ create table if not exists app_config (
   updated_at timestamptz not null default now()
 );
 
+
+-- ===== schema-investor-watchlist.sql =====
+-- Investor Watchlist (saved search criteria + deal alerts)
+-- -----------------------------------------------------------------------
+-- Backs server/src/routes/watchlist.ts. Never checked into db/ before now;
+-- only db/schema-watchlist-userid-fix.sql existed, which ALTERs a table
+-- this file was supposed to CREATE first. On a fresh database that left
+-- investor_watchlist (and the fix migration) both failing outright, and
+-- the whole watchlist feature broken. Found via a from-scratch apply-all.sql
+-- bootstrap test; see AI_PROJECT_OS/13_CHANGELOG.md.
+--
+-- One row per saved search a Capital Partner (investor) creates; the
+-- /watchlist/matches endpoint matches these criteria against active
+-- investment_programs. Idempotent: safe to re-run.
+
+create table if not exists investor_watchlist (
+  id uuid primary key default gen_random_uuid(),
+  user_id text not null references users(id) on delete cascade,
+  asset_class text,
+  location text,
+  min_target_return numeric,
+  max_min_investment_cents bigint,
+  investor_type text,
+  label text,
+  notify_email boolean not null default true,
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_investor_watchlist_user on investor_watchlist (user_id);
 
 -- ===== schema-watchlist-userid-fix.sql =====
 -- Migration: fix investor_watchlist.user_id type mismatch (uuid -> text)

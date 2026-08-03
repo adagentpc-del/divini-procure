@@ -112,7 +112,7 @@ create index if not exists idx_follow_up_actions_enrollment on follow_up_actions
 
 -- 1) A Divini Pipeline opportunity with no logged activity in 14 days.
 insert into follow_up_templates (organization_id, template_key, channel, subject, body)
-select null, 'pipeline_stale_opportunity_step1', 'notify', null,
+select null, 'pipeline_stale_opportunity_step1', 'in_app_notification', null,
        'No activity logged on "{{opportunityName}}" in 14 days. Log a call, note, or next action to keep it moving.'
 where not exists (select 1 from follow_up_templates where organization_id is null and template_key = 'pipeline_stale_opportunity_step1');
 
@@ -129,7 +129,7 @@ select w.id, 0, 14, 'days', 'no_recent_activity_14d', 'notify', t.id, 'owner'
 
 -- 2) A Divini Bid Studio draft left unsubmitted for 5 days.
 insert into follow_up_templates (organization_id, template_key, channel, subject, body)
-select null, 'bid_draft_stale_step1', 'notify', null,
+select null, 'bid_draft_stale_step1', 'in_app_notification', null,
        'Your bid draft has been sitting for 5 days. Finish it in Divini Bid Studio before the package closes.'
 where not exists (select 1 from follow_up_templates where organization_id is null and template_key = 'bid_draft_stale_step1');
 

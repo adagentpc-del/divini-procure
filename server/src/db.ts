@@ -34,6 +34,8 @@
 import { q, q1, pool } from "./pool.js";
 import { getAdminAllowedEmails } from "./config.js";
 import { PlanLimitError, enforceLimit } from "./lib/entitlement-guard.js";
+import { ForbiddenError, NotFoundError } from "./lib/errors.js";
+export { ForbiddenError, NotFoundError };
 
 /**
  * Enforce a plan limit before a create. Only a PlanLimitError (which extends
@@ -58,21 +60,6 @@ async function guardLimit(
 export function isAdminEmail(email: string | null | undefined): boolean {
   if (!email) return false;
   return getAdminAllowedEmails().includes(email.toLowerCase());
-}
-
-export class ForbiddenError extends Error {
-  status = 403;
-  constructor(msg = "forbidden") {
-    super(msg);
-    this.name = "ForbiddenError";
-  }
-}
-export class NotFoundError extends Error {
-  status = 404;
-  constructor(msg = "not found") {
-    super(msg);
-    this.name = "NotFoundError";
-  }
 }
 
 /** Upsert the user row (so company_members.user_id FK is satisfiable). */

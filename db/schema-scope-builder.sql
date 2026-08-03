@@ -136,7 +136,7 @@ create index if not exists idx_scope_change_events_instance on scope_change_even
 -- exists yet. Organizations can add their own via POST /scope/templates.
 -- ---------------------------------------------------------------------------
 insert into scope_templates (organization_id, category, name, description, created_by)
-select null, v.category, v.name, 'Divini default template.', 'seed'
+select null, v.category, v.name, 'Divini default template.', null
 from (values
   ('electrical',     'Electrical Rough-In & Trim'),
   ('plumbing',        'Plumbing Rough-In & Fixtures'),
