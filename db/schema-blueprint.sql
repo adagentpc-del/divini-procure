@@ -8,11 +8,18 @@
 -- encryption. This module adds classification and AI-assisted (optional,
 -- gracefully degrading) project-summary drafting on top.
 --
--- HONESTY NOTE: this codebase has no CAD-parsing or OCR library. Divini
--- Blueprint classifies documents from FILENAME AND EXTENSION ONLY
--- (server/src/lib/document-classifier.ts) - it never claims to read drawing
--- content. Its "AI summary" step (server/src/routes/blueprint.ts, using the
--- existing optional server/src/lib/llm.ts client) drafts narrative from that
+-- HONESTY NOTE (as originally written here): at the time this file was
+-- written, this codebase had no CAD-parsing or OCR library, so Divini
+-- Blueprint classified documents from FILENAME AND EXTENSION ONLY
+-- (server/src/lib/document-classifier.ts's classifyDocument()).
+-- UPDATE: db/schema-blueprint-content-extraction.sql later added real PDF
+-- text extraction and OCR (server/src/lib/text-extraction.ts, ocr.ts) and
+-- real DXF parsing (dxf-extraction.ts) - see that file for the current
+-- state. classifyDocument() itself is unchanged and still filename-only;
+-- the newer classifyFromContent() is the one that reads real content.
+-- Binary CAD (DWG/RVT/IFC) still has no reader - see cad-conversion.ts.
+-- Its "AI summary" step (server/src/routes/blueprint.ts, using the
+-- existing optional server/src/lib/llm.ts client) drafts narrative from
 -- classification plus any text the user explicitly supplies - never from
 -- file content it cannot see. Every field is a labeled suggestion requiring
 -- user review; nothing here is ever auto-published.

@@ -1421,11 +1421,18 @@ select w.id, 0, 0, 'days', 'credential_expiring_30d', 'send_email', t.id, 'owner
 -- encryption. This module adds classification and AI-assisted (optional,
 -- gracefully degrading) project-summary drafting on top.
 --
--- HONESTY NOTE: this codebase has no CAD-parsing or OCR library. Divini
--- Blueprint classifies documents from FILENAME AND EXTENSION ONLY
--- (server/src/lib/document-classifier.ts) - it never claims to read drawing
--- content. Its "AI summary" step (server/src/routes/blueprint.ts, using the
--- existing optional server/src/lib/llm.ts client) drafts narrative from that
+-- HONESTY NOTE (as originally written here): at the time this file was
+-- written, this codebase had no CAD-parsing or OCR library, so Divini
+-- Blueprint classified documents from FILENAME AND EXTENSION ONLY
+-- (server/src/lib/document-classifier.ts's classifyDocument()).
+-- UPDATE: db/schema-blueprint-content-extraction.sql later added real PDF
+-- text extraction and OCR (server/src/lib/text-extraction.ts, ocr.ts) and
+-- real DXF parsing (dxf-extraction.ts) - see that file for the current
+-- state. classifyDocument() itself is unchanged and still filename-only;
+-- the newer classifyFromContent() is the one that reads real content.
+-- Binary CAD (DWG/RVT/IFC) still has no reader - see cad-conversion.ts.
+-- Its "AI summary" step (server/src/routes/blueprint.ts, using the
+-- existing optional server/src/lib/llm.ts client) drafts narrative from
 -- classification plus any text the user explicitly supplies - never from
 -- file content it cannot see. Every field is a labeled suggestion requiring
 -- user review; nothing here is ever auto-published.
@@ -1681,6 +1688,35 @@ create table if not exists quantity_observations (
 );
 create index if not exists idx_quantity_observations_building on quantity_observations (building_id);
 create index if not exists idx_quantity_observations_package on quantity_observations (package_id);
+
+-- ===== schema-blueprint-content-extraction.sql =====
+-- ============================================================================
+-- Divini Procure - DIVINI BLUEPRINT: real content extraction
+-- ----------------------------------------------------------------------------
+-- Adds storage for text actually read from a document - a PDF's real text
+-- layer (server/src/lib/text-extraction.ts, pdf-parse), an OCR result on a
+-- scanned page or image (server/src/lib/ocr.ts, tesseract.js), or a DXF's
+-- real TEXT/MTEXT entities and layer names (server/src/lib/dxf-extraction.ts,
+-- dxf-parser). This is a genuine capability upgrade over the rest of this
+-- codebase's filename-only classification, for the file types that can
+-- actually be parsed with no external service or API key.
+--
+-- extraction_method distinguishes HOW the text was obtained, since a PDF
+-- text layer is much more reliable than OCR on a scan, which is more
+-- reliable than nothing at all. Binary CAD formats (DWG, RVT, IFC) have no
+-- extraction path yet and stay 'none' until a real conversion service is
+-- configured (see server/src/lib/cad-conversion.ts).
+--
+-- Idempotent: safe to re-run. Zero em dashes by convention.
+-- ============================================================================
+
+alter table if exists documents add column if not exists extracted_text text;
+alter table if exists documents add column if not exists extraction_method text not null default 'none'
+  check (extraction_method in ('pdf_text_layer', 'ocr', 'dxf_entities', 'none', 'failed'));
+alter table if exists documents add column if not exists extraction_error text;
+alter table if exists documents add column if not exists extracted_at timestamptz;
+
+create index if not exists idx_documents_extraction_method on documents (extraction_method);
 
 -- ===== schema-award-workflow.sql =====
 -- ============================================================================

@@ -8,17 +8,24 @@
  * this module only adds classification and review on top of documents
  * already uploaded there.
  *
- * HONESTY BOUNDARY (see db/schema-blueprint.sql for the full note): this
- * codebase has no CAD-parsing or OCR library. Classification
- * (server/src/lib/document-classifier.ts) reads filenames/extensions only,
- * never file content, and never returns "high" confidence for that reason.
- * The optional AI summary step below uses the existing gracefully-degrading
- * LLM client (server/src/lib/llm.ts) to draft narrative from that
- * classification plus any text the user explicitly supplies - never from
- * file content it cannot see, and always requiring user review before
- * anything is created. When the LLM is not configured, the deterministic
- * classification + trade suggestions still work in full - this is the
- * "must work without an LLM" baseline.
+ * HONESTY BOUNDARY (see db/schema-blueprint.sql for the original note, and
+ * db/schema-blueprint-content-extraction.sql for the update): classifyDocument()
+ * still reads filenames/extensions only and never exceeds "medium"
+ * confidence. POST /documents/:id/extract-content is different: it actually
+ * reads a PDF's text layer or OCRs an image (server/src/lib/text-extraction.ts,
+ * server/src/lib/ocr.ts - both need no external service or API key) or a
+ * DXF's real text/layers (server/src/lib/dxf-extraction.ts), then
+ * reclassifies with classifyFromContent() at "high" confidence when a rule
+ * matches real content. DWG/RVT/IFC still have no content-reading path - see
+ * server/src/lib/cad-conversion.ts, the pluggable seam for a real CAD
+ * conversion service once one is configured. The optional AI summary step
+ * below uses the existing gracefully-degrading LLM client
+ * (server/src/lib/llm.ts) to draft narrative from classification plus any
+ * text the user explicitly supplies - never from file content it cannot
+ * see, and always requiring user review before anything is created. When
+ * the LLM is not configured, the deterministic classification + trade
+ * suggestions still work in full - this is the "must work without an LLM"
+ * baseline.
  *
  * Zero em dashes by convention.
  */
@@ -26,11 +33,15 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { getAuth, requireUser } from "../auth.js";
 import { ForbiddenError, NotFoundError, userCompanyIds } from "../db.js";
 import { q, q1 } from "../pool.js";
-import { classifyDocument, type Discipline } from "../lib/document-classifier.js";
+import { classifyDocument, classifyFromContent, type Discipline } from "../lib/document-classifier.js";
 import { suggestTrades } from "../lib/trade-suggester.js";
 import { suggestRevisionMatches } from "../lib/revision-matcher.js";
 import { llmEnabled, llmJson } from "../lib/llm.js";
 import { sendEmail } from "../lib/email.js";
+import { extractPdfText, renderPdfPageToPng } from "../lib/text-extraction.js";
+import { ocrImage } from "../lib/ocr.js";
+import { extractDxfInfo } from "../lib/dxf-extraction.js";
+import { readFileBytes } from "../storage.js";
 
 const h =
   (fn: (req: Request, res: Response) => Promise<unknown>) =>
@@ -42,6 +53,10 @@ const router = Router();
 const SUGGESTION_STATUSES = new Set(["accepted", "rejected", "merged"]);
 const DISCLAIMER =
   "AI-generated preliminary project information. Review and approval by the project owner and appropriate licensed professionals are required before use.";
+// tesseract.js reads these directly - excludes heic (no native decode path
+// without a conversion step this codebase does not have) and tif/tiff
+// (tesseract.js support is unreliable enough to not promise here).
+const IMAGE_EXTENSIONS_FOR_OCR = new Set(["png", "jpg", "jpeg", "webp", "gif"]);
 
 async function isMemberOfCompany(userId: string, companyId: string | null): Promise<boolean> {
   if (!companyId) return false;
@@ -90,6 +105,94 @@ router.post(
     }
     const row = await classifyAndSave(doc);
     res.json({ document: row });
+  }),
+);
+
+/**
+ * Actually reads a document's content and returns extracted text plus how
+ * it was obtained. Never throws - every branch returns a result object,
+ * since a failure to extract content is an expected, common outcome (a
+ * scanned PDF with an unreadable scan, an unsupported CAD format, a
+ * corrupted file) and must never take the request down with it.
+ */
+async function extractContent(doc: any): Promise<{ text: string; method: "pdf_text_layer" | "ocr" | "dxf_entities" | "none" | "failed"; error?: string }> {
+  const ext = fileExtension(doc.name);
+  let bytes: Buffer;
+  try {
+    bytes = readFileBytes(doc.storage_path);
+  } catch (e: any) {
+    return { text: "", method: "failed", error: `could not read the stored file: ${e?.message ?? "unknown error"}` };
+  }
+
+  if (ext === "pdf") {
+    const textLayer = await extractPdfText(bytes);
+    if (textLayer) return { text: textLayer.text, method: "pdf_text_layer" };
+    // No text layer - likely a scanned PDF. Fall back to OCR on page 1 only:
+    // OCRing every page of a large scanned set is expensive and page 1
+    // (a cover sheet or title block) is usually the highest-signal page for
+    // classification purposes.
+    const png = await renderPdfPageToPng(bytes, 1);
+    if (!png) return { text: "", method: "failed", error: "could not extract a text layer or render this PDF for OCR" };
+    const ocr = await ocrImage(png);
+    if (!ocr) return { text: "", method: "failed", error: "OCR could not read this PDF's first page with usable confidence" };
+    return { text: ocr.text, method: "ocr" };
+  }
+
+  if (IMAGE_EXTENSIONS_FOR_OCR.has(ext)) {
+    const ocr = await ocrImage(bytes);
+    if (!ocr) return { text: "", method: "failed", error: "OCR could not read this image with usable confidence" };
+    return { text: ocr.text, method: "ocr" };
+  }
+
+  if (ext === "dxf") {
+    const info = extractDxfInfo(bytes.toString("utf8"));
+    if (!info) return { text: "", method: "failed", error: "could not parse this file as DXF" };
+    const text = [...info.layers, ...info.textEntities].join(" ");
+    if (!text.trim()) return { text: "", method: "dxf_entities", error: "parsed successfully but the file has no layer names or text entities to classify from" };
+    return { text, method: "dxf_entities" };
+  }
+
+  return { text: "", method: "none", error: `no content-reading path for .${ext} files yet - CAD_CONVERSION_PROVIDER is not configured (see server/src/lib/cad-conversion.ts) or this format has no reader at all` };
+}
+
+// ---- POST /blueprint/documents/:id/extract-content -----------------------------
+// Reads the document's real content where this codebase can (PDF text
+// layer, OCR, or DXF entities - see extractContent() above), stores it, and
+// reclassifies at "high" confidence if a keyword rule matches the real
+// content. Never overwrites a user's manual category/discipline override.
+router.post(
+  "/documents/:id/extract-content",
+  requireUser,
+  h(async (req, res) => {
+    const doc = await q1<any>(`select * from documents where id = $1`, [req.params.id]);
+    if (!doc) throw new NotFoundError("document not found");
+    const auth = getAuth(req);
+    if (!auth.isAdmin && !(await isMemberOfCompany(auth.userId!, doc.company_id))) {
+      throw new ForbiddenError("not a member of this organization");
+    }
+
+    const result = await extractContent(doc);
+    const truncated = result.text.slice(0, 20000);
+
+    let updated = await q1<any>(
+      `update documents set extracted_text = $2, extraction_method = $3, extraction_error = $4, extracted_at = now()
+       where id = $1 returning *`,
+      [doc.id, truncated || null, result.method, result.error ?? null],
+    );
+
+    if (truncated && !updated.category_overridden_by_user) {
+      const contentMatch = classifyFromContent(truncated);
+      if (contentMatch) {
+        updated = await q1<any>(
+          `update documents set discipline = $2, document_category = $3, classification_confidence = $4,
+             classification_rule = $5, classified_at = now(), processing_status = 'classified'
+           where id = $1 returning *`,
+          [doc.id, contentMatch.discipline, contentMatch.category, contentMatch.confidence, `content:${contentMatch.matchedRule}`],
+        );
+      }
+    }
+
+    res.json({ document: updated, extraction: result });
   }),
 );
 

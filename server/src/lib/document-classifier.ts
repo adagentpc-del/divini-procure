@@ -1,13 +1,25 @@
 /**
  * Divini Blueprint - DOCUMENT CLASSIFICATION (pure, no IO).
  *
- * Deterministic filename/extension classification: this is the "failure
- * fallback" baseline the spec requires ("must work without an LLM") and the
- * ONLY classification this module can honestly claim to do - it reads a
- * filename and extension, never the actual drawing/CAD/PDF content (no
- * OCR or CAD-parsing library exists in this codebase). An optional LLM step
- * elsewhere may draft additional narrative from this classification plus
- * user-supplied text, but it never reads inside the files either.
+ * classifyDocument() is filename/extension only - the "failure fallback"
+ * baseline the spec requires ("must work without an LLM"), and it never
+ * exceeds "medium" confidence since a filename is never proof of content.
+ *
+ * classifyFromContent() is newer and different: it runs the SAME keyword
+ * rules against text this codebase has ACTUALLY read - a PDF's real text
+ * layer (server/src/lib/text-extraction.ts), an OCR result
+ * (server/src/lib/ocr.ts), or a DXF's real TEXT/MTEXT entities and layer
+ * names (server/src/lib/dxf-extraction.ts). A match there is "high"
+ * confidence, because it is grounded in the document's real content, not a
+ * guess about what a filename implies. This only classifies what a rule
+ * actually matched in real text - it still never claims to understand
+ * geometry, dimensions, quantities, or anything not literally present as
+ * text.
+ *
+ * DWG/RVT/IFC and other binary CAD formats still have no content-reading
+ * path in this codebase (that needs a real CAD-conversion service - see
+ * server/src/lib/cad-conversion.ts) - only classifyDocument()'s filename
+ * guess applies to those.
  *
  * Zero em dashes by convention.
  */
@@ -94,4 +106,29 @@ export function classifyDocument(filename: string, extension: string): Classific
     return { category: "schedule", discipline: "general", isCadFile: false, confidence: "low", matchedRule: "spreadsheet_extension_only" };
   }
   return { category: "other", discipline: "general", isCadFile: false, confidence: "low", matchedRule: "no_match" };
+}
+
+export interface ContentClassificationResult {
+  category: DocumentCategory;
+  discipline: Discipline;
+  confidence: "high";
+  matchedRule: string;
+}
+
+/**
+ * Classify from text this codebase has actually read from the document
+ * (a PDF text layer, an OCR result, or DXF text/layer names) - never from
+ * a filename. A rule match here is "high" confidence because it is
+ * grounded in the document's real content. Returns null when no rule
+ * matches the content - this NEVER falls back to guessing; the caller
+ * should keep whatever filename-based classification it already had.
+ */
+export function classifyFromContent(extractedText: string): ContentClassificationResult | null {
+  const text = extractedText || "";
+  for (const rule of KEYWORD_RULES) {
+    if (rule.pattern.test(text)) {
+      return { category: rule.category, discipline: rule.discipline, confidence: "high", matchedRule: rule.pattern.source };
+    }
+  }
+  return null;
 }

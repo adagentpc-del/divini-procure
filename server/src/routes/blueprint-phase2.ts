@@ -2,10 +2,12 @@
  * Divini Blueprint Phase 2 - the pieces of the CAD/Drawing/Plan/
  * Specification/Bid Intelligence master spec buildable with NO additional
  * backend service or API key: CSI division tagging (from the already-
- * classified discipline, never document content), CSV-only budget import
- * and reconciliation, and manual (never AI) quantity observations.
- * Mounted at /api/blueprint alongside server/src/routes/blueprint.ts, in a
- * separate file to keep each slice's route surface readable.
+ * classified discipline, never document content), CSV/XLSX budget import
+ * and reconciliation (server/src/lib/xlsx-extraction.ts - exceljs, not the
+ * npm `xlsx` package, which carries an unpatched high-severity advisory),
+ * and manual (never AI) quantity observations. Mounted at /api/blueprint
+ * alongside server/src/routes/blueprint.ts, in a separate file to keep
+ * each slice's route surface readable.
  *
  * Zero em dashes by convention.
  */
@@ -14,9 +16,11 @@ import { getAuth, requireUser } from "../auth.js";
 import { ForbiddenError, NotFoundError } from "../db.js";
 import { q, q1 } from "../pool.js";
 import { guessCsiDivision, divisionByCode, missingDivisionsForDrawingDisciplines } from "../lib/csi-divisions.js";
-import { parseBudgetCsv } from "../lib/csv-parser.js";
+import { parseBudgetCsv, type BudgetCsvRow } from "../lib/csv-parser.js";
+import { parseBudgetXlsx } from "../lib/xlsx-extraction.js";
 import { matchBudgetRowToPackage } from "../lib/budget-mapper.js";
 import type { Discipline } from "../lib/document-classifier.js";
+import { readFileBytes } from "../storage.js";
 
 const h =
   (fn: (req: Request, res: Response) => Promise<unknown>) =>
@@ -126,7 +130,13 @@ router.get(
 // Budget import and reconciliation (CSV only)
 // ===========================================================================
 
-// ---- POST /blueprint/budget-imports {buildingId, csvText, filename?, sourceDocumentId?}
+// ---- POST /blueprint/budget-imports {buildingId, csvText?, documentId?, filename?}
+// Two ways in: paste/inline CSV text (csvText, unchanged from before), or an
+// already-uploaded document (documentId, via the existing /api/documents
+// endpoint) - the only way to get binary XLSX bytes in, dispatched by the
+// document's real file extension. XLS (the old binary Excel format, pre-
+// XLSX) is explicitly rejected with a clear message: exceljs does not read
+// it, and this codebase has no fallback parser for it.
 router.post(
   "/budget-imports",
   requireUser,
@@ -135,11 +145,38 @@ router.post(
     const b = req.body ?? {};
     const buildingId = String(b.buildingId || "");
     if (!buildingId) return res.status(400).json({ error: "buildingId required" });
-    const csvText = typeof b.csvText === "string" ? b.csvText : "";
-    if (!csvText) return res.status(400).json({ error: "csvText required" });
     const building = await authorizeBuilding(req, buildingId);
 
-    const parsed = parseBudgetCsv(csvText);
+    let parsed: { rows: BudgetCsvRow[]; skipped: number; error?: string };
+    let sourceDocumentId: string | null = null;
+    let filename: string | null = b.filename ? String(b.filename) : null;
+
+    if (b.documentId) {
+      sourceDocumentId = String(b.documentId);
+      const doc = await q1<any>(`select * from documents where id = $1 and building_id = $2`, [sourceDocumentId, buildingId]);
+      if (!doc) throw new NotFoundError("document not found in this project");
+      filename = filename ?? doc.name;
+      const ext = (doc.name.split(".").pop() || "").toLowerCase();
+      let bytes: Buffer;
+      try {
+        bytes = readFileBytes(doc.storage_path);
+      } catch (e: any) {
+        return res.status(400).json({ error: `could not read the stored file: ${e?.message ?? "unknown error"}` });
+      }
+      if (ext === "csv") {
+        parsed = parseBudgetCsv(bytes.toString("utf8"));
+      } else if (ext === "xlsx") {
+        parsed = await parseBudgetXlsx(bytes);
+      } else if (ext === "xls") {
+        return res.status(400).json({ error: "the legacy .xls format is not supported - please re-save as .xlsx or .csv" });
+      } else {
+        return res.status(400).json({ error: `.${ext} is not a supported budget file type - upload a .csv or .xlsx file` });
+      }
+    } else {
+      const csvText = typeof b.csvText === "string" ? b.csvText : "";
+      if (!csvText) return res.status(400).json({ error: "csvText or documentId required" });
+      parsed = parseBudgetCsv(csvText);
+    }
     if (parsed.error) return res.status(400).json({ error: parsed.error });
 
     const packageRows = await q<{ id: string; category: string }>(
@@ -153,8 +190,8 @@ router.post(
        values ($1,$2,$3,$4,$5,$6,$7) returning *`,
       [
         building.company_id, buildingId,
-        b.sourceDocumentId ? String(b.sourceDocumentId) : null,
-        b.filename ? String(b.filename) : null,
+        sourceDocumentId,
+        filename,
         parsed.rows.length, parsed.skipped, auth.userId,
       ],
     );

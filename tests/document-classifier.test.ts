@@ -7,7 +7,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { classifyDocument } from "../server/src/lib/document-classifier.ts";
+import { classifyDocument, classifyFromContent } from "../server/src/lib/document-classifier.ts";
 
 test("classifier: keyword match on filename wins even for a plain PDF extension", () => {
   const r = classifyDocument("Electrical Lighting Plan Rev3.pdf", "pdf");
@@ -71,4 +71,26 @@ test("classifier: never returns high confidence -- this module never claims to h
   for (const [name, ext] of samples) {
     assert.notEqual(classifyDocument(name, ext).confidence, "high");
   }
+});
+
+test("classifyFromContent: a keyword match in REAL extracted text is high confidence", () => {
+  const r = classifyFromContent("SECTION 26 00 00 - ELECTRICAL GENERAL REQUIREMENTS");
+  assert.ok(r);
+  assert.equal(r!.category, "drawing");
+  assert.equal(r!.discipline, "electrical");
+  assert.equal(r!.confidence, "high");
+});
+
+test("classifyFromContent: specification content is detected regardless of case", () => {
+  const r = classifyFromContent("this document is the project specification manual");
+  assert.ok(r);
+  assert.equal(r!.category, "specification");
+});
+
+test("classifyFromContent: text with no keyword match returns null, never a low-confidence guess", () => {
+  assert.equal(classifyFromContent("the quick brown fox jumps over the lazy dog"), null);
+});
+
+test("classifyFromContent: empty content returns null", () => {
+  assert.equal(classifyFromContent(""), null);
 });

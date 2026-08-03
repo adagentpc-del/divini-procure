@@ -15,6 +15,7 @@ type Project = { id: string; name?: string };
 type Doc = {
   id: string; name: string; document_category: string | null; discipline: string | null;
   classification_confidence: string | null; processing_status: string; created_at: string;
+  extracted_text: string | null; extraction_method: string | null; extraction_error: string | null;
 };
 type SummaryField = {
   id: string; field_key: string; field_label: string; suggested_value: string | null;
@@ -141,6 +142,25 @@ export default function Blueprint() {
     } catch { /* non-fatal */ }
   }
 
+  async function extractContentFor(docId: string) {
+    setBusy(true); setErr(''); setOk('');
+    try {
+      const r = await apiSend<{ document: Doc; extraction: { method: string; error?: string } }>(
+        'POST', `/blueprint/documents/${docId}/extract-content`, {},
+      );
+      setOk(
+        r.extraction.method === 'none' || r.extraction.method === 'failed'
+          ? (r.extraction.error ?? 'Could not extract content from this file.')
+          : `Extracted content via ${r.extraction.method.replace(/_/g, ' ')}. Reclassified if a match was found.`,
+      );
+      await loadDocuments();
+    } catch (e: any) {
+      setErr(e.message ?? 'Could not extract content.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function guessCsiDivisionFor(docId: string) {
     setBusy(true); setErr('');
     try {
@@ -165,18 +185,30 @@ export default function Blueprint() {
     }
   }
 
-  async function uploadBudgetCsv(f: File) {
+  async function uploadBudgetFile(f: File) {
+    if (!companyId || !buildingId) return;
     setBusy(true); setErr(''); setOk('');
     try {
-      const text = await f.text();
-      const result = await apiSend<{ import: any; lines: any[] }>('POST', '/blueprint/budget-imports', {
-        buildingId, csvText: text, filename: f.name,
-      });
+      const isXlsx = /\.xlsx$/i.test(f.name);
+      let result: { import: any; lines: any[] };
+      if (isXlsx) {
+        // XLSX is binary - upload it through the existing document endpoint
+        // first, then have the server read it by documentId.
+        const form = new FormData();
+        form.append('file', f);
+        form.append('companyId', companyId);
+        form.append('buildingId', buildingId);
+        const doc = await apiUpload<{ id: string }>('/documents', form);
+        result = await apiSend('POST', '/blueprint/budget-imports', { buildingId, documentId: doc.id, filename: f.name });
+      } else {
+        const text = await f.text();
+        result = await apiSend('POST', '/blueprint/budget-imports', { buildingId, csvText: text, filename: f.name });
+      }
       setCurrentBudgetImport(result);
       setOk(`Imported ${result.lines.length} budget line${result.lines.length === 1 ? '' : 's'}.`);
       await loadPhase2();
     } catch (e: any) {
-      setErr(e.message ?? 'Could not import budget - only CSV files are supported (no XLSX parser is available in this build).');
+      setErr(e.message ?? 'Could not import budget.');
     } finally {
       setBusy(false);
     }
@@ -505,10 +537,10 @@ export default function Blueprint() {
 
           <div className="card" style={{ padding: 0, marginBottom: 16 }}>
             <table>
-              <thead><tr><th></th><th>File</th><th>Category</th><th>Discipline</th><th>Confidence</th><th></th><th>Revision</th></tr></thead>
+              <thead><tr><th></th><th>File</th><th>Category</th><th>Discipline</th><th>Confidence</th><th></th><th>Content</th><th>Revision</th></tr></thead>
               <tbody>
                 {documents.length === 0 ? (
-                  <tr><td colSpan={7} className="note" style={{ padding: 12 }}>No documents uploaded yet.</td></tr>
+                  <tr><td colSpan={8} className="note" style={{ padding: 12 }}>No documents uploaded yet.</td></tr>
                 ) : documents.map((d) => (
                   <tr key={d.id}>
                     <td><input type="checkbox" checked={selectedDocIds.has(d.id)} onChange={() => toggleDocSelected(d.id)} title="Select for a new addendum" /></td>
@@ -522,8 +554,17 @@ export default function Blueprint() {
                       </select>
                     </td>
                     <td className="note">{d.discipline?.replace(/_/g, ' ') ?? '-'}</td>
-                    <td><span className={`badge ${d.classification_confidence === 'medium' ? 'b-amber' : 'b-neutral'}`}>{d.classification_confidence ?? '-'}</span></td>
+                    <td><span className={`badge ${d.classification_confidence === 'high' ? 'b-green' : d.classification_confidence === 'medium' ? 'b-amber' : 'b-neutral'}`}>{d.classification_confidence ?? '-'}</span></td>
                     <td className="note">{d.processing_status}</td>
+                    <td>
+                      {d.extraction_method && d.extraction_method !== 'none' && d.extraction_method !== 'failed' ? (
+                        <span className="badge b-green" title={d.extracted_text ?? ''}>{d.extraction_method.replace(/_/g, ' ')}</span>
+                      ) : (
+                        <button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} disabled={busy} onClick={() => extractContentFor(d.id)} title={d.extraction_error ?? ''}>
+                          Extract content
+                        </button>
+                      )}
+                    </td>
                     <td>
                       {revisionSuggestions[d.id] === undefined ? (
                         <button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => checkRevisionSuggestions(d.id)}>Check for revision of…</button>
@@ -640,15 +681,14 @@ export default function Blueprint() {
             )}
           </div>
 
-          {/* Budget import (CSV only) and reconciliation */}
+          {/* Budget import (CSV or XLSX) and reconciliation */}
           <div className="card" style={{ marginBottom: 16 }}>
-            <div className="note" style={{ fontWeight: 700, marginBottom: 8 }}>Budget import (CSV)</div>
+            <div className="note" style={{ fontWeight: 700, marginBottom: 8 }}>Budget import (CSV or XLSX)</div>
             <div className="note" style={{ fontSize: 12, marginBottom: 8 }}>
-              Only CSV is supported - this build has no spreadsheet-parsing library, so an XLSX file will be rejected
-              rather than silently misread. Each row is matched to an existing package by keyword overlap; nothing
-              is applied without you being able to see and change the match.
+              The legacy .xls format is not supported - re-save as .xlsx or .csv. Each row is matched to an existing
+              package by keyword overlap; nothing is applied without you being able to see and change the match.
             </div>
-            <input type="file" accept=".csv,text/csv" onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadBudgetCsv(f); e.target.value = ''; }} disabled={busy} />
+            <input type="file" accept=".csv,text/csv,.xlsx" onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadBudgetFile(f); e.target.value = ''; }} disabled={busy} />
             {budgetImports.length > 0 && (
               <div style={{ marginTop: 10 }}>
                 <span className="note">Previous imports: </span>

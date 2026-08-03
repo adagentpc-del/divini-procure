@@ -6,6 +6,116 @@ the Authentik/Supabase era and does not reflect Monetization V2.)
 
 ---
 
+## 2026-08-03 (11) - Real content extraction: PDF text, OCR, DXF entities, safe XLSX
+
+**What.** A genuine capability upgrade, not just another filename-based
+slice: for the file types that need NO external service or API key, Divini
+Blueprint now actually reads document content instead of only guessing
+from filenames. This directly answers the request to build everything
+possible before the remaining backend service variables (a CAD conversion
+service, self-hosted OCR infrastructure, etc) are available - three of the
+four previously-deferred capabilities turned out to need no such variable
+at all, just an open-source library.
+
+- **Real PDF text extraction** (`server/src/lib/text-extraction.ts`, using
+  `pdf-parse` v2, Apache-2.0) - opens the file and reads its actual text
+  layer. A PDF with no real text layer (a scan) correctly returns null
+  rather than reporting false success, so callers fall back to OCR instead
+  of trusting empty/garbage text.
+- **Real OCR** (`server/src/lib/ocr.ts`, using `tesseract.js`, Apache-2.0,
+  wrapping the open-source Tesseract engine, also Apache-2.0) - runs
+  entirely in this Node process via WASM. On a scanned PDF with no text
+  layer, `extract-content` renders page 1 to PNG (`pdf-parse`'s
+  `getScreenshot`) and OCRs that. Results below Tesseract's own confidence
+  threshold are discarded rather than surfaced as noise.
+- **Real DXF parsing** (`server/src/lib/dxf-extraction.ts`, using
+  `dxf-parser`, MIT) - DXF is CAD's plain-text exchange format, so unlike
+  DWG/RVT/IFC it never needed a conversion service. Extracts real layer
+  names and TEXT/MTEXT entity strings - a drawing's actual title-block text
+  ("A1.01 FLOOR PLAN") is now readable, not guessed from the filename.
+- **`classifyFromContent()`** (`server/src/lib/document-classifier.ts`,
+  new, alongside the unchanged filename-only `classifyDocument()`): runs
+  the same keyword rules against real extracted text and returns "high"
+  confidence on a match - the first time anything in Divini Blueprint has
+  honestly earned that confidence level, because it is grounded in actual
+  content rather than a filename guess. `POST /blueprint/documents/:id/extract-content`
+  wires this together: extract by file type, store the result, reclassify
+  at high confidence if a rule matches, and never touch a document a user
+  already manually corrected.
+- **Real XLSX budget import** (`server/src/lib/xlsx-extraction.ts`, using
+  `exceljs`, MIT) - deliberately NOT the npm `xlsx` (SheetJS) package: its
+  published registry version carries an unpatched HIGH-severity prototype-
+  pollution/ReDoS advisory (GHSA-4r6h-8v6p-xvw6), unacceptable for a parser
+  that runs directly on untrusted uploaded files. `exceljs` does pull a
+  moderate-severity transitive `uuid` advisory (GHSA-w5hq-g745-h8pq, buffer
+  bounds check when an attacker-controlled buffer is passed to UUID
+  generation - not something exceljs's own file-reading code path does) with
+  no clean non-breaking fix available upstream at the time of writing; this
+  was judged an acceptable tradeoff against the alternative's much more
+  directly exploitable advisory, but is worth monitoring for an exceljs
+  update. `POST /blueprint/budget-imports` now accepts either `csvText`
+  (unchanged) or a `documentId` (an already-uploaded file, dispatched by
+  real extension) - XLS (the old binary Excel format) is explicitly
+  rejected with a clear message rather than silently mishandled.
+- **CAD conversion provider adapter** (`server/src/lib/cad-conversion.ts`)
+  - the piece that genuinely CANNOT be built without an external service:
+  DWG/RVT/IFC are binary, proprietary formats. This is the same kind of
+  pluggable seam as `lib/llm.ts`: reads `CAD_CONVERSION_PROVIDER` +
+  provider-specific variables, `cadConversionEnabled()` is false with none
+  configured, and `convertCadFile()` honestly reports "not yet implemented"
+  even when a provider is selected - this is scaffolding for the next step,
+  not a working integration, since building a real client blind (especially
+  Autodesk APS's OAuth + job-polling flow) without real credentials to test
+  against would risk shipping broken code with false confidence.
+- **A runtime-vs-typecheck pitfall caught and fixed for BOTH `dxf-parser`
+  and `exceljs`**: both packages typecheck fine with a named import
+  (`import { X } from "pkg"`), but this project's test runner
+  (`node --experimental-strip-types`) strips only type annotations and does
+  not rewrite import specifiers - so a named import that only works via
+  TypeScript's CJS interop synthesis fails at actual runtime with
+  "Named export not found". Caught by literally running the code (not just
+  typechecking) before writing tests, and fixed with default-import +
+  destructure, matching Node's own documented workaround. Every new
+  extraction module was runtime-verified this way before its tests were
+  written, not just typechecked.
+- **A live OCR test was written, hung on a network fetch for Tesseract's
+  language data, and was deliberately removed** rather than shipped: this
+  sandbox cannot reliably reach tesseract.js's CDN, and a test that can
+  hang indefinitely is worse than no test. OCR's contract (garbage input
+  never throws) is covered where it does not require network access; a
+  real "recognizes real text" test needs an environment with that access.
+
+**Files.** `db/schema-blueprint-content-extraction.sql` (new, synced into
+`db/apply-all.sql`), `server/src/lib/text-extraction.ts`,
+`server/src/lib/ocr.ts`, `server/src/lib/dxf-extraction.ts`,
+`server/src/lib/xlsx-extraction.ts`, `server/src/lib/cad-conversion.ts`,
+`server/src/lib/document-classifier.ts` (extended),
+`server/src/routes/blueprint.ts` (extended: extract-content endpoint),
+`server/src/routes/blueprint-phase2.ts` (extended: XLSX budget import),
+`src/pages/Blueprint.tsx` (extended: Extract content action, XLSX upload),
+`server/package.json` / `server/package-lock.json` (new dependencies:
+`pdf-parse`, `tesseract.js`, `dxf-parser`, `exceljs` - deliberately NOT
+`xlsx`), `tests/dxf-extraction.test.ts` (6), `tests/xlsx-extraction.test.ts`
+(5), `tests/text-extraction.test.ts` (3), `tests/cad-conversion.test.ts`
+(2), plus 4 new tests in `tests/document-classifier.test.ts` for
+`classifyFromContent()`.
+
+**Tests completed.** 20 new unit tests, full suite 163/163 passing. Both
+server and SPA typecheck clean. Every new library integration was verified
+against the REAL test runner (`node --experimental-strip-types`, not just
+`tsc` or `tsx`) before being trusted, which is what surfaced the dxf-
+parser/exceljs import pitfall above. PDF text extraction and DXF parsing
+were manually round-trip verified (a hand-crafted minimal DXF fixture for
+DXF; a hand-crafted minimal PDF for the "garbage input returns null" path -
+a byte-perfect success-path PDF fixture proved impractical to hand-craft
+and was not force-fit into the suite; see `tests/text-extraction.test.ts`'s
+own scope note). XLSX extraction was round-tripped with `exceljs` writing
+its own test fixtures in memory. OCR's language-data download could not be
+verified in this sandbox (no reliable network access to the CDN at test
+time) - this is a real, disclosed gap, not a hidden one.
+
+---
+
 ## 2026-08-03 (10) - Divini Blueprint Phase 2: CSI divisions, budget import, quantities, inline preview
 
 **What.** The remaining pieces of the CAD/Drawing/Plan/Specification/Bid
