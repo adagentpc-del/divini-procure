@@ -4712,3 +4712,11 @@ COMMIT;
 -- was added. Found via a from-scratch apply-all.sql + real server
 -- bootstrap test; see AI_PROJECT_OS/13_CHANGELOG.md.
 \i db/schema-consent-and-audit.sql
+
+-- Server-side session tracking (real logout revocation). Also never spliced
+-- in at all - every login/register/verify that reaches createSession()
+-- (server/src/db.ts) failed with "relation user_sessions does not exist"
+-- on a fresh database. Its user_id column was also declared uuid, but
+-- users.id is text (native email/password auth, not a UUID scheme) -
+-- fixed in db/schema-sessions.sql itself before splicing in here.
+\i db/schema-sessions.sql
