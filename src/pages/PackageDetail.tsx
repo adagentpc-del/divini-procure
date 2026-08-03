@@ -187,7 +187,7 @@ export default function PackageDetail() {
         <div>
           <a className="note" style={{ cursor: 'pointer' }} onClick={() => nav(isOwner ? '/building/' + p.building.id : '/search')}>← Back</a>
           <h1>{p.category}</h1>
-          <div className="sub">{p.building?.name} · {p.building?.location ?? ''} · <span className="badge b-neutral">{p.status}</span>{p.deadline ? ` · due ${p.deadline}` : ''}</div>
+          <div className="sub">{p.building?.name} · {p.building?.location ?? ''} · <span className="badge b-neutral">{p.status}</span>{p.deadline ? ` · due ${new Date(p.deadline).toLocaleDateString()}` : ''}</div>
         </div>
         {isOwner && (
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>

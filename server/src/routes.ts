@@ -176,7 +176,7 @@ router.use(feeMatrixRouter);
 router.use(vendorPricingRouter);
 router.use(featuredRouter);
 // ---- Wave B: award->PO->payment-auth, change orders, products, vendor import
-router.use(awardWorkflowRouter);
+router.use("/award", awardWorkflowRouter);
 router.use(changeOrdersRouter);
 router.use(productsRouter);
 router.use(vendorImportRouter);

@@ -30,7 +30,16 @@ export default function DocumentPanel({ packageId, buildingId, canUpload }: { pa
   const [previewDoc, setPreviewDoc] = useState<any>(null);
   const [previewUrl, setPreviewUrl] = useState('');
 
-  async function load() { setDocs(await getDocuments({ packageId, buildingId })); }
+  async function load() {
+    try {
+      setDocs(await getDocuments({ packageId, buildingId }));
+    } catch {
+      // A vendor browsing an open marketplace package they are not yet a
+      // party to (no bid, no invite) legitimately gets a 403 here - that is
+      // not an error condition for this component, just "nothing to show."
+      setDocs([]);
+    }
+  }
   useEffect(() => { load(); }, [packageId, buildingId]);
 
   async function onFiles(files: FileList | null) {

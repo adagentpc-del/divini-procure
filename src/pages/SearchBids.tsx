@@ -55,7 +55,7 @@ export default function SearchBids() {
                   <td>{r.category}</td>
                   <td>{r.building?.developer ?? '-'}</td>
                   <td>{r.building?.location ?? '-'}</td>
-                  <td>{r.deadline ?? '-'}</td>
+                  <td>{r.deadline ? new Date(r.deadline).toLocaleDateString() : '-'}</td>
                 </tr>
               ))}
           </tbody>

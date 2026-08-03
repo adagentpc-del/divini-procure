@@ -81,7 +81,7 @@ export default function BuildingDetail() {
                   <td><strong>{p.category}</strong></td>
                   <td><span className="badge b-neutral">{p.status}</span></td>
                   <td>{p.budget_min || p.budget_max ? `$${Number(p.budget_min || 0).toLocaleString()}–$${Number(p.budget_max || 0).toLocaleString()}` : '-'}</td>
-                  <td>{p.deadline ?? '-'}</td>
+                  <td>{p.deadline ? new Date(p.deadline).toLocaleDateString() : '-'}</td>
                 </tr>
               ))}
           </tbody>
