@@ -34,7 +34,7 @@ type PayoutMethod = 'wire' | 'ach' | 'check' | 'zelle' | 'paypal';
 // Step 1 — Agreement
 // ---------------------------------------------------------------------------
 function AgreementStep({ onSigned }: { onSigned: () => void }) {
-  const toast = useToast();
+  const { toast } = useToast();
   const [data, setData] = useState<AgreementData | null>(null);
   const [loading, setLoading] = useState(true);
   const [signedName, setSignedName] = useState('');
@@ -76,7 +76,7 @@ function AgreementStep({ onSigned }: { onSigned: () => void }) {
     }
     setSubmitting(true);
     try {
-      await apiSend('/partner/onboarding/agreement/sign', { signedName });
+      await apiSend('POST', '/partner/onboarding/agreement/sign', { signedName });
       toast('Agreement signed. Thank you!', 'success');
       onSigned();
     } catch (e: unknown) {
@@ -156,7 +156,7 @@ function AgreementStep({ onSigned }: { onSigned: () => void }) {
 // Step 2 — Banking
 // ---------------------------------------------------------------------------
 function BankingStep({ onSubmitted }: { onSubmitted: () => void }) {
-  const toast = useToast();
+  const { toast } = useToast();
   const [existing, setExisting] = useState<Record<string, string | boolean | null> | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -203,7 +203,7 @@ function BankingStep({ onSubmitted }: { onSubmitted: () => void }) {
   const handleSubmit = async () => {
     setSubmitting(true);
     try {
-      await apiSend('/partner/onboarding/banking', {
+      await apiSend('POST', '/partner/onboarding/banking', {
         payoutMethod: method,
         beneficiaryName,
         bankName,
@@ -388,7 +388,7 @@ function CompleteStep({ verified }: { verified: boolean }) {
 export default function PartnerOnboarding() {
   const [status, setStatus] = useState<OnboardingStatus | null>(null);
   const [loading, setLoading] = useState(true);
-  const toast = useToast();
+  const { toast } = useToast();
   const nav = useNavigate();
 
   const load = () => {
