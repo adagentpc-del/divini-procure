@@ -20,6 +20,7 @@ const BUYER_SECTIONS: Section[] = [
   { label: 'Quick Actions', items: [
     ['/app',      'Dashboard',        '▦'],
     ['/projects', 'Projects',         '▣'],
+    ['/blueprint', 'Divini Blueprint', '⌂'],
     ['/app/marketplace', 'Find Vendors', '⌕'],
     ['/pipeline', 'Divini Pipeline',  '☰'],
     ['/follow-up-desk', 'Divini Follow-Up Desk', '⏰'],

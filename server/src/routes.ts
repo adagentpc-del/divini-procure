@@ -86,6 +86,7 @@ import pipelineRouter from "./routes/pipeline.js";
 import scopeBuilderRouter from "./routes/scope-builder.js";
 import bidStudioRouter from "./routes/bid-studio.js";
 import followUpRouter from "./routes/follow-up.js";
+import blueprintRouter from "./routes/blueprint.js";
 import teasersProfilesRouter from "./routes/teasers-profiles.js";
 import incentivesRouter from "./routes/incentives.js";
 import profileCollateralRouter from "./routes/profile-collateral.js";
@@ -190,6 +191,8 @@ router.use("/scope", scopeBuilderRouter);
 router.use("/bid-studio", bidStudioRouter);
 // ---- Divini Follow-Up Desk: rules-based reminder/workflow engine ----------
 router.use("/follow-up", followUpRouter);
+// ---- Divini Blueprint: document classification + trade suggestions -------
+router.use("/blueprint", blueprintRouter);
 router.use(teasersProfilesRouter);
 router.use("/incentives", incentivesRouter);
 router.use(profileCollateralRouter);

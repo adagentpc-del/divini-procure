@@ -6,6 +6,89 @@ the Authentik/Supabase era and does not reflect Monetization V2.)
 
 ---
 
+## 2026-08-03 (7) - Divini Blueprint (Slice 5, folding in the CAD/Drawing/Plan/Spec/Bid Intelligence spec)
+
+**What.** A document-intelligence module answering the "CAD, Drawing, Plan,
+Specification, and Bid Intelligence" master spec, scoped honestly to what
+this codebase can actually do. It classifies every uploaded project
+document, suggests likely trade bid packages from that classification, and
+optionally drafts a narrative project-summary from an LLM if one is
+configured - then lets the user turn accepted suggestions into a real
+Divini Scope Builder scope, a real bid package, or a real Divini Pipeline
+opportunity. Nothing is ever auto-published; every suggestion requires an
+explicit user action to become a real record.
+
+- **Honesty boundary, load-bearing for this whole slice**: this codebase
+  has no PDF-parsing, OCR, or CAD-conversion library (confirmed by grep and
+  package.json before writing a line of this). The spec calls for reading
+  DWG/IFC/RVT content, extracting square footage from drawings, indexing
+  sheet numbers, etc. - none of that is technically possible here without
+  a third-party conversion/parsing service this deployment doesn't have.
+  Rather than fabricate that capability, `document-classifier.ts`
+  classifies by **filename and extension only** and is contractually
+  incapable of returning "high" confidence anywhere in the module (tested
+  explicitly). The optional AI-summary step never receives file bytes,
+  only classification counts and text the user typed themselves, and its
+  system prompt explicitly forbids inventing quantities, dimensions, or
+  material choices. Every summary field carries its own confidence
+  (high/medium/low/`manual_confirmation_required`) and source note; the
+  required disclaimer ("AI-generated preliminary project information...")
+  is returned by the API and rendered verbatim in the UI.
+- **Extends, does not duplicate**: uploads reuse the existing
+  `POST /api/documents` endpoint (multer, extension/MIME allowlists,
+  path-traversal-safe storage keys, pluggable local/S3 storage) - this
+  slice only adds classification columns and review workflow on top.
+  Accepted trade suggestions create rows in the *existing* `packages`,
+  `scope_instances`, and `pipeline_opportunities` tables (Divini Scope
+  Builder / Divini Pipeline integration points), not new parallel tables.
+- **Deterministic trade suggestion engine** (`server/src/lib/trade-suggester.ts`,
+  pure, 8 tests): a fixed discipline-to-trade lookup (e.g. `structural` ->
+  both Concrete and Structural Steel), confidence capped at medium (2+
+  supporting documents) or low (1), sorted by supporting-document count.
+- **Review-before-create gate**: `POST /trade-suggestions/:id/create-package`
+  and `.../create-scope` both require `status === 'accepted'` first and
+  reject a second create against the same suggestion - mirrors the
+  draft-only-editable / explicit-approval pattern used everywhere else in
+  this build.
+- Covers Phase 1 of the spec's own implementation-priority section (secure
+  upload, classification, trade detection, draft bid-package generation,
+  editing, with marketplace publishing/scheduling/urgency deferred - see
+  below). Phase 2/3 items (specification/CSI-division indexing, CAD
+  viewer, budget import/reconciliation, quantity takeoffs, revision and
+  addendum workflow, scheduled/urgent marketplace publication, vendor
+  matching) are **not built in this slice** and would need their own pass;
+  none of them are safe to fake without either a real parsing/CAD service
+  or an explicit decision to keep them manual-entry-only.
+
+**Files.** `db/schema-blueprint.sql` (new, synced into `db/apply-all.sql`
+after scope-builder/bid-studio/follow-up-desk and before award-workflow,
+since it references `packages` and `scope_instances`),
+`server/src/lib/document-classifier.ts`, `server/src/lib/trade-suggester.ts`,
+`server/src/routes/blueprint.ts` (mounted at `/api/blueprint` in
+`server/src/routes.ts`), `src/pages/Blueprint.tsx`, nav entry in
+`src/components/Shell.tsx` (buyer Quick Actions), route in `src/App.tsx`,
+`tests/document-classifier.test.ts` (10 tests), `tests/trade-suggester.test.ts`
+(8 tests).
+
+**Permissions.** A document/run/suggestion belongs to exactly one
+`organization_id` (via the linked building's `company_id`); access =
+member of that company, or admin - the same single-owner model used by
+Pipeline, Scope Builder, Bid Studio, and Follow-Up Desk.
+
+**Tests completed.** 18 new unit tests (10 classifier + 8 suggester), all
+pure with no DB, all passing; full suite is 99/99. Both server and SPA
+typecheck clean (the SPA's pre-existing `PartnerOnboarding.tsx` errors are
+unrelated to this change, confirmed via `git log` on that file predating
+this session). Self-review re-read of `blueprint.ts` was performed
+specifically checking every SQL column reference against the actual table
+definitions (`documents`, `buildings`, `packages`, `scope_instances`,
+`pipeline_opportunities`, `pipeline_stage_history`) - no bugs found this
+pass. **Not tested against a live database or in a browser** - same
+sandbox limitation as every prior slice this session (no Docker, no
+`DATABASE_URL`, nothing listening on 5432/5433).
+
+---
+
 ## 2026-08-03 (6) - Divini Follow-Up Desk (Slice 4 of the Divini deterministic business tools)
 
 **What.** A rules-based reminder/workflow engine covering the highest-value
