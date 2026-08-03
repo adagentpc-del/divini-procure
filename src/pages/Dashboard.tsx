@@ -163,7 +163,7 @@ function CurrentWork() {
 // Success-fee summary for a vendor (owed / paid). Tolerant of a missing endpoint.
 type FeeSummary = { owedCents?: number; paidCents?: number };
 
-function VendorMonetizationTiles() {
+function VendorMonetizationTiles({ companyId }: { companyId: string }) {
   const nav = useNavigate();
   const [credits, setCredits] = useState<BidCredits | null>(null);
   const [verif, setVerif] = useState<Verification | null>(null);
@@ -174,7 +174,7 @@ function VendorMonetizationTiles() {
   const [msg, setMsg] = useState('');
 
   async function load() {
-    const [c, v] = await Promise.all([getBidCredits(), getVerification()]);
+    const [c, v] = await Promise.all([getBidCredits(companyId), getVerification(companyId)]);
     setCredits(c);
     setVerif(v);
     try {
@@ -183,7 +183,7 @@ function VendorMonetizationTiles() {
     } catch { /* non-blocking */ }
     setLoaded(true);
   }
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [companyId]);
 
   async function upgrade() {
     setUpgrading(true); setMsg('');
@@ -449,7 +449,7 @@ export default function Dashboard() {
 
       {isBuyer
         ? <DeveloperVendorTiles companyId={company.id} />
-        : <VendorMonetizationTiles />}
+        : <VendorMonetizationTiles companyId={company.id} />}
 
       <div className="sectitle">Getting started</div>
       <div className="card">

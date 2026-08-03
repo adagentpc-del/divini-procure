@@ -63,9 +63,9 @@ export const INFRASTRUCTURE_FEE_CAP_LABEL = '$1,500';
  * if the endpoint is unavailable (V2 not active / older server), which callers
  * treat as "do not gate".
  */
-export async function getBidCredits(): Promise<BidCredits | null> {
+export async function getBidCredits(companyId: string): Promise<BidCredits | null> {
   try {
-    const d = await apiGet<BidCredits>('/me/bid-credits');
+    const d = await apiGet<BidCredits>(`/me/bid-credits?companyId=${encodeURIComponent(companyId)}`);
     if (!d || typeof d.remaining !== 'number') return null;
     return d;
   } catch {
@@ -77,9 +77,9 @@ export async function getBidCredits(): Promise<BidCredits | null> {
  * Read the signed-in vendor's verification status. Returns null if the endpoint
  * is unavailable, which callers treat as "verification gating is off".
  */
-export async function getVerification(): Promise<Verification | null> {
+export async function getVerification(companyId: string): Promise<Verification | null> {
   try {
-    const d = await apiGet<Verification>('/me/verification');
+    const d = await apiGet<Verification>(`/me/verification?companyId=${encodeURIComponent(companyId)}`);
     if (!d || typeof d.status !== 'string') return null;
     return {
       status: d.status,

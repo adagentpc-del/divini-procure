@@ -14,6 +14,29 @@ function readInviteEmail(): string {
   }
 }
 
+// Carry a ?role=/&tier= hint on the register URL through to /onboarding
+// (which reads localStorage, since email verification can happen minutes or
+// days later, possibly in a different tab or on a different device - a query
+// param would not survive that gap). Pricing.tsx's buttons already stash
+// these before navigating here, so this only matters for someone who lands
+// directly on /register?role=vendor (a bookmark, a marketing link, a
+// different device than the one they'll verify on) - without it the role
+// hint was silently dropped and everyone defaulted to "buyer" on
+// /onboarding with no indication their original choice was lost.
+function stashRoleAndTierHints(): void {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const role = params.get('role');
+    if (role) localStorage.setItem('procure_onboard_role', role);
+    const tier = params.get('tier');
+    if (tier) localStorage.setItem('procure_onboard_tier', tier);
+  } catch {
+    /* localStorage unavailable (private browsing) - /onboarding's own
+       ?role= query-param fallback still covers a same-tab, same-session
+       verification click. */
+  }
+}
+
 export default function Register() {
   const { createAccount, resendVerification } = useAuth();
   const [email, setEmail] = useState('');
@@ -30,6 +53,7 @@ export default function Register() {
   useEffect(() => {
     const e = readInviteEmail();
     if (e) setEmail(e);
+    stashRoleAndTierHints();
   }, []);
 
   async function submit(e: React.FormEvent) {

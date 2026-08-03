@@ -129,8 +129,8 @@ export default function PackageDetail() {
 
   // Vendor-only: load bid credits + verification status (tolerate absence).
   async function loadEntitlements() {
-    if (company?.kind !== 'vendor') return;
-    const [c, v] = await Promise.all([getBidCredits(), getVerification()]);
+    if (company?.kind !== 'vendor' || !company.id) return;
+    const [c, v] = await Promise.all([getBidCredits(company.id), getVerification(company.id)]);
     setCredits(c);
     setVerif(v);
   }
