@@ -34,6 +34,7 @@ const BUYER_SECTIONS: Section[] = [
   ]},
   { label: 'Procurement', items: [
     ['/project-templates', 'Templates',         '▤'],
+    ['/scope-builder',     'Divini Scope Builder', '▧'],
     ['/change-orders',     'Change Orders',     '⇄'],
     ['/products',          'Products',          '◳'],
     ['/vendor-pricing',    'Vendor Pricing',    '$'],

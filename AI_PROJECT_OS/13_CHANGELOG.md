@@ -6,6 +6,73 @@ the Authentik/Supabase era and does not reflect Monetization V2.)
 
 ---
 
+## 2026-08-03 (4) - Divini Scope Builder (Slice 2 of the Divini deterministic business tools)
+
+**What.** Structured, trade-specific requirement definitions for a bid
+package - typed fields (text/number/quantity/date/boolean/select/multiselect)
+from a reusable template, not a free-text blob. Five global default templates
+seeded (electrical, plumbing, HVAC, concrete, general labor), each with a
+handful of trade-specific fields (e.g. electrical: square footage, panel
+amperage, circuit count, permit-pulled-by); an organization can define its
+own custom template via `POST /scope/templates`.
+
+- Every scope carries six standard narrative sections that apply regardless
+  of trade: site conditions, access restrictions, delivery requirements,
+  install requirements, exclusions (list), acceptance criteria (list), and
+  change-order rules.
+- **Deterministic completeness score** (`server/src/lib/scope-completeness.ts`,
+  pure, zero IO, 8 tests): required template fields answered count for 40 of
+  100 points (proportional), the six standard sections split the remaining
+  60. Never a gate on publishing - informational only, shown with its
+  positives/missing breakdown, per spec requirement 6 ("never make binding
+  decisions for the user").
+- **Publishing takes an immutable snapshot** (`scope_versions`, one row per
+  publish/republish, never updated) and syncs the scope into
+  `packages.requirements` (text[]) as readable lines - the first real writer
+  of that column, which `server/src/routes/intel.ts`'s vendor-package
+  matching already reads. This is the "publish scope into the RFP" step from
+  the spec, scoped to what already exists (package requirements) rather than
+  inventing a new RFP/contract document type.
+- `scope_change_events` is an append-only log (created/field_updated/
+  published/republished/archived) - the audit trail for what changed and
+  when.
+
+**Files.** `db/schema-scope-builder.sql` (new, synced into `db/apply-all.sql`),
+`server/src/lib/scope-completeness.ts`, `server/src/routes/scope-builder.ts`
+(mounted at `/api/scope`), `src/pages/ScopeBuilder.tsx`, nav entry in
+`src/components/Shell.tsx` (buyer Procurement section only - this is a
+developer/procurement-side tool), route in `src/App.tsx`,
+`tests/scope-completeness.test.ts` (8 new tests, all pure - no DB).
+
+**A real bug caught in self-review, fixed before commit.** The first draft of
+the `PATCH /scope/instances/:id` route passed JS arrays (`exclusions`,
+`acceptanceCriteria`) straight into a parameterized query bound to a
+`text[]` column with no explicit cast and no input normalization. Found the
+existing precedent in `server/src/routes/products.ts` (`toTextArray()` +
+explicit `::text[]` casts) and matched it - added the same helper and casts
+here and in the `packages.requirements` write.
+
+**Permissions.** Same model as Divini Pipeline: a `scope_instance` belongs to
+exactly one `organization_id`; access = member of that company, or admin.
+Global templates (`organization_id` null) are readable by any signed-in
+user; an org's own custom templates are scoped to its members.
+
+**Tests completed.** Unit tests only (8, all passing) for the pure
+completeness function. Server and SPA typecheck clean. **Not tested against
+a live database or in a browser** - same sandbox limitation as Divini
+Pipeline (no Docker, no `DATABASE_URL`, nothing on 5432/5433). Verified by
+careful manual read of the SQL and route logic only; still needs a real
+`apply-all.sql` run + UI smoke test.
+
+**Deferred.** Slice 3 (Divini Bid Studio), Slice 4 (Divini Follow-Up Desk),
+Slice 5 (Divini Profit Map). No entitlement gating yet (every org gets
+unlimited custom templates and scopes). The "publish into quote request /
+proposal / contract" steps beyond `packages.requirements` are not built -
+Bid Studio (Slice 3) is where a scope would actually flow into a vendor-
+facing bid form.
+
+---
+
 ## 2026-08-03 (3) - Divini Pipeline (Slice 1 of the Divini deterministic business tools spec)
 
 **What.** First build from the "Divini deterministic business tools" spec
