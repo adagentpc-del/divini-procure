@@ -6,6 +6,109 @@ the Authentik/Supabase era and does not reflect Monetization V2.)
 
 ---
 
+## 2026-08-03 (16) - Full launch-readiness audit: found by actually running the app
+
+**What.** A "full audit — copy, functionality, everything" request, done by
+actually exercising the app rather than re-reading code: dropped and
+recreated a local Postgres database from `db/apply-all.sql`, built and
+started the real compiled server against it, and drove real browser
+sessions (Playwright) through registration, email verification, the full
+3-step onboarding, and the dashboard for both buyer and vendor company
+kinds. This is the first time this session (and evidence suggests possibly
+ever) that path was exercised end to end rather than validated only by
+typecheck and the unit test suite.
+
+**Findings, in the order they were hit, all fixed and re-verified:**
+
+1. **`npm run build` failed outright.** It's `tsc && vite build`; ten
+   pre-existing `PartnerOnboarding.tsx` typecheck errors (noted every prior
+   entry this session as "unrelated") in fact blocked the production
+   bundle from ever being produced. Real bugs, not noise: `useToast()`
+   returns an object, not a callable function, and two `apiSend()` calls
+   omitted the required HTTP-method argument.
+2. **`db/apply-all.sql` could not bootstrap a fresh database at all** - 23
+   errors. Splice-ordering bugs (a table referenced before the file that
+   creates it) plus, more seriously, **13 entire schema-*.sql files that
+   were never included in the combined file in the first place**,
+   including the Florida E-SIGN Act consent columns on `users` (breaking
+   registration itself), `user_sessions` (breaking email verification),
+   and the tables backing Stripe billing, CAN-SPAM unsubscribe, COI
+   tracking, Dispute Center, Lender Portal, and Retainage - each a fully
+   routed, completely broken feature. Two type-mismatch bugs found and
+   fixed along the way (`uuid` vs `text` FK columns in two directions).
+   Verified: 0 errors, 159 tables (was 146), on a from-scratch reapply.
+3. **The server crashed on every real startup** (not caught by
+   `tsc --noEmit`, which never actually runs the module graph): a circular
+   import between `db.ts` and `lib/entitlement-guard.ts` hit a JS
+   temporal-dead-zone error the instant a class tried to extend another
+   class before it had finished being defined. Fixed by extracting the
+   shared error classes into a new dependency-free `lib/errors.ts`.
+4. **The registration form silently failed to submit, three different
+   ways, stacked on top of each other**: the cookie-consent banner
+   overlapped and blocked the submit button (confirmed via Playwright's
+   actionability check, not just a visual read); an anti-bot timing gate
+   silently rejected any submission within 1.5 seconds of page render with
+   zero user feedback (breaks browser-autofill users, a completely
+   ordinary flow); and the CSP didn't allowlist the Google Fonts domains,
+   so the branded typography used on every page had been silently falling
+   back to system fonts in every real browser, all session.
+5. **Vendor signups via a direct `/register?role=vendor` link silently
+   became buyer accounts** - Register.tsx never read or forwarded the
+   `?role=` hint (only Pricing.tsx's own buttons stash it to localStorage
+   first). Fixed by stashing the hint on mount in Register.tsx too.
+6. **The vendor dashboard never showed real bid-credit or verification
+   status** - both reads omitted the `companyId` the backend requires,
+   silently swallowed by design ("fail open, don't block the UI"). Not a
+   security hole (the real bid-submission endpoint enforces both
+   independently, confirmed server-side) but a real, invisible UX gap.
+7. **Investigated and deliberately left unfixed, documented instead**:
+   `db/schema-rls.sql` defines real Postgres Row-Level Security policies,
+   but the app never calls the `set_config('app.user_id', ...)` they
+   require, and the file never enables RLS either - including it would
+   create false confidence in protection that doesn't exist. Left out of
+   the bootstrap file for a deliberate follow-up pass instead.
+
+**Copy.** No new full pass - the two earlier passes this session (entries
+13 and 14) already covered the site broadly. This pass added: a scan for
+leftover placeholder/TODO text (none found) and a static-link check (no
+orphaned routes found), plus live confirmation that onboarding, dashboard,
+and vendor-agreement copy all render correctly against the now-fixed real
+app.
+
+**Conversion rate benchmark.** No live traffic exists yet, so this is a
+structural assessment against public SaaS/marketplace CRO benchmarks, not
+a measurement - delivered as a published report (see Deliverable) rather
+than a fabricated number. Overall structural read: 3 of 5 - solid
+fundamentals (clear value prop, transparent pricing, lean signup form) and
+several real conversion-killing bugs just removed, with the remaining
+gap being real analytics this site doesn't have yet, not additional
+guesswork.
+
+**Deliverable.** A published report artifact (Divini Procure - Launch
+Readiness Audit) covering all of the above with severity-coded findings,
+a before/after scorecard, and the conversion-funnel benchmark table.
+
+**Files.** `src/pages/PartnerOnboarding.tsx`, `db/apply-all.sql`,
+`db/schema-scope-builder.sql`, `db/schema-follow-up-desk.sql`,
+`db/schema-quick-hits.sql`, `db/schema-sessions.sql`,
+`db/schema-stripe-billing.sql`, `server/src/db.ts`,
+`server/src/lib/errors.ts` (new), `server/src/lib/entitlement-guard.ts`,
+`server/src/app.ts`, `src/components/CookieBanner.tsx`,
+`src/pages/Register.tsx`, `src/lib/monetization.ts`,
+`src/pages/Dashboard.tsx`, `src/pages/PackageDetail.tsx`.
+
+**Tests completed.** Every fix in this entry was verified against the real
+running stack, not just typecheck/unit tests: a from-scratch database
+reapply after each schema change, a rebuilt-and-restarted server after
+each server-side change, and a fresh Playwright browser session re-run
+after each frontend change - including two full registration-through-
+dashboard runs (buyer and vendor) with zero API errors at the end. `npx
+tsc --noEmit` clean on both SPA and server (first time all session with
+zero errors, including the previously-ignored PartnerOnboarding.tsx
+ones), `npm test` 163/163 throughout.
+
+---
+
 ## 2026-08-03 (15) - Automated WCAG scan + SOC 2 readiness checklist
 
 **What.** Two follow-ups to entry (14): a proper automated accessibility
