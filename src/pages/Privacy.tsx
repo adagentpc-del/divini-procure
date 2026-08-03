@@ -9,7 +9,7 @@ export default function Privacy() {
       </div>
 
       <h1 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 36, color: '#1f3d31', marginBottom: 6 }}>Privacy Policy</h1>
-      <div style={{ color: '#6b7a72', marginBottom: 28 }}>Effective June 8, 2026 — Updated July 2026</div>
+      <div style={{ color: '#5c6b62', marginBottom: 28 }}>Effective June 8, 2026 — Updated July 2026</div>
 
       <p>
         Divini Procure ("we," "us," "our") operates a procurement marketplace that connects real estate
@@ -62,7 +62,7 @@ export default function Privacy() {
         data solely to create a starter vendor profile and to facilitate the procurement relationship
         the developer has attested to. Newly created vendor profiles are private within that developer's
         account until the vendor claims and activates their profile. Vendors may contact us at{' '}
-        <a href="mailto:privacy@diviniprocure.com" style={{ color: '#1f6f50' }}>privacy@diviniprocure.com</a>{' '}
+        <a href="mailto:privacy@diviniprocure.com" style={{ color: '#1f6f50', textDecoration: 'underline' }}>privacy@diviniprocure.com</a>{' '}
         to request removal of an imported profile.
       </p>
 
@@ -123,8 +123,8 @@ export default function Privacy() {
       </ul>
       <p>
         To exercise any of these rights, please contact us at{' '}
-        <a href="mailto:privacy@diviniprocure.com" style={{ color: '#1f6f50' }}>privacy@diviniprocure.com</a>{' '}
-        or <a href="mailto:support@diviniprocure.com" style={{ color: '#1f6f50' }}>support@diviniprocure.com</a>.
+        <a href="mailto:privacy@diviniprocure.com" style={{ color: '#1f6f50', textDecoration: 'underline' }}>privacy@diviniprocure.com</a>{' '}
+        or <a href="mailto:support@diviniprocure.com" style={{ color: '#1f6f50', textDecoration: 'underline' }}>support@diviniprocure.com</a>.
         We will respond within 45 days. We may need to verify your identity before fulfilling certain requests.
       </p>
 
@@ -146,7 +146,7 @@ export default function Privacy() {
       </ul>
       <p>
         To report a suspected security issue, please email{' '}
-        <a href="mailto:security@diviniprocure.com" style={{ color: '#1f6f50' }}>security@diviniprocure.com</a>.
+        <a href="mailto:security@diviniprocure.com" style={{ color: '#1f6f50', textDecoration: 'underline' }}>security@diviniprocure.com</a>.
       </p>
 
       {/* ------------------------------------------------------------------ */}
@@ -166,12 +166,12 @@ export default function Privacy() {
 
       <h2 style={h2}>Contact</h2>
       <p>
-        Privacy requests: <a href="mailto:privacy@diviniprocure.com" style={{ color: '#1f6f50' }}>privacy@diviniprocure.com</a><br />
-        General support: <a href="mailto:support@diviniprocure.com" style={{ color: '#1f6f50' }}>support@diviniprocure.com</a>
+        Privacy requests: <a href="mailto:privacy@diviniprocure.com" style={{ color: '#1f6f50', textDecoration: 'underline' }}>privacy@diviniprocure.com</a><br />
+        General support: <a href="mailto:support@diviniprocure.com" style={{ color: '#1f6f50', textDecoration: 'underline' }}>support@diviniprocure.com</a>
       </p>
 
       <div style={{ marginTop: 40 }}>
-        <Link to="/" style={{ color: '#1f6f50' }}>← Back to Divini Procure</Link>
+        <Link to="/" style={{ color: '#1f6f50', textDecoration: 'underline' }}>← Back to Divini Procure</Link>
       </div>
     </div>
   );

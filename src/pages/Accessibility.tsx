@@ -8,7 +8,7 @@ export default function Accessibility() {
         <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 28, fontWeight: 700, color: '#1f3d31' }}>Divini Procure</div>
       </div>
       <h1 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 36, color: '#1f3d31', marginBottom: 6 }}>Accessibility Statement</h1>
-      <div style={{ color: '#6b7a72', marginBottom: 28 }}>Effective July 1, 2026</div>
+      <div style={{ color: '#5c6b62', marginBottom: 28 }}>Effective July 1, 2026</div>
 
       <p>Divini Procure is committed to making our platform usable by everyone, including people with disabilities. We aim to conform to the Web Content Accessibility Guidelines (WCAG) 2.1 Level AA.</p>
 
@@ -19,9 +19,9 @@ export default function Accessibility() {
       <p>Accessibility is an ongoing process. We continue to test with keyboard navigation and screen readers and to remediate issues as we find them.</p>
 
       <h2 style={h2}>Feedback and accommodations</h2>
-      <p>If you encounter a barrier or need an accommodation, contact us at <a href="mailto:support@diviniprocure.com" style={{ color: '#1f6f50' }}>support@diviniprocure.com</a> and we will work to help and to fix the issue.</p>
+      <p>If you encounter a barrier or need an accommodation, contact us at <a href="mailto:support@diviniprocure.com" style={{ color: '#1f6f50', textDecoration: 'underline' }}>support@diviniprocure.com</a> and we will work to help and to fix the issue.</p>
 
-      <p style={{ marginTop: 28 }}><Link to="/" style={{ color: '#1f6f50' }}>&larr; Back to Divini Procure</Link></p>
+      <p style={{ marginTop: 28 }}><Link to="/" style={{ color: '#1f6f50', textDecoration: 'underline' }}>&larr; Back to Divini Procure</Link></p>
     </main>
   );
 }

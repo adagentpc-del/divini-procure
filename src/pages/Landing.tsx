@@ -96,7 +96,7 @@ export default function Landing() {
         .lp .mline.s{width:55%}.lp .mline.m{width:80%}.lp .mline.g{background:var(--emerald);opacity:.85}.lp .mline.c{background:var(--champagne)}
         .lp .mrow{display:flex;justify-content:space-between;align-items:center;gap:10px}
         .lp .pill{font-size:11px;font-weight:700;padding:3px 9px;border-radius:20px;background:#e7f3ec;color:#1f7a4d}
-        .lp .pill.amber{background:#fbf2dc;color:#8a6d1a}
+        .lp .pill.amber{background:#fbf2dc;color:#7a5f14}
         .lp .bars{display:flex;align-items:flex-end;gap:8px;height:90px;margin-top:8px}
         .lp .bars div{flex:1;background:var(--emerald);border-radius:6px 6px 0 0;opacity:.85}
         .lp .tl{display:flex;gap:0;margin-top:14px}
@@ -132,7 +132,7 @@ export default function Landing() {
         @keyframes show5{0%{opacity:0;transform:translateY(10px)}3%{opacity:1;transform:none}18%{opacity:1;transform:none}21%{opacity:0;transform:translateY(-10px)}100%{opacity:0}}
         @keyframes hl5{0%,21%,100%{background:transparent;color:var(--muted)}3%,18%{background:var(--ivory);color:var(--emerald-deep)}}
         @keyframes show4{0%{opacity:0;transform:translateY(10px)}4%{opacity:1;transform:none}22%{opacity:1;transform:none}26%{opacity:0;transform:translateY(-10px)}100%{opacity:0}}
-        @keyframes hl4{0%,26%,100%{background:transparent;color:var(--muted)}4%,22%{background:rgba(217,204,176,.18);color:#fff}}
+        @keyframes hl4{0%,26%,100%{background:transparent;color:var(--muted)}4%,22%{background:var(--ivory);color:var(--emerald-deep)}}
         .lp .demo.builder .dstep.on b{background:var(--emerald);color:#fff}
 
         /* ---------- FOUNDING OFFER ---------- */

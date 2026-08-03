@@ -79,8 +79,8 @@ export default function PaymentPolicy() {
 
 const wrap: React.CSSProperties = { maxWidth: 820, margin: '0 auto', padding: '48px 24px 80px', lineHeight: 1.7, color: '#1c2b25' };
 const h1: React.CSSProperties = { fontFamily: "'Cormorant Garamond', serif", fontSize: 36, color: '#1f3d31', marginBottom: 6 };
-const eff: React.CSSProperties = { color: '#6b7a72', marginBottom: 28 };
-const a: React.CSSProperties = { color: '#1f6f50' };
+const eff: React.CSSProperties = { color: '#5c6b62', marginBottom: 28 };
+const a: React.CSSProperties = { color: '#1f6f50', textDecoration: 'underline' };
 const h2: React.CSSProperties = { fontFamily: "'Cormorant Garamond', serif", fontSize: 24, color: '#1f3d31', marginTop: 30, marginBottom: 8 };
 function Brand() {
   return (

@@ -124,7 +124,7 @@ export default function PublicOpportunities() {
 
       {/* Filters */}
       <div className="po-filters">
-        <select value={assetClass} onChange={e => setAssetClass(e.target.value)}>
+        <select aria-label="Filter by asset class" value={assetClass} onChange={e => setAssetClass(e.target.value)}>
           <option value="">All asset classes</option>
           <option value="multifamily">Multifamily</option>
           <option value="commercial">Commercial</option>
@@ -138,18 +138,20 @@ export default function PublicOpportunities() {
         </select>
         <input
           type="text"
+          aria-label="Filter by location"
           placeholder="Location..."
           value={location}
           onChange={e => setLocation(e.target.value)}
         />
         <input
           type="number"
+          aria-label="Maximum minimum capital"
           placeholder="Max min. capital ($)"
           value={minInvestment}
           onChange={e => setMinInvestment(e.target.value)}
           min={0}
         />
-        <select value={investorType} onChange={e => setInvestorType(e.target.value)}>
+        <select aria-label="Filter by Capital Partner type" value={investorType} onChange={e => setInvestorType(e.target.value)}>
           <option value="">All Capital Partner types</option>
           <option value="accredited">Accredited</option>
           <option value="non_accredited">Non-accredited</option>
