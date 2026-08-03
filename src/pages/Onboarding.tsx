@@ -78,6 +78,55 @@ function toggleIn(list: string[], setList: (v: string[]) => void, v: string) {
 }
 
 // ---------------------------------------------------------------------------
+// Draft persistence — this flow requires leaving the app to verify email,
+// often on a different device or tab, and can otherwise be interrupted by
+// anything from a phone call to an accidental tab close. Without this, a
+// user who filled in step 1 and picked a plan on step 2 lost all of it and
+// had to start over from a blank step 1 on return - confirmed by actually
+// closing a tab mid-flow and reopening it. Expires after 48h so a very old
+// abandoned draft does not resurface unexpectedly for someone starting
+// fresh; the Vendor Agreement checkbox is deliberately never restored, so
+// re-affirming consent is always a fresh action.
+const DRAFT_KEY = 'procure_onboard_draft';
+const DRAFT_TTL_MS = 48 * 60 * 60 * 1000;
+
+type Draft = {
+  savedAt: number;
+  kind: Kind;
+  step: number;
+  name: string;
+  website: string;
+  assetTypes: string[];
+  services: string[];
+  focusAreas: string[];
+  selectedTierKey: string;
+  contact: string;
+  contactTitle: string;
+  phone: string;
+};
+
+function readDraft(): Draft | null {
+  try {
+    const raw = localStorage.getItem(DRAFT_KEY);
+    if (!raw) return null;
+    const d = JSON.parse(raw) as Partial<Draft>;
+    if (!d.savedAt || Date.now() - d.savedAt > DRAFT_TTL_MS) return null;
+    if (!d.name && !d.contact && (d.step ?? 0) === 0) return null; // nothing worth restoring
+    return d as Draft;
+  } catch {
+    return null;
+  }
+}
+
+function writeDraft(d: Draft): void {
+  try { localStorage.setItem(DRAFT_KEY, JSON.stringify(d)); } catch { /* private browsing */ }
+}
+
+function clearDraft(): void {
+  try { localStorage.removeItem(DRAFT_KEY); } catch { /* ignore */ }
+}
+
+// ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 export default function Onboarding() {
@@ -110,8 +159,26 @@ export default function Onboarding() {
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
 
-  // Pre-select role from URL / localStorage
+  // Resume an interrupted attempt, or pre-select role from URL / localStorage.
+  // A URL query param is a fresh, deliberate signal (e.g. clicked a specific
+  // "join as a vendor" link) and always wins over a stale saved draft.
   useEffect(() => {
+    const hasExplicitRoleParam = !!normalizeRole(new URLSearchParams(window.location.search).get('role'));
+    const draft = hasExplicitRoleParam ? null : readDraft();
+    if (draft) {
+      setKind(draft.kind);
+      setStep(draft.step);
+      setName(draft.name);
+      setWebsite(draft.website);
+      setAssetTypes(draft.assetTypes);
+      setServices(draft.services);
+      setFocusAreas(draft.focusAreas);
+      setSelectedTierKey(draft.selectedTierKey);
+      setContact(draft.contact);
+      setContactTitle(draft.contactTitle);
+      if (draft.phone) setPhone(draft.phone);
+      return;
+    }
     const hint = readRoleHint();
     if (hint) {
       setKind(hint);
@@ -119,6 +186,18 @@ export default function Onboarding() {
       setStep(0);
     }
   }, []);
+
+  // Snapshot progress after the fields above have settled, so an interruption
+  // (closed tab, dead battery, a phone call) does not lose it.
+  useEffect(() => {
+    if (!name.trim() && step === 0) return; // nothing entered yet - do not create an empty draft
+    writeDraft({
+      savedAt: Date.now(),
+      kind, step, name, website, assetTypes, services, focusAreas,
+      selectedTierKey, contact, contactTitle, phone,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kind, step, name, website, assetTypes, services, focusAreas, selectedTierKey, contact, contactTitle, phone]);
 
   // Plan catalogue - loaded once; the user is already authenticated at this
   // point (they just have not created a company/role yet), so the same
@@ -254,6 +333,7 @@ export default function Onboarding() {
 
       const created = await createCompanyForUser(session!.user.id, payload);
       await refreshCompany();
+      clearDraft();
 
       // Free tier: nothing further to do. Paid tier: kick off checkout - a
       // Stripe redirect for a real price, or an immediate record-only
