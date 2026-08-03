@@ -73,7 +73,7 @@ function persistPrefill(invite: InviteLookup) {
 const kindLabelFor = (kind?: string | null): string | null =>
   kind === 'vendor' ? 'Vendor / Supplier'
     : kind === 'developer' ? 'Real Estate Developer'
-    : kind === 'investor' ? 'Investor'
+    : kind === 'investor' ? 'Capital Partner'
     : kind === 'buyer' ? 'Developer / Buyer' : null;
 
 /**

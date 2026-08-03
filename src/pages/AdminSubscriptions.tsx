@@ -225,7 +225,7 @@ export default function AdminSubscriptions() {
               <select value={edit.audience} onChange={(e) => setEdit({ ...edit, audience: e.target.value as Tier['audience'] })}>
                 <option value="developer">developer</option>
                 <option value="vendor">vendor</option>
-                <option value="investor">investor</option>
+                <option value="investor">capital partner</option>
               </select>
             </div>
             <div className="field">
@@ -363,8 +363,8 @@ function InvestorPlansAdmin() {
   return (
     <>
       <div className="page-head" style={{ marginTop: 24 }}><div>
-        <h1 style={{ fontSize: 18 }}>Investor plans</h1>
-        <div className="sub">Grant investors Premium (Investor Qualified) or Family Office Concierge. Investors are user-keyed, so plans live on the investor profile.</div>
+        <h1 style={{ fontSize: 18 }}>Capital Partner plans</h1>
+        <div className="sub">Grant Capital Partners Professional, Institutional, or Enterprise. Capital Partners are user-keyed, so plans live on the Capital Partner profile.</div>
       </div></div>
 
       {err && <div className="err">{err}</div>}
@@ -380,10 +380,10 @@ function InvestorPlansAdmin() {
 
       <div className="card" style={{ padding: 0 }}>
         <table>
-          <thead><tr><th>Investor</th><th>Email</th><th>Plan</th><th>Set plan</th></tr></thead>
+          <thead><tr><th>Capital Partner</th><th>Email</th><th>Plan</th><th>Set plan</th></tr></thead>
           <tbody>
             {rows.length === 0 ? (
-              <tr><td colSpan={4} className="note" style={{ padding: 14 }}>No investors found.</td></tr>
+              <tr><td colSpan={4} className="note" style={{ padding: 14 }}>No Capital Partners found.</td></tr>
             ) : rows.map((r) => (
               <tr key={r.user_id}>
                 <td><strong>{r.full_name ?? '-'}</strong></td>
@@ -392,8 +392,9 @@ function InvestorPlansAdmin() {
                 <td>
                   <select value={r.plan ?? 'free'} onChange={(e) => void setPlan(r.user_id, e.target.value)}>
                     <option value="free">Free</option>
-                    <option value="premium">Premium (Qualified)</option>
-                    <option value="concierge">Family Office Concierge</option>
+                    <option value="professional">Professional ($49/mo)</option>
+                    <option value="institutional">Institutional ($149/mo)</option>
+                    <option value="enterprise">Enterprise (custom)</option>
                   </select>
                 </td>
               </tr>

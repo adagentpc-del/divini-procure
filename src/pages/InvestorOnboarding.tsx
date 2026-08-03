@@ -163,12 +163,12 @@ export default function InvestorOnboarding() {
           )}
           {isNonAccredited && (
             <div className="note" style={{ marginTop: 12 }}>
-              As a non-accredited investor you may initially be limited to educational content and publicly available
+              As a non-accredited capital partner you may initially be limited to educational content and publicly available
               information. You will be able to access more opportunities as your qualification is verified.
             </div>
           )}
         </div>
-        <button className="btn primary" onClick={() => nav('/investor')}>Go to investor dashboard</button>
+        <button className="btn primary" onClick={() => nav('/investor')}>Go to Capital Partner dashboard</button>
         <ComplianceDisclaimer />
       </>
     );
@@ -177,7 +177,7 @@ export default function InvestorOnboarding() {
   return (
     <>
       <div className="page-head"><div>
-        <h1>Join as an investor</h1>
+        <h1>Join as a Capital Partner</h1>
         <div className="sub">Takes about 30 seconds. Tell us what you invest in and your check size — that's all we need to start matching you. You can complete your profile any time.</div>
       </div></div>
 
@@ -202,7 +202,7 @@ export default function InvestorOnboarding() {
       <div className="card" style={{ marginBottom: 14 }}>
         <div className="note" style={{ fontWeight: 700, marginBottom: 10 }}>Essentials</div>
         <div className="two">
-          <div className="field"><label>Full name</label><input value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Jane Investor" /></div>
+          <div className="field"><label>Full name</label><input value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Jane Capital" /></div>
           <div className="field"><label>Email</label><input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@fund.com" /></div>
           <div className="field"><label>Asset classes you invest in (comma-separated)</label><input value={assetClasses} onChange={(e) => setAssetClasses(e.target.value)} placeholder="multifamily, industrial, retail" /></div>
           <div className="field"><label>Markets (comma-separated, optional)</label><input value={markets} onChange={(e) => setMarkets(e.target.value)} placeholder="Southeast, Texas" /></div>
@@ -230,7 +230,7 @@ export default function InvestorOnboarding() {
               <div className="field"><label>Entity name (optional)</label><input value={entityName} onChange={(e) => setEntityName(e.target.value)} /></div>
               <div className="field"><label>Phone</label><input value={phone} onChange={(e) => setPhone(e.target.value)} /></div>
               <div className="field"><label>Location</label><input value={location} onChange={(e) => setLocation(e.target.value)} /></div>
-              <div className="field"><label>Investor type</label>
+              <div className="field"><label>Capital Partner type</label>
                 <select value={investorType} onChange={(e) => setInvestorType(e.target.value)}>
                   <option value="individual">Individual</option>
                   <option value="entity">Entity</option>
@@ -250,7 +250,7 @@ export default function InvestorOnboarding() {
           </div>
 
           <div className="card" style={{ marginBottom: 14 }}>
-            <div className="note" style={{ fontWeight: 700, marginBottom: 10 }}>Investment preferences</div>
+            <div className="note" style={{ fontWeight: 700, marginBottom: 10 }}>Capital preferences</div>
             <div className="two">
               <div className="field"><label>Total allocation ($)</label><input type="number" value={totalAllocation} onChange={(e) => setTotalAllocation(e.target.value)} /></div>
               <div className="field"><label>Preferred deal size ($)</label><input type="number" value={preferredDealSize} onChange={(e) => setPreferredDealSize(e.target.value)} /></div>
@@ -287,7 +287,7 @@ export default function InvestorOnboarding() {
               <label className="note"><input type="checkbox" checked={educationInterest} onChange={(e) => setEducationInterest(e.target.checked)} /> Interested in education track</label>
             </div>
             <div className="two">
-              <div className="field"><label>Investment experience</label><input value={investmentExperience} onChange={(e) => setInvestmentExperience(e.target.value)} /></div>
+              <div className="field"><label>Capital experience</label><input value={investmentExperience} onChange={(e) => setInvestmentExperience(e.target.value)} /></div>
               <div className="field"><label>Jurisdiction</label><input value={jurisdiction} onChange={(e) => setJurisdiction(e.target.value)} /></div>
             </div>
             <div className="field"><label>Suitability notes</label><textarea rows={2} value={suitabilityNotes} onChange={(e) => setSuitabilityNotes(e.target.value)} /></div>

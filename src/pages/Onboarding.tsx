@@ -271,7 +271,7 @@ export default function Onboarding() {
                 {([
                   { k: 'buyer', label: 'Developer / Buyer' },
                   { k: 'vendor', label: 'Vendor / Supplier' },
-                  { k: 'investor', label: 'Investor' },
+                  { k: 'investor', label: 'Capital Partner' },
                 ] as { k: Kind; label: string }[]).map(({ k, label }) => (
                   <button
                     type="button"

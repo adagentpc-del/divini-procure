@@ -199,10 +199,10 @@ export default function MyIntroductions() {
           {intro.status === 'nda_required' && (
             <div style={{ marginBottom: '0.75rem' }}>
               <p style={{ fontSize: '0.875rem', color: 'var(--amber)', margin: '0 0 0.5rem' }}>
-                Please sign the NDA in your investor dashboard to proceed.
+                Please sign the NDA in your Capital Partner dashboard to proceed.
               </p>
               <button className="btn" style={{ fontSize: '0.85rem', padding: '0.4rem 1rem' }} onClick={() => nav('/investor')}>
-                Go to Investor Dashboard
+                Go to Capital Partner Dashboard
               </button>
             </div>
           )}

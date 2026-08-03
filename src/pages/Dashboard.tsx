@@ -367,7 +367,7 @@ export default function Dashboard() {
   const isInvestor = company.kind === 'investor';
 
   const subLabel = isInvestor
-    ? 'Your investment dashboard'
+    ? 'Your Capital Partner dashboard'
     : isBuyer
     ? 'Your procurement command center'
     : 'Your vendor workspace';

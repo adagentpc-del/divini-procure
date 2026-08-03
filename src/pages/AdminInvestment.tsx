@@ -47,8 +47,8 @@ export default function AdminInvestment() {
     setBusy(true); setErr(''); setOk('');
     try {
       await apiSend('PATCH', `/admin/investor/${id}`, { decision });
-      setOk(`Investor ${decision.replace(/_/g, ' ')}.`); await loadInvestors(); await loadOverview();
-    } catch (e: any) { setErr(e.message ?? 'Could not review investor.'); }
+      setOk(`Capital Partner ${decision.replace(/_/g, ' ')}.`); await loadInvestors(); await loadOverview();
+    } catch (e: any) { setErr(e.message ?? 'Could not review Capital Partner.'); }
     finally { setBusy(false); }
   }
 
@@ -59,8 +59,8 @@ export default function AdminInvestment() {
   return (
     <>
       <div className="page-head"><div>
-        <h1>Investment review</h1>
-        <div className="sub">Review developer profiles, investment programs, and investor qualifications before matching.</div>
+        <h1>Capital review</h1>
+        <div className="sub">Review developer profiles, capital programs, and Capital Partner qualifications before matching.</div>
       </div></div>
 
       {err && <div className="err">{err}</div>}
@@ -104,9 +104,9 @@ export default function AdminInvestment() {
       </div>
 
       <div className="card" style={{ padding: 0 }}>
-        <div style={{ padding: '12px 16px', fontWeight: 700 }}>Investor profiles for review</div>
+        <div style={{ padding: '12px 16px', fontWeight: 700 }}>Capital Partner profiles for review</div>
         <table>
-          <thead><tr><th>Investor</th><th>Type</th><th>Accreditation</th><th>Status</th><th>Actions</th></tr></thead>
+          <thead><tr><th>Capital Partner</th><th>Type</th><th>Accreditation</th><th>Status</th><th>Actions</th></tr></thead>
           <tbody>
             {([...investors, ...profilesForReview]).length === 0 ? (
               <tr><td colSpan={5} className="note" style={{ padding: 12 }}>Nothing to review.</td></tr>

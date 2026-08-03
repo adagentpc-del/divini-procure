@@ -97,7 +97,7 @@ function kindToAudience(kind: string | null | undefined): "developer" | "vendor"
 /** The fallback free tier key for a given audience. */
 function defaultTierKey(audience: "developer" | "vendor" | "investor"): string {
   if (audience === "vendor") return "vendor_free";
-  if (audience === "investor") return "investor_basic";
+  if (audience === "investor") return "capital_partner_free";
   return "developer_free";
 }
 

@@ -29,16 +29,20 @@ create table if not exists fee_rules (
 
   -- grandfathered_2pct (informational mirror only; the live grandfathered rate
   -- is resolved from developer_vendor_relationships, never from this table) |
-  -- standard_platform | preferred_vendor_placement | white_glove |
-  -- referral_partner | capital_introduction
+  -- standard_platform | platform_infrastructure_fee | preferred_vendor_placement
+  -- | white_glove | referral_partner
+  --
+  -- NOTE: there is intentionally no capital-raise / investor-introduction fee
+  -- type here. Divini Procure is not a broker or placement agent and does not
+  -- charge a success fee on capital introductions; see 90_FUTURE_IDEAS.md /
+  -- the Capital Partner module spec for the compliance boundary.
   rule_type text not null check (rule_type in (
     'grandfathered_2pct',
     'standard_platform',
     'platform_infrastructure_fee',
     'preferred_vendor_placement',
     'white_glove',
-    'referral_partner',
-    'capital_introduction'
+    'referral_partner'
   )),
 
   -- global | developer | vendor | pair | program
@@ -82,8 +86,11 @@ create index if not exists idx_fee_rules_developer on fee_rules (developer_compa
 create index if not exists idx_fee_rules_vendor on fee_rules (vendor_company_id);
 
 -- Defensive re-run: if fee_rules already existed from an earlier apply (before
--- cap_cents / platform_infrastructure_fee existed), bring it up to date.
+-- cap_cents / platform_infrastructure_fee existed, or while capital_introduction
+-- still existed), bring it up to date and remove any capital-introduction rows
+-- (Divini Procure does not charge a fee on capital introductions).
 alter table if exists fee_rules add column if not exists cap_cents bigint;
+delete from fee_rules where rule_type = 'capital_introduction';
 alter table if exists fee_rules drop constraint if exists fee_rules_rule_type_check;
 alter table if exists fee_rules add constraint fee_rules_rule_type_check check (rule_type in (
   'grandfathered_2pct',
@@ -91,8 +98,7 @@ alter table if exists fee_rules add constraint fee_rules_rule_type_check check (
   'platform_infrastructure_fee',
   'preferred_vendor_placement',
   'white_glove',
-  'referral_partner',
-  'capital_introduction'
+  'referral_partner'
 ));
 
 create table if not exists fee_rule_audit (
@@ -181,10 +187,3 @@ where not exists (
   select 1 from fee_rules where rule_type = 'referral_partner' and scope = 'global'
 );
 
--- Capital introduction fee: percentage, admin configured.
-insert into fee_rules (rule_type, scope, percentage, payer_type, notes, created_by)
-select 'capital_introduction', 'global', 2.0, 'admin_configured',
-       'Capital introduction fee for investor matching. Configure per arrangement.', 'seed'
-where not exists (
-  select 1 from fee_rules where rule_type = 'capital_introduction' and scope = 'global'
-);

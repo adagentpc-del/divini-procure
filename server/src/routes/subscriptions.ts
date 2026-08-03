@@ -395,9 +395,10 @@ router.get(
 );
 
 // ---------------------------------------------------------------------------
-// Admin: investor plan assignment (investors are user-keyed, not company-keyed).
+// Admin: Capital Partner plan assignment (capital partners are user-keyed,
+// not company-keyed).
 // ---------------------------------------------------------------------------
-const INVESTOR_PLANS = new Set(["free", "premium", "concierge"]);
+const INVESTOR_PLANS = new Set(["free", "professional", "institutional", "enterprise"]);
 
 router.get(
   "/admin/investors",
@@ -427,7 +428,7 @@ router.patch(
     const plan = String(b.plan ?? "").trim().toLowerCase();
     if (!userId) return res.status(400).json({ error: "userId required" });
     if (!INVESTOR_PLANS.has(plan))
-      return res.status(400).json({ error: "plan must be free, premium or concierge" });
+      return res.status(400).json({ error: "plan must be free, professional, institutional, or enterprise" });
     const row = await q1(
       `update investor_profiles set plan = $2, updated_at = now() where user_id = $1
        returning id, user_id, email, full_name, plan`,

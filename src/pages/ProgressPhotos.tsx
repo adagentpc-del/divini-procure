@@ -142,7 +142,7 @@ export default function ProgressPhotos() {
           Progress Photos 📸
         </h1>
         <p style={{ color: 'var(--ink)', opacity: 0.6, margin: 0 }}>
-          Document your build's progress to keep investors and lenders informed.
+          Document your build's progress to keep capital partners and lenders informed.
         </p>
       </div>
 
@@ -160,7 +160,7 @@ export default function ProgressPhotos() {
         </select>
         <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.875rem', color: 'var(--ink)' }}>
           <input type="checkbox" checked={investorOnly} onChange={e => setInvestorOnly(e.target.checked)} />
-          Investor Visible Only
+          Capital Partner Visible Only
         </label>
         <button className="btn primary" onClick={() => setShowForm(v => !v)} style={{ marginLeft: 'auto' }}>
           {showForm ? 'Cancel' : '+ Add Photo'}
@@ -258,7 +258,7 @@ export default function ProgressPhotos() {
             </label>
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.875rem', paddingTop: 20 }}>
               <input type="checkbox" checked={form.visibleToInvestors} onChange={e => setForm(f => ({ ...f, visibleToInvestors: e.target.checked }))} />
-              Visible to Investors
+              Visible to Capital Partners
             </label>
           </div>
           <button className="btn primary" type="submit" disabled={saving}>
@@ -320,7 +320,7 @@ export default function ProgressPhotos() {
                     <span style={{ fontSize: '0.75rem', color: 'var(--ink)', opacity: 0.55 }}>{fmtDate(photo.taken_at)}</span>
                   )}
                   {photo.visible_to_investors && (
-                    <span className="badge b-green" style={{ fontSize: '0.7rem' }}>Investor</span>
+                    <span className="badge b-green" style={{ fontSize: '0.7rem' }}>Capital Partner</span>
                   )}
                 </div>
                 <div style={{ display: 'flex', gap: '0.4rem' }}>

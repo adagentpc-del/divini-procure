@@ -1,26 +1,25 @@
 -- ===========================================================================
 -- Divini Procure - PAID TIERS + PAYWALL GATES (v2 monetization)
 -- ===========================================================================
--- Additive + idempotent. The developer_pro / investor_qualified tiers already
--- exist; this adds the Family-Office Concierge tier, an investor plan column,
--- and the "who viewed my raise" tracking table. Gating stays inert until a paid
--- tier is assigned (developer via subscription_entitlements, investor via plan).
+-- Additive + idempotent. The developer_pro / capital_partner_* tiers are
+-- seeded in db/schema-subscriptions.sql; this adds the individual Capital
+-- Partner plan column and the "who viewed my raise" tracking table. Gating
+-- stays inert until a paid tier is assigned (developer via
+-- subscription_entitlements, capital partner via plan).
 -- ===========================================================================
 
--- Family-Office Concierge: white-glove, private, curated (an investor tier).
-insert into subscription_tiers
-  (key, name, audience, price_cents,
-   active_project_limit, bid_package_limit, vendor_invite_limit,
-   investment_program_limit, investor_match_limit, seat_limit,
-   ai_features, reporting_access, white_glove, sort)
-values
-  ('family_office_concierge', 'Family Office Concierge', 'investor', 99900,
-     0, 0, 0, 0, null, 5, true, true, true, 80)
-on conflict (key) do nothing;
-
--- Investor plan assignment (investors are user-keyed, not company-keyed).
+-- Capital Partner plan assignment (capital partners are user-keyed, not
+-- company-keyed, since an individual/family office signs in as themself, not
+-- as an organization). Mirrors the subscription_tiers Capital Partner ladder
+-- (free / professional $49mo / institutional $149mo / enterprise custom) as a
+-- simple label on the user's own investor_profiles row.
 alter table investor_profiles
-  add column if not exists plan text default 'free';   -- 'free' | 'premium' (investor_qualified) | 'concierge' (family_office_concierge)
+  add column if not exists plan text default 'free';   -- 'free' | 'professional' | 'institutional' | 'enterprise'
+
+-- Defensive re-run: migrate a pre-existing row still on a retired plan value
+-- forward to its closest current equivalent.
+update investor_profiles set plan = 'professional' where plan = 'premium';
+update investor_profiles set plan = 'enterprise' where plan = 'concierge';
 
 -- "Who viewed my raise" - a Developer Pro analytics surface.
 create table if not exists program_views (

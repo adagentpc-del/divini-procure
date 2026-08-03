@@ -51,11 +51,11 @@ const BUYER_SECTIONS: Section[] = [
     ['/designer', 'Designer', '✑'],
     ['/gc',       'GC',       '⛏'],
   ]},
-  { label: 'Investment', items: [
-    ['/investment-profile',  'Investment Profile', '◇'],
+  { label: 'Capital', items: [
+    ['/investment-profile',  'Capital Partner Profile', '◇'],
     ['/investment-programs', 'Programs',           '◉'],
     ['/trust-profile',       'Trust Profile',      '✦'],
-    ['/investor',            'Investor',           '⬡'],
+    ['/investor',            'Capital Partner',    '⬡'],
     ['/my-introductions',    'Introductions',      '✦'],
     ['/investor-watchlist',  'Watchlist',          '◉'],
     ['/teasers',             'Teasers',            '◷'],
@@ -100,10 +100,10 @@ const VENDOR_SECTIONS: Section[] = [
     ['/coi-tracker',  'Insurance (COI)','◻'],
     ['/dispute-center','Disputes',   '⚖'],
   ]},
-  { label: 'Investment', items: [
-    ['/investor',        'Investor',     '⬡'],
-    ['/my-introductions','Introductions','✦'],
-    ['/broker',          'Broker',       '⊞'],
+  { label: 'Capital', items: [
+    ['/investor',        'Capital Partner','⬡'],
+    ['/my-introductions','Introductions',  '✦'],
+    ['/broker',          'Broker',         '⊞'],
   ]},
   { label: 'Account', items: [
     ['/agreements',      'Agreements',      '✎'],
@@ -115,11 +115,11 @@ const VENDOR_SECTIONS: Section[] = [
   ]},
 ];
 
-// INVESTOR — dedicated nav focused on deals, watchlists, and introductions
+// CAPITAL PARTNER — dedicated nav focused on deals, watchlists, and introductions
 const INVESTOR_SECTIONS: Section[] = [
   { label: 'Workspace', items: [
     ['/app',              'Dashboard',    '▦'],
-    ['/investor',         'Investor Hub', '⬡'],
+    ['/investor',         'Capital Partner Hub', '⬡'],
     ['/investor-watchlist','Watchlist',   '◉'],
     ['/opportunities',    'Browse Deals', '◷'],
   ]},
@@ -137,7 +137,7 @@ const INVESTOR_SECTIONS: Section[] = [
     ['/war-room',     'War Room',   '⚑'],
   ]},
   { label: 'Profile', items: [
-    ['/investment-profile','Investment Profile','◇'],
+    ['/investment-profile','Capital Partner Profile','◇'],
     ['/collateral',        'Collateral',        '◰'],
     ['/event-spaces',      'Event Spaces',      '◐'],
     ['/broker',            'Broker',            '⊞'],

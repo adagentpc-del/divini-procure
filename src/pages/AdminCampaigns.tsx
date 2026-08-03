@@ -23,7 +23,7 @@ type Campaign = {
 const SEGMENTS: [string, string][] = [
   ['developers', 'Developers (buyer companies)'],
   ['vendors', 'Vendors'],
-  ['investors', 'Investors'],
+  ['investors', 'Capital Partners'],
   ['claim_prospects', 'Claim prospects (invites)'],
   ['referral_partners', 'Referral partners'],
   ['all_companies', 'All companies'],

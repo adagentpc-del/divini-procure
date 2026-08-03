@@ -140,7 +140,7 @@ function TrustBadge({ score, band }: { score?: number; band?: string }) {
   if (score == null) return null;
   const cls = band === 'trusted' ? 'b-green' : band === 'established' ? 'b-amber' : 'b-neutral';
   const label = band ? band.charAt(0).toUpperCase() + band.slice(1) : 'Trust';
-  return <span className={`badge ${cls}`} title="Divini Trust Score — a reputational score for the sponsor, not a rating of any investment.">Trust: {label} ({Math.round(score)})</span>;
+  return <span className={`badge ${cls}`} title="Divini Trust Score — a reputational score for the sponsor, not a rating of any capital opportunity.">Trust: {label} ({Math.round(score)})</span>;
 }
 
 // ---- InvestorMatchCard (developer-facing) ----------------------------------
@@ -167,7 +167,7 @@ export function InvestorMatchCard({
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' }}>
         <div>
           <div style={{ fontWeight: 700, fontSize: 16 }}>
-            {inv.entity_name || inv.full_name || 'Investor'}
+            {inv.entity_name || inv.full_name || 'Capital Partner'}
           </div>
           <div className="note">{inv.location || ''}</div>
         </div>
@@ -177,9 +177,9 @@ export function InvestorMatchCard({
       <WhyLine reasons={match.reasons} fallback={[list(inv.asset_classes), list(inv.markets), range(inv.min_investment_cents, inv.max_investment_cents)]} />
 
       <div className="two" style={{ marginTop: 12 }}>
-        <div><span className="note">Investor type</span><div>{pretty(inv.investor_type)}</div></div>
+        <div><span className="note">Capital Partner type</span><div>{pretty(inv.investor_type)}</div></div>
         <div><span className="note">Accreditation</span><div>{pretty(match.accreditation || inv.accreditation_status)}</div></div>
-        <div><span className="note">Investment range</span><div>{range(inv.min_investment_cents, inv.max_investment_cents)}</div></div>
+        <div><span className="note">Capital range</span><div>{range(inv.min_investment_cents, inv.max_investment_cents)}</div></div>
         <div><span className="note">Eligibility</span><div>{pretty(match.eligibility)}</div></div>
         <div><span className="note">Asset classes</span><div>{list(inv.asset_classes)}</div></div>
         <div><span className="note">Markets</span><div>{list(inv.markets)}</div></div>
@@ -230,7 +230,7 @@ export function OpportunityMatchCard({
 }) {
   const p = match.program ?? {};
   const accreditationReq = p.accredited_only
-    ? 'Accredited investors only'
+    ? 'Accredited Capital Partners only'
     : p.non_accredited_accepted
       ? 'Open to non-accredited'
       : 'See offering';
@@ -249,8 +249,8 @@ export function OpportunityMatchCard({
       <div className="two" style={{ marginTop: 12 }}>
         <div><span className="note">Asset class</span><div>{pretty(p.asset_class)}</div></div>
         <div><span className="note">Market</span><div>{p.location || '-'}</div></div>
-        <div><span className="note">Investment range</span><div>{range(p.min_investment_cents, p.max_investment_cents)}</div></div>
-        <div><span className="note">Investor type required</span><div>{pretty(p.investor_type_accepted)}</div></div>
+        <div><span className="note">Capital range</span><div>{range(p.min_investment_cents, p.max_investment_cents)}</div></div>
+        <div><span className="note">Capital Partner type required</span><div>{pretty(p.investor_type_accepted)}</div></div>
         <div><span className="note">Accreditation</span><div>{accreditationReq}</div></div>
         <div><span className="note">Target return</span><div>{p.projected_return || '-'}</div></div>
         <div><span className="note">Hold period</span><div>{p.hold_period || '-'}</div></div>

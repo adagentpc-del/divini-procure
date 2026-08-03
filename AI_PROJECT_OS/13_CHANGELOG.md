@@ -6,6 +6,73 @@ the Authentik/Supabase era and does not reflect Monetization V2.)
 
 ---
 
+## 2026-08-03 (2) - Capital Partner module: rename + compliance boundary + tier ladder
+
+**What.** Product-facing rename of "Investor"/"Investment" to "Capital
+Partner"/"Capital" across ~35 files (nav, page headings, form labels, toasts,
+admin UIs, the compliance disclaimer, the English i18n source string).
+Deliberately did NOT rename: route paths (`/investor`, `/investment-profile`,
+...), the `companies.kind`/`subscription_tiers.audience`/permission-level
+enum values (all stay `'investor'` at the database level - "historical
+database fields," per instruction), or file names.
+
+- **Compliance boundary audit**: confirmed no waterfall/IRR, capital-call, or
+  distribution engine exists (correct, per spec); removed the one thing that
+  did cross the line - a dormant `capital_introduction` fee-rule type (2%,
+  "for investor matching") in the `fee_rules` matrix. It was never actually
+  invoked by any route, but its existence was itself a "success fee for
+  capital introduction" capability the spec forbids. Removed from
+  `FEE_RULE_TYPES`, the DB check constraints, the seed data (with a `delete`
+  for any already-seeded row), and the two admin UIs that listed it
+  (`AdminFeeMatrix.tsx`, `AdminRevenue.tsx`, which also picked up the
+  `platform_infrastructure_fee` type that was missing from their pickers).
+- **Capital Partner subscription tiers**: replaced `investor_basic` ($0) /
+  `investor_qualified` ($499/mo) / `family_office_concierge` ($999/mo) with
+  the spec's four-tier ladder in `subscription_tiers`: `capital_partner_free`
+  ($0), `capital_partner_professional` ($49/mo), `capital_partner_institutional`
+  ($149/mo), `capital_partner_enterprise` (custom, null price). Also updated
+  the separate, actually-live `investor_profiles.plan` admin-assignment
+  mechanism (`free`/`premium`/`concierge` -> `free`/`professional`/
+  `institutional`/`enterprise`) with a defensive migration for any
+  already-set legacy value.
+- Added a `VISIBILITY_LABEL` display-only map in `InvestmentPrograms.tsx` so
+  wire values like `approved_investor_preview` (a real DB enum, left
+  unrenamed) render as "approved capital partner preview" without touching
+  the underlying value.
+
+**Files.** ~35 files across `src/pages/`, `src/components/`, plus
+`server/src/lib/{entitlements,fee-matrix,monetization}.ts`,
+`server/src/routes/subscriptions.ts`, `db/schema-{fee-matrix,revenue,
+subscriptions,tiers-monetization}.sql`, `db/apply-all.sql`.
+
+**Risks / not done.**
+- **Pipeline stage vocabulary NOT remapped.** The spec's new stages
+  (Potential Match, Invited, Access Requested, Access Granted, Reviewing,
+  Questions Submitted, Due Diligence, Meeting Scheduled, Following, Closed,
+  Archived) do not exist yet; the app still uses the old
+  `investor_introduction_requests.pipeline_status` values (`matched`,
+  `intro_approved`, `nda_required`, ...), which don't map 1:1. This needs a
+  deliberate follow-up (label map at minimum, or a real stage migration),
+  not a same-turn text rename.
+- **Dormant capital-commitment tracking still exists**, separate from the
+  fee I removed: `investor_introduction_requests` has a `soft_commitment`
+  pipeline status and a `committed_amount_cents` column, and
+  `AdminAnalytics.tsx` has a "Capital committed / Capital closed" KPI section
+  reading from them (`server/src/routes/analytics.ts`). Nothing currently
+  writes to these (always renders $0 in practice), but their existence is
+  schema-level "capital commitment" capability the spec says not to build.
+  Flagged, not removed - removing needs a deliberate decision, not a
+  drive-by deletion during a rename pass.
+- **12 non-English i18n locale files** (`src/i18n/locales/{es,fr,de,...}.ts`)
+  still have the old translated string for `roleInvestor`; only the English
+  source was updated. Translation is a separate task.
+
+**Next.** Decide on the pipeline-stage remap and the dormant
+commitment-tracking removal; translate `roleInvestor` into the other 12
+locales.
+
+---
+
 ## 2026-08-03 - Unified platform fee model (single source of truth), always-on
 
 **What.** Replaced the three competing fee models (legacy uncapped 10%/2%,

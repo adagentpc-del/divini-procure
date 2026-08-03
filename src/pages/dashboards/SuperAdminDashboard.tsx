@@ -14,7 +14,7 @@ const NAV: [string, string, string][] = [
   ['/admin/relationships', 'Relationship Fees', '⚖'],
   ['/admin/agreements', 'Agreements', '✎'],
   ['/admin/campaigns', 'Email Campaigns', '✉'],
-  ['/admin/investment', 'Investment', '◈'],
+  ['/admin/investment', 'Capital', '◈'],
   ['/admin/investment-compliance', 'Inv. Compliance', '⚖'],
   ['/admin/subscriptions', 'Subscriptions', '◫'],
   ['/admin/fee-matrix', 'Fee Matrix', '％'],

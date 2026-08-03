@@ -117,7 +117,7 @@ export default function OpportunityTeasers() {
         <div>
           <h1>Opportunity teaser builder</h1>
           <div className="sub">
-            Turn an investment program into a public-safe teaser. Teasers never use invest-now language. The
+            Turn a capital program into a public-safe teaser. Teasers never use invest-now language. The
             only call to action is a request for access, information, or an introduction.
           </div>
         </div>
@@ -164,7 +164,7 @@ export default function OpportunityTeasers() {
             />
           </div>
           <div className="field">
-            <label>Minimum investment range</label>
+            <label>Minimum capital range</label>
             <input
               value={form.minInvestmentRange}
               onChange={(e) => setF('minInvestmentRange', e.target.value)}
@@ -172,7 +172,7 @@ export default function OpportunityTeasers() {
             />
           </div>
           <div className="field">
-            <label>Investor type</label>
+            <label>Capital Partner type</label>
             <input value={form.investorType} onChange={(e) => setF('investorType', e.target.value)} />
           </div>
           <div className="field">
@@ -315,8 +315,8 @@ function TeaserEdit({ teaser, onChanged }: { teaser: Teaser; onChanged: () => vo
         <div className="field"><label>Asset class</label><input value={t.asset_class ?? ''} onChange={(e) => setK('asset_class', e.target.value)} /></div>
         <div className="field"><label>Market</label><input value={t.market ?? ''} onChange={(e) => setK('market', e.target.value)} /></div>
         <div className="field"><label>Target raise range</label><input value={t.target_raise_range ?? ''} onChange={(e) => setK('target_raise_range', e.target.value)} /></div>
-        <div className="field"><label>Minimum investment range</label><input value={t.min_investment_range ?? ''} onChange={(e) => setK('min_investment_range', e.target.value)} /></div>
-        <div className="field"><label>Investor type</label><input value={t.investor_type ?? ''} onChange={(e) => setK('investor_type', e.target.value)} /></div>
+        <div className="field"><label>Minimum capital range</label><input value={t.min_investment_range ?? ''} onChange={(e) => setK('min_investment_range', e.target.value)} /></div>
+        <div className="field"><label>Capital Partner type</label><input value={t.investor_type ?? ''} onChange={(e) => setK('investor_type', e.target.value)} /></div>
         <div className="field">
           <label>Request CTA</label>
           <select value={t.request_cta ?? 'Request introduction'} onChange={(e) => setK('request_cta', e.target.value)}>

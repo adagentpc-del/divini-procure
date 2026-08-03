@@ -46,11 +46,11 @@ const GROUPS: Group[] = [
     ],
   },
   {
-    title: 'Investment',
+    title: 'Capital Programs',
     tiles: [
       { key: 'activeInvestmentPrograms', label: 'Active programs', kind: 'count' },
-      { key: 'qualifiedInvestors', label: 'Qualified investors', kind: 'count' },
-      { key: 'investorMatches', label: 'Investor matches', kind: 'count' },
+      { key: 'qualifiedInvestors', label: 'Qualified Capital Partners', kind: 'count' },
+      { key: 'investorMatches', label: 'Capital Partner matches', kind: 'count' },
       { key: 'introductionsMade', label: 'Introductions made', kind: 'count' },
       { key: 'softCommitments', label: 'Soft commitments', kind: 'count' },
     ],
@@ -94,7 +94,7 @@ export default function AdminAnalytics() {
         <div>
           <h1>KPI Analytics</h1>
           <div className="sub">
-            Platform health across the marketplace, procurement, fees, investment, and capital.
+            Platform health across the marketplace, procurement, fees, capital programs, and capital.
             Every metric is computed defensively and defaults to zero when a source is not yet
             populated.
           </div>

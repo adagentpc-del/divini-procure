@@ -41,7 +41,6 @@ export const FEE_RULE_TYPES = [
   "preferred_vendor_placement",
   "white_glove",
   "referral_partner",
-  "capital_introduction",
 ] as const;
 export type FeeRuleType = (typeof FEE_RULE_TYPES)[number];
 

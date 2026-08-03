@@ -1177,16 +1177,20 @@ create table if not exists fee_rules (
 
   -- grandfathered_2pct (informational mirror only; the live grandfathered rate
   -- is resolved from developer_vendor_relationships, never from this table) |
-  -- standard_platform | preferred_vendor_placement | white_glove |
-  -- referral_partner | capital_introduction
+  -- standard_platform | platform_infrastructure_fee | preferred_vendor_placement
+  -- | white_glove | referral_partner
+  --
+  -- NOTE: there is intentionally no capital-raise / investor-introduction fee
+  -- type here. Divini Procure is not a broker or placement agent and does not
+  -- charge a success fee on capital introductions; see 90_FUTURE_IDEAS.md /
+  -- the Capital Partner module spec for the compliance boundary.
   rule_type text not null check (rule_type in (
     'grandfathered_2pct',
     'standard_platform',
     'platform_infrastructure_fee',
     'preferred_vendor_placement',
     'white_glove',
-    'referral_partner',
-    'capital_introduction'
+    'referral_partner'
   )),
 
   -- global | developer | vendor | pair | program
@@ -1230,8 +1234,11 @@ create index if not exists idx_fee_rules_developer on fee_rules (developer_compa
 create index if not exists idx_fee_rules_vendor on fee_rules (vendor_company_id);
 
 -- Defensive re-run: if fee_rules already existed from an earlier apply (before
--- cap_cents / platform_infrastructure_fee existed), bring it up to date.
+-- cap_cents / platform_infrastructure_fee existed, or while capital_introduction
+-- still existed), bring it up to date and remove any capital-introduction rows
+-- (Divini Procure does not charge a fee on capital introductions).
 alter table if exists fee_rules add column if not exists cap_cents bigint;
+delete from fee_rules where rule_type = 'capital_introduction';
 alter table if exists fee_rules drop constraint if exists fee_rules_rule_type_check;
 alter table if exists fee_rules add constraint fee_rules_rule_type_check check (rule_type in (
   'grandfathered_2pct',
@@ -1239,8 +1246,7 @@ alter table if exists fee_rules add constraint fee_rules_rule_type_check check (
   'platform_infrastructure_fee',
   'preferred_vendor_placement',
   'white_glove',
-  'referral_partner',
-  'capital_introduction'
+  'referral_partner'
 ));
 
 create table if not exists fee_rule_audit (
@@ -1329,13 +1335,6 @@ where not exists (
   select 1 from fee_rules where rule_type = 'referral_partner' and scope = 'global'
 );
 
--- Capital introduction fee: percentage, admin configured.
-insert into fee_rules (rule_type, scope, percentage, payer_type, notes, created_by)
-select 'capital_introduction', 'global', 2.0, 'admin_configured',
-       'Capital introduction fee for investor matching. Configure per arrangement.', 'seed'
-where not exists (
-  select 1 from fee_rules where rule_type = 'capital_introduction' and scope = 'global'
-);
 
 -- ===== schema-grandfathered-fee.sql =====
 -- Divini Procure - GRANDFATHERED EXISTING-RELATIONSHIP FEE
@@ -1531,17 +1530,20 @@ create extension if not exists "pgcrypto";
 
 -- ---------- platform revenue (the accrual ledger) ----------
 -- One row per accrued revenue event. source_type tells you where it came from
--- (a procurement fee on a payment authorization, a capital-introduction fee, a
--- subscription, or a manual entry). base_cents is the amount the fee was
--- computed on; fee_cents is what Divini accrues. fee_source / payer_type carry
--- the fee-matrix resolution context so the ledger is self-explaining. status
--- moves accrued -> invoiced -> collected (or waived / void) by ADMIN action
--- only; nothing here auto-charges. payment_authorization_id is the idempotency
--- key for procurement fees (one accrual per authorization).
+-- (the platform fee or infrastructure fee on a payment authorization, a
+-- subscription, or a manual entry). Deliberately no capital-introduction /
+-- investor-matching source type: Divini Procure is not a broker or placement
+-- agent and never charges a fee for connecting a developer to a capital
+-- partner. base_cents is the amount the fee was computed on; fee_cents is
+-- what Divini accrues. fee_source / payer_type carry the fee-matrix
+-- resolution context so the ledger is self-explaining. status moves accrued
+-- -> invoiced -> collected (or waived / void) by ADMIN action only; nothing
+-- here auto-charges. payment_authorization_id + source_type is the
+-- idempotency key (one accrual per authorization per fee type).
 create table if not exists platform_revenue (
   id uuid primary key default gen_random_uuid(),
   source_type text not null default 'procurement_fee'
-    check (source_type in ('procurement_fee','infrastructure_fee','capital_introduction','subscription','manual')),
+    check (source_type in ('procurement_fee','infrastructure_fee','subscription','manual')),
   developer_company_id uuid,
   vendor_company_id uuid,
   purchase_order_id uuid,
@@ -1564,13 +1566,15 @@ create table if not exists platform_revenue (
 create index if not exists platform_revenue_status_idx on platform_revenue (status);
 create index if not exists platform_revenue_developer_idx on platform_revenue (developer_company_id);
 
--- Defensive re-run: widen the source_type check and move the idempotency key
--- from "one accrual per authorization" to "one accrual per authorization PER
--- fee type" so the platform fee and the infrastructure fee can each have their
--- own row on the same payment authorization.
+-- Defensive re-run: widen the source_type check (dropping capital_introduction,
+-- which Divini Procure does not charge) and move the idempotency key from "one
+-- accrual per authorization" to "one accrual per authorization PER fee type"
+-- so the platform fee and the infrastructure fee can each have their own row
+-- on the same payment authorization.
+delete from platform_revenue where source_type = 'capital_introduction';
 alter table if exists platform_revenue drop constraint if exists platform_revenue_source_type_check;
 alter table if exists platform_revenue add constraint platform_revenue_source_type_check
-  check (source_type in ('procurement_fee','infrastructure_fee','capital_introduction','subscription','manual'));
+  check (source_type in ('procurement_fee','infrastructure_fee','subscription','manual'));
 drop index if exists platform_revenue_payment_auth_uniq;
 create unique index if not exists platform_revenue_payment_auth_type_uniq
   on platform_revenue (payment_authorization_id, source_type)
@@ -2914,11 +2918,16 @@ values
   ('vendor_pro',           'Vendor Pro',           'vendor',      14900,
      null, null, 25,   0,    0,    10,  true,  true,  false, 50),
 
-  -- Investor tiers
-  ('investor_basic',       'Investor Basic',       'investor',        0,
-     0,    0,    0,    0,    10,   2,   false, false, false, 60),
-  ('investor_qualified',   'Investor Qualified',   'investor',    49900,
-     0,    0,    0,    0,    null, 5,   true,  true,  false, 70)
+  -- Capital Partner tiers (audience stays 'investor' at the database level;
+  -- the product-facing name is "Capital Partner" everywhere else)
+  ('capital_partner_free',          'Capital Partner Free',          'investor',      0,
+     0,    0,    0,    0,    5,    1,    false, false, false, 60),
+  ('capital_partner_professional',  'Capital Partner Professional',  'investor',   4900,
+     0,    0,    0,    0,    25,   5,    true,  true,  false, 70),
+  ('capital_partner_institutional', 'Capital Partner Institutional', 'investor',  14900,
+     0,    0,    0,    0,    null, 20,   true,  true,  false, 80),
+  ('capital_partner_enterprise',    'Capital Partner Enterprise',    'investor',   null,
+     0,    0,    0,    0,    null, null, true,  true,  true,  90)
 on conflict (key) do nothing;
 
 -- ---------------------------------------------------------------------------
@@ -3434,26 +3443,35 @@ alter table investor_profiles
 -- ===========================================================================
 -- Divini Procure - PAID TIERS + PAYWALL GATES (v2 monetization)
 -- ===========================================================================
--- Additive + idempotent. The developer_pro / investor_qualified tiers already
--- exist; this adds the Family-Office Concierge tier, an investor plan column,
--- and the "who viewed my raise" tracking table. Gating stays inert until a paid
--- tier is assigned (developer via subscription_entitlements, investor via plan).
+-- Additive + idempotent. The developer_pro / capital_partner_* tiers are
+-- seeded in db/schema-subscriptions.sql; this adds the individual Capital
+-- Partner plan column and the "who viewed my raise" tracking table. Gating
+-- stays inert until a paid tier is assigned (developer via
+-- subscription_entitlements, capital partner via plan).
 -- ===========================================================================
 
--- Family-Office Concierge: white-glove, private, curated (an investor tier).
-insert into subscription_tiers
-  (key, name, audience, price_cents,
-   active_project_limit, bid_package_limit, vendor_invite_limit,
-   investment_program_limit, investor_match_limit, seat_limit,
-   ai_features, reporting_access, white_glove, sort)
-values
-  ('family_office_concierge', 'Family Office Concierge', 'investor', 99900,
-     0, 0, 0, 0, null, 5, true, true, true, 80)
-on conflict (key) do nothing;
-
--- Investor plan assignment (investors are user-keyed, not company-keyed).
+-- Capital Partner plan assignment (capital partners are user-keyed, not
+-- company-keyed, since an individual/family office signs in as themself, not
+-- as an organization). Mirrors the subscription_tiers Capital Partner ladder
+-- (free / professional $49mo / institutional $149mo / enterprise custom) as a
+-- simple label on the user's own investor_profiles row.
 alter table investor_profiles
-  add column if not exists plan text default 'free';   -- 'free' | 'premium' (investor_qualified) | 'concierge' (family_office_concierge)
+  add column if not exists plan text default 'free';   -- 'free' | 'professional' | 'institutional' | 'enterprise'
+
+-- Defensive re-run: migrate a pre-existing row still on a retired plan value
+-- forward to its closest current equivalent.
+update investor_profiles set plan = 'professional' where plan = 'premium';
+update investor_profiles set plan = 'enterprise' where plan = 'concierge';
+
+-- "Who viewed my raise" - a Developer Pro analytics surface.
+create table if not exists program_views (
+  id uuid primary key default gen_random_uuid(),
+  program_id uuid references investment_programs(id) on delete cascade,
+  viewer_user_id text,
+  viewed_at timestamptz not null default now()
+);
+create index if not exists program_views_program_idx on program_views(program_id);
+create index if not exists program_views_dedup_idx on program_views(program_id, viewer_user_id, viewed_at);
 
 -- "Who viewed my raise" - a Developer Pro analytics surface.
 create table if not exists program_views (

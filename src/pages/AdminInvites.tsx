@@ -18,7 +18,7 @@ const date = (s?: string) => (s ? new Date(s).toLocaleDateString() : '-');
 const ROLES: { value: string; label: string }[] = [
   { value: 'vendor', label: 'Vendor' },
   { value: 'developer', label: 'Real Estate Developer' },
-  { value: 'investor', label: 'Investor' },
+  { value: 'investor', label: 'Capital Partner' },
 ];
 const roleLabel = (k?: string) => ROLES.find(r => r.value === k)?.label ?? (k || 'Any role');
 
@@ -123,7 +123,7 @@ export default function AdminInvites() {
     <>
       <div className="page-head"><div>
         <h1>Invites</h1>
-        <div className="sub">Generate onboarding invite links for vendors, real estate developers, and investors. Add a company name and details to build a pre-filled public claim page; each link routes to the right onboarding.</div>
+        <div className="sub">Generate onboarding invite links for vendors, real estate developers, and Capital Partners. Add a company name and details to build a pre-filled public claim page; each link routes to the right onboarding.</div>
       </div></div>
 
       {err && <div className="err">{err}</div>}

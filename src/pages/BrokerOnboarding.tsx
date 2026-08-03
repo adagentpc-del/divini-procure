@@ -132,7 +132,7 @@ export default function BrokerOnboarding() {
             </select>
           </div>
           <div className="field"><label>License number (optional)</label><input value={licenseNumber} onChange={(e) => setLicenseNumber(e.target.value)} /></div>
-          <div className="field"><label>Investor network type</label><input value={investorNetworkType} onChange={(e) => setInvestorNetworkType(e.target.value)} placeholder="family offices, RIAs, HNWIs…" /></div>
+          <div className="field"><label>Capital Partner network type</label><input value={investorNetworkType} onChange={(e) => setInvestorNetworkType(e.target.value)} placeholder="family offices, RIAs, HNWIs…" /></div>
         </div>
         <div className="field"><label>Revenue share terms</label><textarea rows={2} value={revShareTerms} onChange={(e) => setRevShareTerms(e.target.value)} placeholder="Describe the revenue share / referral terms you are proposing." /></div>
         <div className="field"><label>Compliance notes</label><textarea rows={2} value={complianceNotes} onChange={(e) => setComplianceNotes(e.target.value)} placeholder="Any relevant compliance, registration, or disclosure information." /></div>

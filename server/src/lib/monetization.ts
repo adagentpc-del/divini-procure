@@ -45,7 +45,7 @@ export interface ResolveAndRecordFeeInput {
   paymentAuthorizationId?: string | null;
   programId?: string | null;
   ruleType?: string | null;
-  /** 'procurement_fee' (default) | 'infrastructure_fee' | 'capital_introduction' | 'subscription' | 'manual' */
+  /** 'procurement_fee' (default) | 'infrastructure_fee' | 'subscription' | 'manual' */
   sourceType?: string | null;
   actorUserId?: string | null;
   actorEmail?: string | null;
@@ -65,7 +65,6 @@ export interface ResolveAndRecordFeeResult {
 const SOURCE_TYPES = new Set([
   "procurement_fee",
   "infrastructure_fee",
-  "capital_introduction",
   "subscription",
   "manual",
 ]);

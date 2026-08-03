@@ -46,8 +46,8 @@ const LIMIT_LABELS: Record<string, string> = {
   active_project_limit: 'Active projects',
   bid_package_limit: 'Bid packages',
   vendor_invite_limit: 'Vendor invites',
-  investment_program_limit: 'Investment programs',
-  investor_match_limit: 'Investor matches',
+  investment_program_limit: 'Capital programs',
+  investor_match_limit: 'Capital Partner matches',
   seat_limit: 'Team seats',
 };
 
@@ -299,10 +299,10 @@ export default function Subscription() {
                   <li>Bid packages: {limitText(t.bid_package_limit)}</li>
                   <li>Vendor invites: {limitText(t.vendor_invite_limit)}</li>
                   {audience === 'developer' && (
-                    <li>Investment programs: {limitText(t.investment_program_limit)}</li>
+                    <li>Capital programs: {limitText(t.investment_program_limit)}</li>
                   )}
                   {audience === 'investor' && (
-                    <li>Investor matches: {limitText(t.investor_match_limit)}</li>
+                    <li>Capital Partner matches: {limitText(t.investor_match_limit)}</li>
                   )}
                   <li>Team seats: {limitText(t.seat_limit)}</li>
                 </ul>

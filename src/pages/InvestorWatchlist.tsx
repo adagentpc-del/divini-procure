@@ -111,7 +111,7 @@ export default function InvestorWatchlist() {
           Deal Watchlist 🔔
         </h1>
         <p style={{ color: 'var(--ink)', opacity: 0.6, margin: 0 }}>
-          Save your investment criteria and get notified when matching deals are listed.
+          Save your capital criteria and get notified when matching deals are listed.
         </p>
       </div>
 
@@ -173,7 +173,7 @@ export default function InvestorWatchlist() {
                 />
               </label>
               <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: '0.875rem', color: 'var(--ink)' }}>
-                Max Min Investment ($)
+                Max Min Capital ($)
                 <input
                   className="input"
                   type="number"
@@ -222,7 +222,7 @@ export default function InvestorWatchlist() {
                 {item.asset_class && <span className="badge b-neutral" style={{ textTransform: 'capitalize' }}>{item.asset_class}</span>}
                 {item.location && <span>📍 {item.location}</span>}
                 {item.min_target_return != null && <span>Min return: {item.min_target_return}%</span>}
-                {item.max_min_investment_cents != null && <span>Max min investment: {dollars(item.max_min_investment_cents)}</span>}
+                {item.max_min_investment_cents != null && <span>Max min capital: {dollars(item.max_min_investment_cents)}</span>}
                 {item.notify_email && <span>🔔 Email on</span>}
               </div>
             </div>
@@ -262,7 +262,7 @@ export default function InvestorWatchlist() {
                 </div>
                 <div style={{ fontSize: '0.85rem', color: 'var(--ink)', opacity: 0.75, marginBottom: '0.75rem' }}>
                   {deal.preferredReturn != null && <div>Preferred return: {deal.preferredReturn}%</div>}
-                  {deal.minimumInvestmentCents != null && <div>Min investment: {dollars(deal.minimumInvestmentCents)}</div>}
+                  {deal.minimumInvestmentCents != null && <div>Min capital: {dollars(deal.minimumInvestmentCents)}</div>}
                 </div>
                 <a
                   href={`/opportunities?assetClass=${encodeURIComponent(deal.assetClass ?? '')}`}
