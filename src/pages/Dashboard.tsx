@@ -27,7 +27,10 @@ const STATUSES = ['active', 'pending', 'won', 'on hold', 'completed', 'lost'];
 const DASHBOARD_LIMIT_ORDER: Record<'buyer' | 'vendor' | 'investor', string[]> = {
   buyer: ['active_project_limit', 'bid_package_limit', 'vendor_invite_limit'],
   vendor: ['bid_package_limit', 'vendor_invite_limit', 'seat_limit'],
-  investor: ['investor_match_limit', 'investment_program_limit', 'seat_limit'],
+  // investment_program_limit is a developer-only concept (creating a capital
+  // raise) - an investor's usage against it is always 0/0, which reads as an
+  // alarming "at limit" badge for a feature they were never meant to have.
+  investor: ['investor_match_limit', 'seat_limit'],
 };
 
 function money(cents?: number | null) {
@@ -372,6 +375,12 @@ export default function Dashboard() {
       if (company.kind === 'buyer') {
         const b = await getBuildings(company.id);
         setStats({ projects: b.length });
+      } else if (company.kind === 'investor') {
+        const [matches, intros] = await Promise.all([
+          apiGet<{ matches: unknown[] }>('/watchlist/matches').catch(() => ({ matches: [] })),
+          apiGet<{ introductions: unknown[] }>('/investor/introductions').catch(() => ({ introductions: [] })),
+        ]);
+        setStats({ matched: matches.matches?.length ?? 0, bids: intros.introductions?.length ?? 0 });
       } else {
         const prof = await getVendorProfile(company.id);
         const open = await getOpenPackages({ categories: prof?.services ?? [] });
@@ -421,6 +430,11 @@ export default function Dashboard() {
             <div className="card metric"><div className="k">Active projects</div><div className="v">{loading ? '-' : stats.projects ?? 0}</div><div className="d">buildings</div></div>
             <div className="card metric"><div className="k">Open packages</div><div className="v">-</div><div className="d">across projects</div></div>
           </>
+        ) : isInvestor ? (
+          <>
+            <div className="card metric"><div className="k">Deals matched to you</div><div className="v">{loading ? '-' : stats.matched ?? 0}</div><div className="d">on your watchlist</div></div>
+            <div className="card metric"><div className="k">My introductions</div><div className="v">{loading ? '-' : stats.bids ?? 0}</div><div className="d">requested</div></div>
+          </>
         ) : (
           <>
             <div className="card metric"><div className="k">Bids matched to you</div><div className="v">{loading ? '-' : stats.matched ?? 0}</div><div className="d">open packages</div></div>
@@ -450,14 +464,18 @@ export default function Dashboard() {
 
       {isBuyer
         ? <DeveloperVendorTiles companyId={company.id} />
-        : <VendorMonetizationTiles companyId={company.id} />}
+        : isVendor
+          ? <VendorMonetizationTiles companyId={company.id} />
+          : null}
 
       <div className="sectitle">Getting started</div>
       <div className="card">
         <p className="note" style={{ margin: 0, lineHeight: 1.6 }}>
           {isBuyer
             ? 'Post a project to start receiving bids from verified vendors. Compare side by side, award, and pay by ACH or wire.'
-            : 'Join and browse for free. Get verified to unlock bidding and to contact developers. Free vendors get 5 bids per quarter; Vendor Pro is unlimited.'}
+            : isInvestor
+              ? 'Fill in your Capital Partner profile so deal originators know what you look for, then browse active deals or add opportunities to your watchlist for match alerts.'
+              : 'Join and browse for free. Get verified to unlock bidding and to contact developers. Free vendors get 5 bids per quarter; Vendor Pro is unlimited.'}
         </p>
       </div>
 

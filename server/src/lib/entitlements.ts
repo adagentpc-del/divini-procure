@@ -91,8 +91,10 @@ const LIMIT_KEYS: LimitKey[] = [
 ];
 
 /** Map the company.kind onto the tier audience namespace. */
-function kindToAudience(kind: string | null | undefined): "developer" | "vendor" {
-  return kind === "vendor" ? "vendor" : "developer";
+function kindToAudience(kind: string | null | undefined): "developer" | "vendor" | "investor" {
+  if (kind === "vendor") return "vendor";
+  if (kind === "investor") return "investor";
+  return "developer";
 }
 
 /** The fallback free tier key for a given audience. */

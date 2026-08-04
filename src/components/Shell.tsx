@@ -133,9 +133,7 @@ const INVESTOR_SECTIONS: Section[] = [
   ]},
   { label: 'Sourcing', items: [
     ['/my-introductions',    'Introductions',    '✦'],
-    ['/investment-programs', 'Programs',         '◉'],
     ['/public-profile',      'Public Profile',   '◍'],
-    ['/trust-profile',       'Trust Profile',    '✦'],
     ['/relationship-graph',  'Relationship Map', '⊚'],
   ]},
   { label: 'Intelligence', items: [
