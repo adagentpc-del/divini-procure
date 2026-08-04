@@ -69,6 +69,10 @@ export default function Subscription() {
 
   async function upgrade(t: Tier) {
     if (!company) return;
+    if (t.price_cents === null) {
+      setErr('This plan is custom-priced. Please contact sales to get set up.');
+      return;
+    }
     setErr(''); setMsg(''); setBusyKey(t.key);
     const successUrl = `${window.location.origin}/subscription?session_id={CHECKOUT_SESSION_ID}`;
     const cancelUrl = `${window.location.origin}/subscription`;
@@ -133,7 +137,7 @@ export default function Subscription() {
   // model, not something safe to expose as a purchase button yet.
   const relevant = tiers
     .filter((t) => t.audience === audience && !ADDON_TIER_KEYS.has(t.key))
-    .sort((a, b) => a.price_cents - b.price_cents);
+    .sort((a, b) => (a.price_cents ?? Infinity) - (b.price_cents ?? Infinity));
 
   const limitOrder = Object.keys(LIMIT_LABELS);
 
@@ -237,12 +241,14 @@ export default function Subscription() {
                   >
                     {busyKey === t.key
                       ? 'Working...'
+                      : t.price_cents === null
+                      ? 'Contact us'
                       : t.price_cents > 0
                       ? `Upgrade - ${money(t.price_cents)}`
                       : 'Switch to this plan'}
                   </button>
                 )}
-                {current && t.price_cents > 0 && (
+                {current && !!t.price_cents && (
                   <button
                     className="btn"
                     style={{ marginTop: 12, width: '100%' }}

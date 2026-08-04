@@ -13,7 +13,8 @@ export type Tier = {
   key: string;
   name: string;
   audience: Audience;
-  price_cents: number;
+  /** null = custom/contact-us pricing (e.g. an Enterprise tier), distinct from a real $0 free tier. */
+  price_cents: number | null;
   ai_features: boolean;
   reporting_access: boolean;
   white_glove: boolean;
@@ -72,10 +73,13 @@ export function freeTierKeyForAudience(audience: Audience): string {
 export function basePlansFor(tiers: Tier[], audience: Audience): Tier[] {
   return tiers
     .filter((t) => t.audience === audience && !ADDON_TIER_KEYS.has(t.key))
-    .sort((a, b) => a.price_cents - b.price_cents);
+    // Custom-priced (null) tiers sort last - they are the highest, most
+    // bespoke tier, never the cheapest, even though their price is unknown.
+    .sort((a, b) => (a.price_cents ?? Infinity) - (b.price_cents ?? Infinity));
 }
 
-export function money(cents: number): string {
+export function money(cents: number | null): string {
+  if (cents === null) return 'Custom';
   if (!cents) return 'Free';
   return `$${(cents / 100).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}/mo`;
 }

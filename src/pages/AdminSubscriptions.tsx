@@ -16,7 +16,7 @@ type Tier = {
   key: string;
   name: string;
   audience: 'developer' | 'vendor' | 'investor';
-  price_cents: number;
+  price_cents: number | null;
   active_project_limit: number | null;
   bid_package_limit: number | null;
   vendor_invite_limit: number | null;
@@ -58,6 +58,7 @@ function lim(n: number | null): string {
   return n === null ? '∞' : String(n);
 }
 function money(cents: number | null): string {
+  if (cents === null) return 'Custom';
   if (!cents) return 'Free';
   return `$${(cents / 100).toLocaleString()}/mo`;
 }
@@ -230,7 +231,7 @@ export default function AdminSubscriptions() {
             </div>
             <div className="field">
               <label>Price (cents)</label>
-              <input type="number" value={edit.price_cents} onChange={(e) => setEdit({ ...edit, price_cents: Number(e.target.value) || 0 })} />
+              <input type="number" placeholder="blank = custom pricing" value={edit.price_cents ?? ''} onChange={(e) => setEdit({ ...edit, price_cents: e.target.value === '' ? null : Number(e.target.value) || 0 })} />
             </div>
           </div>
           <div className="two">

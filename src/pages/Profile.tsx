@@ -4,7 +4,7 @@ import { useAuth } from '../lib/auth';
 import { getVendorProfile, updateCompany, deleteMyAccount, exportMyData, transferOwnership } from '../lib/db';
 import { useToast } from '../lib/toast';
 import { apiGet } from '../lib/api';
-import { type Entitlement, type LimitCheck } from '../lib/tiers';
+import { type Entitlement, type LimitCheck, money } from '../lib/tiers';
 
 export default function Profile() {
   const { toast } = useToast();
@@ -143,7 +143,7 @@ export default function Profile() {
             <div className="note" style={{ lineHeight: 1.8 }}>
               Plan: <strong>{entitlement ? entitlement.name : 'Loading…'}</strong><br />
               {entitlement && (
-                <>Price: <strong>{entitlement.price_cents ? `$${(entitlement.price_cents / 100).toLocaleString()} / mo` : 'Free'}</strong><br /></>
+                <>Price: <strong>{money(entitlement.price_cents)}</strong><br /></>
               )}
               Billing is processed securely by Stripe.
             </div>

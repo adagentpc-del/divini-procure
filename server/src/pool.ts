@@ -6,7 +6,15 @@
 import pg from "pg";
 import { DATABASE_URL, IS_PROD } from "./config.js";
 
-const { Pool } = pg;
+const { Pool, types } = pg;
+
+// Every bigint column in this schema is a *_cents money amount or a file
+// size in bytes - never a value near the 64-bit range - but node-postgres
+// returns bigint (OID 20) as a string by default to avoid silent precision
+// loss for values beyond Number.MAX_SAFE_INTEGER. That default makes every
+// `price_cents === 0` / `=== null` check downstream compare a string against
+// a number and silently fail. Parse to a JS number app-wide instead.
+types.setTypeParser(20, (val: string) => (val === null ? null : parseInt(val, 10)));
 
 export const pool = new Pool({
   connectionString: DATABASE_URL || undefined,

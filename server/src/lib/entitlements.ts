@@ -31,7 +31,8 @@ export interface Tier {
   key: string;
   name: string;
   audience: "developer" | "vendor" | "investor";
-  price_cents: number;
+  /** null = custom/contact-us pricing, distinct from a real $0 free tier. */
+  price_cents: number | null;
   active_project_limit: number | null;
   bid_package_limit: number | null;
   vendor_invite_limit: number | null;
@@ -49,7 +50,7 @@ export interface Entitlement {
   tier_key: string | null;
   audience: "developer" | "vendor" | "investor";
   name: string;
-  price_cents: number;
+  price_cents: number | null;
   ai_features: boolean;
   reporting_access: boolean;
   white_glove: boolean;
@@ -146,7 +147,7 @@ export async function getEntitlement(companyId: string): Promise<Entitlement> {
       tier_key: tier?.key ?? null,
       audience: tierAudience,
       name: tier?.name ?? "Free",
-      price_cents: tier?.price_cents ?? 0,
+      price_cents: tier ? tier.price_cents : 0,
       ai_features: tier?.ai_features ?? false,
       reporting_access: tier?.reporting_access ?? false,
       white_glove: tier?.white_glove ?? false,
@@ -165,7 +166,7 @@ export async function getEntitlement(companyId: string): Promise<Entitlement> {
     tier_key: tier?.key ?? ent.tier_key ?? null,
     audience: tierAudience,
     name: tier?.name ?? "Custom",
-    price_cents: tier?.price_cents ?? 0,
+    price_cents: tier ? tier.price_cents : 0,
     ai_features: ent.ai_features ?? tier?.ai_features ?? false,
     reporting_access: ent.reporting_access ?? tier?.reporting_access ?? false,
     white_glove: ent.white_glove ?? tier?.white_glove ?? false,

@@ -297,7 +297,7 @@ router.post(
         key,
         b.name ?? key,
         audience,
-        Number.isFinite(Number(b.price_cents)) ? Number(b.price_cents) : 0,
+        b.price_cents === null ? null : Number.isFinite(Number(b.price_cents)) ? Number(b.price_cents) : 0,
         b.active_project_limit ?? null,
         b.bid_package_limit ?? null,
         b.vendor_invite_limit ?? null,
@@ -527,6 +527,13 @@ router.post(
       [tierKey],
     );
     if (!tier) return res.status(404).json({ error: "tier not found" });
+
+    // Custom/contact-us pricing (price_cents is NULL): never self-serve, and
+    // never free - Number(null) is 0, so this must be checked before the
+    // free-tier fallthrough below or a custom tier would be assigned at $0.
+    if (tier.price_cents === null) {
+      return res.status(400).json({ error: "This plan is custom-priced. Please contact sales.", contactSales: true });
+    }
 
     // Free tier or Stripe not configured: assign immediately.
     if (Number(tier.price_cents) <= 0 || !stripe.isConfigured()) {

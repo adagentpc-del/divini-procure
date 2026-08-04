@@ -58,7 +58,7 @@ async function resolveMonthlyGrant(kind: ActorKind, actorId: string): Promise<nu
     if (kind === "company") {
       const { getEntitlement } = await import("./entitlements.js");
       const ent = await getEntitlement(actorId);
-      const paid = Number(ent?.price_cents ?? 0) > 0 || ent?.reporting_access === true;
+      const paid = ent?.price_cents === null || Number(ent?.price_cents ?? 0) > 0 || ent?.reporting_access === true;
       return paid ? DEVELOPER_PRO_MONTHLY_GRANT : DEVELOPER_MONTHLY_GRANT;
     }
     const row = await q1<{ plan: string | null }>(

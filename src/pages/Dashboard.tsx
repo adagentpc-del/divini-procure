@@ -38,7 +38,8 @@ function money(cents?: number | null) {
 // Distinct from money() above: a $0 subscription plan reads as "Free", but
 // money()'s existing callers (fees owed/paid) must keep showing "$0" - not
 // the same wording, so not the same function.
-function planPrice(cents: number): string {
+function planPrice(cents: number | null): string {
+  if (cents === null) return 'Custom';
   return cents ? `${money(cents)}/mo` : 'Free';
 }
 

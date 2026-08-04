@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import VendorBadges from '../components/VendorBadges';
 import { apiGet } from '../lib/api';
-import { type Tier, type CompanyKind, audienceForKind, basePlansFor, limitText } from '../lib/tiers';
+import { type Tier, type CompanyKind, audienceForKind, basePlansFor, limitText, money } from '../lib/tiers';
 
 /**
  * Public pricing page for Divini Procure.
@@ -229,7 +229,7 @@ export default function Pricing() {
               <div className="note" style={{ textAlign: 'center', padding: '30px 0' }}>Loading plans...</div>
             ) : (
               plans.map((t, i) => {
-                const isMostCapable = i === plans.length - 1 && t.price_cents > 0;
+                const isMostCapable = i === plans.length - 1 && t.price_cents !== 0;
                 const rows = FEATURE_ROWS[activeKind](t);
                 return (
                   <div className={`plan${isMostCapable ? ' hl' : ''}`} key={t.key}>
@@ -239,8 +239,8 @@ export default function Pricing() {
                       {t.price_cents === 0 ? 'Everything you need to start' : t.ai_features ? 'AI-assisted tools included' : 'For teams scaling up'}
                     </div>
                     <div className="price">
-                      {t.price_cents === 0 ? 'Free' : `$${(t.price_cents / 100).toLocaleString()}`}
-                      {t.price_cents > 0 && <span className="cad">/mo</span>}
+                      {money(t.price_cents).replace('/mo', '')}
+                      {!!t.price_cents && <span className="cad">/mo</span>}
                     </div>
                     <ul>
                       {rows.map((f) => <li key={f}>{f}</li>)}
@@ -249,7 +249,7 @@ export default function Pricing() {
                       {t.white_glove && <li>White-glove support</li>}
                     </ul>
                     <button className={`btn ${isMostCapable ? 'primary' : ''}`} onClick={() => choosePlan(t.key)}>
-                      {t.price_cents === 0 ? 'Start free' : `Choose ${t.name}`}
+                      {t.price_cents === 0 ? 'Start free' : t.price_cents === null ? 'Contact us' : `Choose ${t.name}`}
                     </button>
                   </div>
                 );
