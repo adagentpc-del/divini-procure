@@ -19,6 +19,7 @@ import {
 } from '../lib/db';
 import { apiGet, apiSend } from '../lib/api';
 import { type Tier, audienceForKind, basePlansFor, freeTierKeyForAudience, money, limitText } from '../lib/tiers';
+import { FREE_BID_LIMIT } from '../lib/monetization';
 
 const VENDOR_SERVICES = [
   'Millwork', 'Cabinetry', 'Doors', 'Furniture', 'Lighting',
@@ -571,9 +572,8 @@ export default function Onboarding() {
                         <span className="note">{money(t.price_cents)}</span>
                       </div>
                       <div className="note" style={{ fontSize: 12, marginTop: 6, paddingLeft: 24 }}>
-                        {t.bid_package_limit !== undefined && kind !== 'investor' && `${limitText(t.bid_package_limit)} bid packages`}
-                        {kind === 'buyer' && ` · ${limitText(t.active_project_limit)} active projects`}
-                        {kind === 'vendor' && ` · ${limitText(t.vendor_invite_limit)} vendor invites`}
+                        {kind === 'buyer' && `${limitText(t.bid_package_limit)} bid packages · ${limitText(t.active_project_limit)} active projects`}
+                        {kind === 'vendor' && `${t.key === freeTierKeyForAudience('vendor') ? FREE_BID_LIMIT : 'Unlimited'} bids per quarter · ${limitText(t.vendor_invite_limit)} vendor invites`}
                         {kind === 'investor' && `${limitText(t.investor_match_limit)} Capital Partner matches`}
                         {(t.ai_features || t.reporting_access || t.white_glove) && ' · '}
                         {t.ai_features && 'AI features '}

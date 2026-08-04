@@ -26,7 +26,13 @@ const STATUSES = ['active', 'pending', 'won', 'on hold', 'completed', 'lost'];
 // Subscription; this is a summary, not a duplicate of that page.
 const DASHBOARD_LIMIT_ORDER: Record<'buyer' | 'vendor' | 'investor', string[]> = {
   buyer: ['active_project_limit', 'bid_package_limit', 'vendor_invite_limit'],
-  vendor: ['bid_package_limit', 'vendor_invite_limit', 'seat_limit'],
+  // bid_package_limit and vendor_invite_limit both gate buyer-only actions
+  // (creating a bid package on a building you own; inviting a vendor to
+  // one) - a vendor account never triggers either, so vendor_free's real
+  // vendor_invite_limit of 0 always rendered as a permanent, unearned
+  // "At limit" badge. A vendor's actual bidding cap is the separate bid-
+  // credits system shown in the "Your account" tiles below, not this list.
+  vendor: ['seat_limit'],
   // investment_program_limit is a developer-only concept (creating a capital
   // raise) - an investor's usage against it is always 0/0, which reads as an
   // alarming "at limit" badge for a feature they were never meant to have.
