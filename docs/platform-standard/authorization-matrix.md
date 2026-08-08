@@ -189,6 +189,22 @@ SECURITY`):
 | `documents` | owning company's members, or admin | owning company's members, or admin |
 | `subscription_entitlements` | owning company's members, or admin | owning company's members, or admin |
 | `subscription_tiers` | any (pricing page is public) | admin only |
+| `vendor_profiles` | any (buyer-side matching/verification-gate reads cross-tenant by design; `verify_status` is a public badge, not PII) | owning vendor company (onboarding bootstrap), or admin (all other writes are behind `requireAdmin` - confirmed by tracing every call site) |
+| `package_line_items` | any (marketplace discovery - a vendor must see line items to bid) | members of the company owning the package's building, or admin |
+| `bid_items` | the bidding vendor, or the package's building owner (buyer-side quote comparison), or admin | same - via a subquery on `bids`, not on itself, so this cannot recurse the way `company_members` did |
+| `rfq_questions` | any (public Q&A on the marketplace listing) | INSERT as your own vendor company; UPDATE (answer) only the package's building owner |
+| `feature_flags` | any authenticated user (`GET /feature-flags` requires `requireUser`, not `requireAdmin`) | admin only |
+
+**Deliberately out of scope for this pass:** `bid_line_items` and
+`bid_payment_milestones` (the newer "Bid Studio" structured-draft feature,
+added after the original Supabase-era RLS design this retrofit restored)
+are not yet RLS-protected. Every access to them already goes through
+`bid-studio.ts`'s own `authorizeDraft()`/`authorizeViaChild()` app-layer
+checks (vendor-company-membership or admin, verified by reading the file),
+so this is not an active gap today, but it means RLS's defense-in-depth
+guarantee does not yet extend to that feature. Flagged as R-18 rather than
+silently left uncovered or expanded into without the same live-tracing
+discipline used for every other table in this pass.
 
 ### RLS adversarial verification (live, 2026-08-08, DB layer directly - not via the app)
 
@@ -217,3 +233,17 @@ for own document -> vendor requests signed URL for buyer's document (403,
 correctly denied) -> delete account (own `company_members` row removed,
 then the now-orphaned company deleted, then the `users` row deleted) - all
 passed. Full server unit suite (173 tests) also passes unchanged.
+
+**Extended 2026-08-08 (same day, gap closure):** the initial RLS pass
+missed 5 tables that were part of the original documented design intent
+(`vendor_profiles`, `package_line_items`, `bid_items`, `rfq_questions`,
+`feature_flags` - see `db.ts`'s own header comment, which named all of
+them). Added policies for each by tracing every real read/write call site
+(no speculative access patterns). Live-verified: vendor company creation
+(writes `vendor_profiles`), adding a package line item, a vendor asking an
+RFQ question and the buyer answering it, and a vendor submitting a priced
+bid with `bid_items` (read back correctly by the buyer via
+`GET /quotes/compare/:packageId`, a genuine cross-tenant read through the
+building-ownership path). Re-ran the two-pass `apply-all.sql` bootstrap
+against a fresh database (clean both passes, 160 tables) and the full
+173-test unit suite (still 173/173) after this extension.

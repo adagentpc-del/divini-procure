@@ -361,3 +361,141 @@ create policy sub_tiers_select on subscription_tiers
 drop policy if exists sub_tiers_write_admin on subscription_tiers;
 create policy sub_tiers_write_admin on subscription_tiers
   for all using (current_user_is_admin());
+
+-- ============================================================================
+-- vendor_profiles
+-- READ:  any (matches companies/buildings/packages - buyer-side matching
+--        (procure-moat.ts) and verification-gate checks (verificationGate.ts)
+--        both read a VENDOR's profile from a BUYER's session; verify_status
+--        is a public "verified" badge, not sensitive data).
+-- WRITE: the owning vendor company (createCompanyForUser's self-insert at
+--        onboarding, same transaction as the company_members bootstrap row,
+--        so current_user_company_ids() already sees it), or admin (every
+--        other write - db/../routes/verification.ts's credential-review
+--        recompute functions - is behind requireAdmin, confirmed by
+--        tracing every real call site, not assumed).
+-- ============================================================================
+alter table vendor_profiles enable row level security;
+alter table vendor_profiles force row level security;
+
+drop policy if exists vendor_profiles_select on vendor_profiles;
+create policy vendor_profiles_select on vendor_profiles
+  for select using (true);
+
+drop policy if exists vendor_profiles_write on vendor_profiles;
+create policy vendor_profiles_write on vendor_profiles
+  for all using (
+    company_id::text = any(array(select current_user_company_ids()))
+    or current_user_is_admin()
+  );
+
+-- ============================================================================
+-- package_line_items (bill-of-quantities line items on a package)
+-- READ:  any (marketplace discovery - a vendor must see the line items to
+--        bid; getLineItems() in db.ts takes no ownership-checked userId).
+-- WRITE: members of the company owning the package's building (app-layer
+--        already checks this via userOwnsPackage() before every write - see
+--        addLineItem/deleteLineItem in db.ts), or admin.
+-- ============================================================================
+alter table package_line_items enable row level security;
+alter table package_line_items force row level security;
+
+drop policy if exists package_line_items_select on package_line_items;
+create policy package_line_items_select on package_line_items
+  for select using (true);
+
+drop policy if exists package_line_items_write on package_line_items;
+create policy package_line_items_write on package_line_items
+  for all using (
+    exists (
+      select 1 from packages p
+        join buildings b on b.id = p.building_id
+       where p.id = package_line_items.package_id
+         and b.company_id::text = any(array(select current_user_company_ids()))
+    )
+    or current_user_is_admin()
+  );
+
+-- ============================================================================
+-- bid_items (priced line items on a bid)
+-- READ/WRITE: the bidding vendor company, or the package's building owner
+--        (buyer-side quote comparison - routes/quote-comparison.ts reads
+--        every invited vendor's bid_items from the buyer's own session),
+--        or admin. Mirrors the bids table's own visibility rule exactly,
+--        via a subquery on bids (not on bid_items itself, so this cannot
+--        recurse the way company_members did).
+-- ============================================================================
+alter table bid_items enable row level security;
+alter table bid_items force row level security;
+
+drop policy if exists bid_items_policy on bid_items;
+create policy bid_items_policy on bid_items
+  for all using (
+    exists (
+      select 1 from bids bd
+       where bd.id = bid_items.bid_id
+         and (
+           bd.vendor_company_id::text = any(array(select current_user_company_ids()))
+           or exists (
+             select 1 from packages p
+               join buildings b on b.id = p.building_id
+              where p.id = bd.package_id
+                and b.company_id::text = any(array(select current_user_company_ids()))
+           )
+         )
+    )
+    or current_user_is_admin()
+  );
+
+-- ============================================================================
+-- rfq_questions
+-- READ:  any (public Q&A on the marketplace listing - getQuestions() in
+--        db.ts takes no ownership-checked userId, matches the header
+--        comment's original design intent).
+-- INSERT: as your own vendor company (askQuestion() already calls
+--        assertMemberOfCompany(userId, vendorCompanyId) before this insert).
+-- UPDATE (answer): only the package's building owner (answerQuestion()
+--        already checks this via a join before the update).
+-- ============================================================================
+alter table rfq_questions enable row level security;
+alter table rfq_questions force row level security;
+
+drop policy if exists rfq_questions_select on rfq_questions;
+create policy rfq_questions_select on rfq_questions
+  for select using (true);
+
+drop policy if exists rfq_questions_insert on rfq_questions;
+create policy rfq_questions_insert on rfq_questions
+  for insert with check (
+    vendor_company_id::text = any(array(select current_user_company_ids()))
+    or current_user_is_admin()
+  );
+
+drop policy if exists rfq_questions_update on rfq_questions;
+create policy rfq_questions_update on rfq_questions
+  for update using (
+    exists (
+      select 1 from packages p
+        join buildings b on b.id = p.building_id
+       where p.id = rfq_questions.package_id
+         and b.company_id::text = any(array(select current_user_company_ids()))
+    )
+    or current_user_is_admin()
+  );
+
+-- ============================================================================
+-- feature_flags
+-- READ:  any authenticated user (GET /feature-flags requires requireUser,
+--        not requireAdmin - matches header comment's original design intent).
+-- WRITE: admin only (PATCH /feature-flags/:key requires requireAdmin).
+-- ============================================================================
+alter table feature_flags enable row level security;
+alter table feature_flags force row level security;
+
+drop policy if exists feature_flags_select on feature_flags;
+create policy feature_flags_select on feature_flags
+  for select using (true);
+
+drop policy if exists feature_flags_write_admin on feature_flags;
+create policy feature_flags_write_admin on feature_flags
+  for all using (current_user_is_admin());
