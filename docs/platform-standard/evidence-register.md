@@ -41,3 +41,8 @@ Evidence references for PASS/PARTIAL controls, by section.
 | S02-07 | File (new) | `docs/platform-standard/data-retention-matrix.md` |
 | S02-08 | File | `src/components/CookieBanner.tsx` (banner + `consentGranted()` export) |
 | S02-08 | Command output | `grep -rln "consentGranted" src/` → only `CookieBanner.tsx` itself; no other caller found |
+| S02-10 | File (new) | `server/src/lib/fieldCrypto.ts`; `tests/fieldCrypto.test.ts` (6 tests: round-trip, null/empty pass-through, random-IV non-determinism, legacy-plaintext fallback, tamper detection) |
+| S02-10 | Command output (live) | `select account_number, routing_number, iban from referral_partner_banking ...` → `RFBGMZlS6TDU+...` (base64 of the `DPF1` magic header + IV + tag + ciphertext), not plaintext |
+| S02-10 | Command output (live) | `GET /partner/onboarding/banking` (authenticated as the owning partner) → `{"account_number":"****6789","routing_number":"****0021","iban":"****6819", ...}` - correctly masked from the real decrypted values, not the ciphertext |
+| S02-11 | Command output (live) | Before fix: `POST /partner/onboarding/agreement/sign` and `POST /partner/onboarding/banking` both returned `500 {"error":"internal error"}` with server log `column "referred_by_partner_id" does not exist`. After fix: both returned `200`. |
+| S02-11 | Command output | `grep -rn "referred_by_partner_id" db/*.sql` → no matches anywhere in the schema (confirms this was never a valid column, not a local environment drift) |

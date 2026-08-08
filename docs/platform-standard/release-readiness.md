@@ -18,16 +18,31 @@ launch-readiness verdict.
 | 02 Baseline Legal/Privacy/Consent | **READY WITH P1 ITEMS** | Legal-doc inventory, privacy-request architecture (delete/export), and deletion-revokes-sessions were already solidly built and are confirmed PASS. Two real gaps found and fixed live: (1) consent acceptance was overwrite-only with no history - added an append-only `user_legal_acceptances` log; (2) the Vendor Agreement's binding fee terms were accepted client-side only with zero server record or enforcement - now server-verified with a 400 rejection and an automated test. Two items remain genuinely open: no DMCA/AUP content (legal drafting, not carried out unilaterally) and no automated data-retention enforcement job (documented in a new retention matrix, not built) |
 | 03-18 | NOT STARTED | Queued; see task list |
 
+## Gap-closure pass (post-Section-02, same day)
+
+Per an explicit instruction to close what's fixable before moving on:
+resolved **R-01** (referral-partner banking PII now encrypted at rest —
+`server/src/lib/fieldCrypto.ts`) and, found in the course of verifying that
+fix, a pre-existing **complete outage of the entire referral-partner
+onboarding flow** (agreement view/sign, banking submit/view all 500'd
+unconditionally on a join to a column that never existed in any schema
+file — fixed to join on the real `referral_code`/`code` columns). Both
+verified live against the real running app, not just read in source. Full
+suite is 173/173 passing. Not closed (correctly deferred, not avoided):
+items that are genuinely owner/counsel decisions (R-02, R-04, R-06) or that
+belong to a section not yet reached (R-03 → 14, R-08 → 06, R-05 → 03).
+
 ## Carried-forward items (will not be re-derived, only re-tested)
 
-- **R-01** (P1): referral-partner bank account numbers stored in plaintext — owned by Section 06.
+- **R-01** — **CLOSED.** Referral-partner banking PII encrypted at rest.
 - **R-02** (P0, procedural): no securities counsel review yet on the investment-matching feature — owned by Section 17, must stay resolved (i.e., no per-close fee added) until reviewed.
 - **R-03** (P1): no server-side error monitoring — owned by Section 14.
 - **R-04** (CONDITIONAL): state privacy-law thresholds unconfirmed — owned by Section 02/17 (partially addressed: the mechanics to honor a right-to-delete/export request now exist regardless of threshold; only the "must we proactively offer X" legal question remains).
 - **R-05** (P1): no branch-protection rule visible — owned by Section 03.
-- **R-06** (P1, new): no DMCA/AUP content — owned by Owner/Counsel, not an engineering task.
-- **R-07** (P2, new): cookie-consent choice captured but unenforced (nothing to enforce today) — re-open to P1 if a tracking SDK is ever added.
-- **R-08** (P1, new): no automated data-retention/purge job — owned by Section 06.
+- **R-06** (P1): no DMCA/AUP content — owned by Owner/Counsel, not an engineering task.
+- **R-07** (P2): cookie-consent choice captured but unenforced (nothing to enforce today) — re-open to P1 if a tracking SDK is ever added.
+- **R-08** (P1): no automated data-retention/purge job — owned by Section 06.
+- **R-09** — **CLOSED.** Referral-partner onboarding endpoints were completely broken (unconditional 500); fixed.
 
 ## What "existed already" going into this engagement
 

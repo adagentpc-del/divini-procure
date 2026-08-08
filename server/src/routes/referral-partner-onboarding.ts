@@ -26,6 +26,7 @@ import { getAuth, requireUser, requireAdmin } from "../auth.js";
 import { q, q1 } from "../pool.js";
 import { sendEmail, emailEnabled } from "../lib/email.js";
 import { PUBLIC_APP_URL } from "../config.js";
+import { encryptField, decryptField } from "../lib/fieldCrypto.js";
 
 const h =
   (fn: (req: Request, res: Response) => Promise<unknown>) =>
@@ -138,8 +139,14 @@ router.get(
   requireUser,
   h(async (req, res) => {
     const auth = getAuth(req);
-    // Find the referral partner linked to this user via user_referrals.referred_by_partner_id
-    // OR directly via partner_email matching the user email.
+    // Find the referral partner linked to this user via a matching
+    // user_referrals.code -> referral_partners.referral_code, OR directly
+    // via partner_email matching the user email. (Was previously joined on
+    // a user_referrals.referred_by_partner_id column that does not exist in
+    // any schema file - every call to this endpoint 500'd unconditionally,
+    // since Postgres validates the whole WHERE clause including both OR
+    // branches. Found and fixed during the ALFY2 Section 01/02 field-
+    // encryption verification pass.)
     const partner = await q1<{
       id: string;
       name: string;
@@ -154,9 +161,9 @@ router.get(
       `SELECT rp.*
        FROM referral_partners rp
        WHERE rp.partner_email = $1
-          OR rp.id IN (
-            SELECT referred_by_partner_id FROM user_referrals
-            WHERE referred_email = $1 AND referred_by_partner_id IS NOT NULL
+          OR rp.referral_code IN (
+            SELECT code FROM user_referrals
+            WHERE referred_email = $1 AND code IS NOT NULL
           )
        ORDER BY rp.created_at DESC
        LIMIT 1`,
@@ -216,9 +223,9 @@ router.get(
               rp.flat_fee_cents, rp.applies_to, rp.terms
        FROM referral_partners rp
        WHERE rp.partner_email = $1
-          OR rp.id IN (
-            SELECT referred_by_partner_id FROM user_referrals
-            WHERE referred_email = $1 AND referred_by_partner_id IS NOT NULL
+          OR rp.referral_code IN (
+            SELECT code FROM user_referrals
+            WHERE referred_email = $1 AND code IS NOT NULL
           )
        ORDER BY rp.created_at DESC LIMIT 1`,
       [auth.email ?? ""],
@@ -273,9 +280,9 @@ router.post(
     }>(
       `SELECT rp.* FROM referral_partners rp
        WHERE rp.partner_email = $1
-          OR rp.id IN (
-            SELECT referred_by_partner_id FROM user_referrals
-            WHERE referred_email = $1 AND referred_by_partner_id IS NOT NULL
+          OR rp.referral_code IN (
+            SELECT code FROM user_referrals
+            WHERE referred_email = $1 AND code IS NOT NULL
           )
        ORDER BY rp.created_at DESC LIMIT 1`,
       [auth.email ?? ""],
@@ -371,9 +378,9 @@ router.post(
     const partner = await q1<{ id: string; name: string; partner_email: string | null }>(
       `SELECT rp.id, rp.name, rp.partner_email FROM referral_partners rp
        WHERE rp.partner_email = $1
-          OR rp.id IN (
-            SELECT referred_by_partner_id FROM user_referrals
-            WHERE referred_email = $1 AND referred_by_partner_id IS NOT NULL
+          OR rp.referral_code IN (
+            SELECT code FROM user_referrals
+            WHERE referred_email = $1 AND code IS NOT NULL
           )
        ORDER BY rp.created_at DESC LIMIT 1`,
       [auth.email ?? ""],
@@ -390,7 +397,14 @@ router.post(
       return res.status(400).json({ error: "Please sign the Referral Partner Agreement before submitting banking info." });
     }
 
-    // Upsert banking info
+    // Upsert banking info. account_number/routing_number/iban are encrypted
+    // at rest (see server/src/lib/fieldCrypto.ts) - they are enough on their
+    // own to originate an ACH debit or wire, so a Postgres dump/backup leak
+    // should not hand those out in cleartext.
+    const encAccountNumber = encryptField(accountNumber?.trim() || null);
+    const encRoutingNumber = encryptField(routingNumber?.trim() || null);
+    const encIban = encryptField(iban?.trim() || null);
+
     const existing = await q1<{ id: string }>(
       `SELECT id FROM referral_partner_banking WHERE partner_id = $1`,
       [partner.id],
@@ -409,9 +423,9 @@ router.post(
          WHERE partner_id = $15`,
         [
           payoutMethod, beneficiaryName?.trim(), bankName?.trim() || null,
-          accountNumber?.trim() || null, routingNumber?.trim() || null,
+          encAccountNumber, encRoutingNumber,
           accountType || null, swiftCode?.trim() || null,
-          iban?.trim() || null, bankAddress?.trim() || null,
+          encIban, bankAddress?.trim() || null,
           zelleEmail?.trim() || null, paypalEmail?.trim() || null,
           checkPayableTo?.trim() || null, checkAddress?.trim() || null,
           notes?.trim() || null, partner.id,
@@ -427,9 +441,9 @@ router.post(
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
         [
           partner.id, auth.userId, payoutMethod, beneficiaryName?.trim(),
-          bankName?.trim() || null, accountNumber?.trim() || null,
-          routingNumber?.trim() || null, accountType || null,
-          swiftCode?.trim() || null, iban?.trim() || null,
+          bankName?.trim() || null, encAccountNumber,
+          encRoutingNumber, accountType || null,
+          swiftCode?.trim() || null, encIban,
           bankAddress?.trim() || null, zelleEmail?.trim() || null,
           paypalEmail?.trim() || null, checkPayableTo?.trim() || null,
           checkAddress?.trim() || null, notes?.trim() || null,
@@ -467,9 +481,9 @@ router.get(
     const partner = await q1<{ id: string }>(
       `SELECT rp.id FROM referral_partners rp
        WHERE rp.partner_email = $1
-          OR rp.id IN (
-            SELECT referred_by_partner_id FROM user_referrals
-            WHERE referred_email = $1 AND referred_by_partner_id IS NOT NULL
+          OR rp.referral_code IN (
+            SELECT code FROM user_referrals
+            WHERE referred_email = $1 AND code IS NOT NULL
           )
        ORDER BY rp.created_at DESC LIMIT 1`,
       [auth.email ?? ""],
@@ -488,12 +502,14 @@ router.get(
 
     if (!banking) return res.json({ banking: null });
 
-    // Mask sensitive fields
+    // Decrypt then mask - the client never receives the full value or the
+    // raw ciphertext, only the last 4 characters (see fieldCrypto.ts).
     res.json({
       banking: {
         ...banking,
-        account_number: maskAccount(banking.account_number as string | null),
-        routing_number: maskAccount(banking.routing_number as string | null),
+        account_number: maskAccount(decryptField(banking.account_number as string | null)),
+        routing_number: maskAccount(decryptField(banking.routing_number as string | null)),
+        iban: maskAccount(decryptField(banking.iban as string | null)),
       },
     });
   }),
@@ -514,11 +530,13 @@ router.get(
        JOIN referral_partners rp ON rp.id = rpb.partner_id
        ORDER BY rpb.created_at DESC`,
     );
-    // Mask account numbers for admin list view (full view only on individual drill-down)
+    // Decrypt then mask for the admin list view (no endpoint returns the
+    // full unmasked value - see fieldCrypto.ts).
     const masked = rows.map((r: Record<string, unknown>) => ({
       ...r,
-      account_number: maskAccount(r.account_number as string | null),
-      routing_number: maskAccount(r.routing_number as string | null),
+      account_number: maskAccount(decryptField(r.account_number as string | null)),
+      routing_number: maskAccount(decryptField(r.routing_number as string | null)),
+      iban: maskAccount(decryptField(r.iban as string | null)),
     }));
     res.json({ banking: masked });
   }),
@@ -573,14 +591,15 @@ router.get(
       agreement: agreement
         ? {
             ...agreement,
-            account_number: maskAccount((banking as Record<string, string | null> | null)?.account_number ?? null),
+            account_number: maskAccount(decryptField((banking as Record<string, string | null> | null)?.account_number ?? null)),
           }
         : null,
       banking: banking
         ? {
             ...(banking as Record<string, unknown>),
-            account_number: maskAccount((banking as Record<string, string | null>).account_number),
-            routing_number: maskAccount((banking as Record<string, string | null>).routing_number),
+            account_number: maskAccount(decryptField((banking as Record<string, string | null>).account_number)),
+            routing_number: maskAccount(decryptField((banking as Record<string, string | null>).routing_number)),
+            iban: maskAccount(decryptField((banking as Record<string, string | null>).iban)),
           }
         : null,
     });
