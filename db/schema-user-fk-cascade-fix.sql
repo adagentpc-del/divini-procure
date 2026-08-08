@@ -34,6 +34,59 @@
 -- Idempotent: safe to re-run (drop if exists, then re-add).
 -- Zero em dashes by convention.
 
+-- ============================================================================
+-- PART 2 (added same pass): the identical failure mode, one level removed.
+--
+-- deleteMyAccount() doesn't only delete the users row - when the departing
+-- member was the company's last member, it also deletes the now-orphaned
+-- COMPANY (companies table). 5 more ON DELETE NO ACTION foreign keys
+-- reference companies(id)/bids(id) as "which company/bid was involved"
+-- attribution columns, with the identical consequence: any solo vendor who
+-- had submitted so much as one delivery, submittal, progress photo, or
+-- dispute message could not delete their account either, once their now-
+-- orphaned company hit the same class of constraint.
+--
+-- Reproduced live 2026-08-08 (direct SQL, mirroring deleteMyAccount's own
+-- delete-membership-then-delete-company sequence): a solo vendor company
+-- with one submittal row failed company deletion with
+--   "update or delete on table \"companies\" violates foreign key
+--    constraint \"submittals_vendor_company_id_fkey\""
+--
+-- Two of these five columns (progress_photos.uploaded_by_company_id,
+-- dispute_messages.author_company_id) were NOT NULL, so this also relaxes
+-- them to nullable before adding ON DELETE SET NULL - verified safe by
+-- reading every call site: uploaded_by_company_id is compared for an
+-- ownership check (routes/progress-photos.ts) that fails closed (non-admin
+-- edits/deletes correctly denied) once null, never read for display;
+-- author_company_id is only ever written, never read back server-side; the
+-- one frontend read (DisputeCenter.tsx's "is this message from me" message-
+-- alignment check) degrades to the non-highlighted side for a deleted
+-- company's old messages - a cosmetic difference for a rare edge case, not
+-- a functional break.
+-- ============================================================================
+alter table progress_photos alter column uploaded_by_company_id drop not null;
+alter table dispute_messages alter column author_company_id drop not null;
+
+alter table deliveries drop constraint if exists deliveries_vendor_company_id_fkey;
+alter table deliveries add constraint deliveries_vendor_company_id_fkey
+  foreign key (vendor_company_id) references companies(id) on delete set null;
+
+alter table submittals drop constraint if exists submittals_vendor_company_id_fkey;
+alter table submittals add constraint submittals_vendor_company_id_fkey
+  foreign key (vendor_company_id) references companies(id) on delete set null;
+
+alter table progress_photos drop constraint if exists progress_photos_uploaded_by_company_id_fkey;
+alter table progress_photos add constraint progress_photos_uploaded_by_company_id_fkey
+  foreign key (uploaded_by_company_id) references companies(id) on delete set null;
+
+alter table dispute_messages drop constraint if exists dispute_messages_author_company_id_fkey;
+alter table dispute_messages add constraint dispute_messages_author_company_id_fkey
+  foreign key (author_company_id) references companies(id) on delete set null;
+
+alter table bid_recommendations drop constraint if exists bid_recommendations_selected_bid_id_fkey;
+alter table bid_recommendations add constraint bid_recommendations_selected_bid_id_fkey
+  foreign key (selected_bid_id) references bids(id) on delete set null;
+
 alter table ai_extraction_runs drop constraint if exists ai_extraction_runs_created_by_fkey;
 alter table ai_extraction_runs add constraint ai_extraction_runs_created_by_fkey foreign key (created_by) references users(id) on delete set null;
 alter table bid_revisions drop constraint if exists bid_revisions_created_by_fkey;
