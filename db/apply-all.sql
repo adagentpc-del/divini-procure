@@ -9,6 +9,20 @@
 -- pass resolves any cross-file foreign-key that was declared before its parent
 -- table existed on the first pass. Files are concatenated parents-first.
 -- Zero em dashes.
+--
+-- Row-Level Security note: db/schema-rls.sql (spliced in near the end of
+-- this file) enables and FORCEs RLS on several tables, including a policy
+-- gate on subscription_tiers writes (admin only). Both this file's own
+-- re-runnable seed INSERTs into subscription_tiers (idempotent via ON
+-- CONFLICT) and the RLS bootstrap itself must keep working on every re-run
+-- against an already-migrated database (the documented two-pass procedure
+-- in 23_DEPLOYMENT.md, and CI's db-schema job, both apply this whole file
+-- TWICE against the same database). Running this file at all is itself a
+-- trusted, admin-equivalent operation (a DBA/deploy script, not a live user
+-- request), so set that context for the session up front - this is the
+-- same admin-equivalent treatment schema-rls.sql's own header comment
+-- already documents for background jobs with no request context.
+select set_config('app.is_admin', 't', false);
 -- =====================================================================
 
 
@@ -4749,13 +4763,10 @@ COMMIT;
 -- (AI_PROJECT_OS/13_CHANGELOG.md entry 14).
 \i db/schema-unsubscribe.sql
 
--- NOT included on purpose: db/schema-rls.sql (Postgres Row-Level Security
--- policies). It requires the app to call
--- select set_config('app.user_id', $1, true) on every connection for the
--- policies to scope correctly, and grep confirms server/src never does
--- this anywhere. The file never calls ENABLE ROW LEVEL SECURITY either, so
--- applying it is harmless (the policies stay inert) but provides no actual
--- defense-in-depth today - it is unfinished work, not a bootstrap bug, and
--- silently including it would create false confidence that RLS is active
--- when it is not. Leave for a follow-up pass that also wires up the app.user_id
--- GUC and enables RLS deliberately.
+-- Row-Level Security (Section 05 follow-up). server/src/lib/requestContext.ts
+-- + auth.ts + pool.ts now set app.user_id / app.is_admin on every query (see
+-- db/schema-rls.sql's own header comment), so the policies below are live,
+-- not inert - verified end to end (register/login/company/building/package/
+-- bid/document/account-delete, plus adversarial cross-tenant reads blocked
+-- at the DB layer independent of the app layer).
+\i db/schema-rls.sql

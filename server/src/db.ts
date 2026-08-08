@@ -32,7 +32,7 @@
  * to HTTP 403. This is the critical correctness work of the re-platform.
  */
 import { createHash } from "node:crypto";
-import { q, q1, pool } from "./pool.js";
+import { q, q1, pool, setRlsContext } from "./pool.js";
 import { getAdminAllowedEmails } from "./config.js";
 import { PlanLimitError, enforceLimit } from "./lib/entitlement-guard.js";
 import { ForbiddenError, NotFoundError } from "./lib/errors.js";
@@ -47,6 +47,47 @@ function hashToken(rawToken: string): string {
   return createHash("sha256").update(rawToken).digest("hex");
 }
 export { ForbiddenError, NotFoundError };
+
+/**
+ * Read a single row with a transaction-local admin-equivalent RLS context.
+ * Reserved for the handful of pre-authentication user lookups (login,
+ * forgot-password, verify-email, resend-verification) that must find a
+ * users row by email or token BEFORE any session exists - by definition
+ * there is no "current user" for the users_select policy to match yet.
+ * Each of these routes is already rate-limited and returns a generic,
+ * non-enumerating error on failure, same as before RLS.
+ */
+async function q1AsPreAuth<T = any>(text: string, params: any[] = []): Promise<T | null> {
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    await client.query(`select set_config('app.is_admin', 't', true)`);
+    const res = await client.query(text, params);
+    await client.query("commit");
+    return (res.rows[0] as T) ?? null;
+  } catch (e) {
+    await client.query("rollback").catch(() => {});
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+/** Same as q1AsPreAuth, for statements with no row to return. */
+async function qAsPreAuth(text: string, params: any[] = []): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    await client.query(`select set_config('app.is_admin', 't', true)`);
+    await client.query(text, params);
+    await client.query("commit");
+  } catch (e) {
+    await client.query("rollback").catch(() => {});
+    throw e;
+  } finally {
+    client.release();
+  }
+}
 
 /**
  * Enforce a plan limit before a create. Only a PlanLimitError (which extends
@@ -98,23 +139,36 @@ export interface UserRow {
   created_at: string;
 }
 
-/** Look up a user by (case-insensitive) email. */
+/**
+ * Look up a user by (case-insensitive) email. Pre-authentication by nature
+ * (login, resend-verification, forgot-password all call this before any
+ * session exists) - see q1AsPreAuth().
+ */
 export async function getUserByEmail(email: string): Promise<UserRow | null> {
-  return q1<UserRow>(`select * from users where lower(email) = lower($1)`, [email]);
+  return q1AsPreAuth<UserRow>(`select * from users where lower(email) = lower($1)`, [email]);
 }
 
-/** Look up a user by id. */
+/**
+ * Look up a user by id. Currently only called from the reset-password flow
+ * (pre-authentication - the reset request itself carries no session), so
+ * this also goes through q1AsPreAuth().
+ */
 export async function getUserById(id: string): Promise<UserRow | null> {
-  return q1<UserRow>(`select * from users where id = $1`, [id]);
+  return q1AsPreAuth<UserRow>(`select * from users where id = $1`, [id]);
 }
 
+/** Pre-authentication by nature (the email-verify link). See q1AsPreAuth(). */
 export async function getUserByVerifyToken(rawToken: string): Promise<UserRow | null> {
-  return q1<UserRow>(`select * from users where verify_token = $1`, [hashToken(rawToken)]);
+  return q1AsPreAuth<UserRow>(`select * from users where verify_token = $1`, [hashToken(rawToken)]);
 }
 
-/** Look up a user by a password-reset token. See hashToken() above. */
+/**
+ * Look up a user by a password-reset token. See hashToken() above and
+ * q1AsPreAuth() (pre-authentication by nature - the reset link itself is
+ * the only credential available at this point).
+ */
 export async function getUserByResetToken(rawToken: string): Promise<UserRow | null> {
-  return q1<UserRow>(`select * from users where reset_token = $1`, [hashToken(rawToken)]);
+  return q1AsPreAuth<UserRow>(`select * from users where reset_token = $1`, [hashToken(rawToken)]);
 }
 
 /**
@@ -134,32 +188,60 @@ export async function upsertUserForRegistration(args: {
   consentIp?: string | null;
 }): Promise<UserRow> {
   const hashedVerifyToken = hashToken(args.verifyToken);
-  const existing = await getUserByEmail(args.email);
-  if (existing) {
-    return (await q1<UserRow>(
-      `update users set
-         email = $2,
-         password_hash = $3,
-         email_verified = false,
-         verify_token = $4,
-         verify_expires = $5,
-         terms_agreed_at = coalesce($6, terms_agreed_at),
-         terms_version = coalesce($7, terms_version),
-         consent_ip = coalesce($8, consent_ip)
-       where id = $1
-       returning *`,
-      [existing.id, args.email, args.passwordHash, hashedVerifyToken, args.verifyExpires.toISOString(),
-       args.termsAgreedAt?.toISOString() ?? null, args.termsVersion ?? null, args.consentIp ?? null],
-    ))!;
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    // Registration has no session/identity to check by definition - the
+    // users_select/users_update RLS policies only allow "your own row",
+    // which cannot be true yet. This is the same transaction-local
+    // admin-equivalent escalation used by transferCompanyOwnerEmail, and is
+    // safe for the identical reason: this whole flow is pre-gated at the
+    // route layer (input validation, rate limiting) rather than by a
+    // session that cannot exist yet.
+    await client.query(`select set_config('app.is_admin', 't', true)`);
+
+    const existing = (
+      await client.query<UserRow>(`select * from users where lower(email) = lower($1)`, [args.email])
+    ).rows[0];
+    let row: UserRow;
+    if (existing) {
+      row = (
+        await client.query<UserRow>(
+          `update users set
+             email = $2,
+             password_hash = $3,
+             email_verified = false,
+             verify_token = $4,
+             verify_expires = $5,
+             terms_agreed_at = coalesce($6, terms_agreed_at),
+             terms_version = coalesce($7, terms_version),
+             consent_ip = coalesce($8, consent_ip)
+           where id = $1
+           returning *`,
+          [existing.id, args.email, args.passwordHash, hashedVerifyToken, args.verifyExpires.toISOString(),
+           args.termsAgreedAt?.toISOString() ?? null, args.termsVersion ?? null, args.consentIp ?? null],
+        )
+      ).rows[0];
+    } else {
+      row = (
+        await client.query<UserRow>(
+          `insert into users (id, email, password_hash, email_verified, verify_token, verify_expires,
+                              terms_agreed_at, terms_version, consent_ip)
+           values ($1, $2, $3, false, $4, $5, $6, $7, $8)
+           returning *`,
+          [args.newUserId, args.email, args.passwordHash, hashedVerifyToken, args.verifyExpires.toISOString(),
+           args.termsAgreedAt?.toISOString() ?? null, args.termsVersion ?? null, args.consentIp ?? null],
+        )
+      ).rows[0];
+    }
+    await client.query("commit");
+    return row;
+  } catch (e) {
+    await client.query("rollback").catch(() => {});
+    throw e;
+  } finally {
+    client.release();
   }
-  return (await q1<UserRow>(
-    `insert into users (id, email, password_hash, email_verified, verify_token, verify_expires,
-                        terms_agreed_at, terms_version, consent_ip)
-     values ($1, $2, $3, false, $4, $5, $6, $7, $8)
-     returning *`,
-    [args.newUserId, args.email, args.passwordHash, hashedVerifyToken, args.verifyExpires.toISOString(),
-     args.termsAgreedAt?.toISOString() ?? null, args.termsVersion ?? null, args.consentIp ?? null],
-  ))!;
 }
 
 /** Return a user's role within a company, or null if they are not a member. */
@@ -171,44 +253,53 @@ export async function getMemberRole(userId: string, companyId: string): Promise<
   return row?.role ?? null;
 }
 
-/** Mark a user verified and clear the verify token. */
+/**
+ * Mark a user verified and clear the verify token. Called only from the
+ * pre-auth verify-email and reset-password flows - see q1AsPreAuth().
+ */
 export async function markEmailVerified(userId: string): Promise<UserRow | null> {
-  return q1<UserRow>(
+  return q1AsPreAuth<UserRow>(
     `update users set email_verified = true, verify_token = null, verify_expires = null
        where id = $1 returning *`,
     [userId],
   );
 }
 
-/** Set a fresh verify token (resend-verification). rawToken is hashed before storage. */
+/**
+ * Set a fresh verify token (resend-verification, pre-auth by nature).
+ * rawToken is hashed before storage. See q1AsPreAuth().
+ */
 export async function setVerifyToken(
   userId: string,
   rawToken: string,
   expires: Date,
 ): Promise<void> {
-  await q(`update users set verify_token = $2, verify_expires = $3 where id = $1`, [
+  await qAsPreAuth(`update users set verify_token = $2, verify_expires = $3 where id = $1`, [
     userId,
     hashToken(rawToken),
     expires.toISOString(),
   ]);
 }
 
-/** Set a fresh password-reset token. rawToken is hashed before storage (see hashToken() above). */
+/**
+ * Set a fresh password-reset token (forgot-password, pre-auth by nature).
+ * rawToken is hashed before storage (see hashToken() above and q1AsPreAuth()).
+ */
 export async function setResetToken(
   userId: string,
   rawToken: string,
   expires: Date,
 ): Promise<void> {
-  await q(`update users set reset_token = $2, reset_expires = $3 where id = $1`, [
+  await qAsPreAuth(`update users set reset_token = $2, reset_expires = $3 where id = $1`, [
     userId,
     hashToken(rawToken),
     expires.toISOString(),
   ]);
 }
 
-/** Apply a new password and clear the reset token. */
+/** Apply a new password and clear the reset token. Pre-auth (the reset link is the credential). */
 export async function applyPasswordReset(userId: string, passwordHash: string): Promise<void> {
-  await q(
+  await qAsPreAuth(
     `update users set password_hash = $2, reset_token = null, reset_expires = null where id = $1`,
     [userId, passwordHash],
   );
@@ -243,6 +334,16 @@ export async function transferCompanyOwnerEmail(args: {
   const client = await pool.connect();
   try {
     await client.query("begin");
+    // This function reads/writes a users row for the TARGET email, which is
+    // never the acting user's own identity, and reassigns company_members
+    // rows the acting user doesn't own either - both legitimate only
+    // because assertMemberOfCompany() above already confirmed the acting
+    // user is this company's owner (or an app-level admin) before this
+    // transaction began. Escalate to admin-equivalent for just this one
+    // transaction (auto-reverts at commit/rollback, per setRlsContext) so
+    // the RLS layer doesn't re-block an operation the app layer already
+    // authorized.
+    await client.query(`select set_config('app.is_admin', 't', true)`);
 
     // Find or create the target user by email. A brand-new target is created
     // unverified with a fresh verify/claim token; an existing user is reused
@@ -405,6 +506,7 @@ export async function createCompanyForUser(
   const client = await pool.connect();
   try {
     await client.query("begin");
+    await setRlsContext(client);
     const company = (
       await client.query(
         `insert into companies
@@ -553,6 +655,7 @@ export async function deleteMyAccount(userId: string): Promise<void> {
   const client = await pool.connect();
   try {
     await client.query("begin");
+    await setRlsContext(client);
     const companies = (
       await client.query(`select company_id from company_members where user_id = $1`, [userId])
     ).rows.map((r) => r.company_id);
@@ -853,6 +956,7 @@ export async function submitPricedBid(
   const client = await pool.connect();
   try {
     await client.query("begin");
+    await setRlsContext(client);
     const bid = (
       await client.query(
         `insert into bids (package_id, vendor_company_id, price, days, note, status, docs_ok)

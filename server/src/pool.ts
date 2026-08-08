@@ -5,6 +5,7 @@
  */
 import pg from "pg";
 import { DATABASE_URL, IS_PROD } from "./config.js";
+import { getRequestContext } from "./lib/requestContext.js";
 
 const { Pool, types } = pg;
 
@@ -28,14 +29,59 @@ export const pool = new Pool({
     : false,
 });
 
+/**
+ * Set the Row-Level Security session context (db/schema-rls.sql) on an
+ * already-checked-out client, inside its current transaction. Uses
+ * set_config(..., true) - the "is_local" flag - so the setting is scoped
+ * to this transaction only and is discarded automatically at COMMIT or
+ * ROLLBACK, before the connection can ever return to the pool and be
+ * reused for a different request's identity.
+ *
+ * A missing request context (background jobs - see requestContext.ts's
+ * header comment) is treated as admin-equivalent, matching what those
+ * jobs already do today: operate across every tenant, unrestricted.
+ */
+export async function setRlsContext(client: pg.PoolClient): Promise<void> {
+  const ctx = getRequestContext();
+  const userId = ctx?.userId ?? "";
+  const isAdmin = ctx ? ctx.isAdmin : true;
+  await client.query(
+    `select set_config('app.user_id', $1, true), set_config('app.is_admin', $2, true)`,
+    [userId, isAdmin ? "t" : "f"],
+  );
+}
+
+/**
+ * Run a single query inside its own transaction, with the RLS context set.
+ * This is what q()/q1() use under the hood - every query gets its own
+ * checked-out client rather than pool.query()'s implicit per-call
+ * checkout, because setting a transaction-local GUC and then running the
+ * real query must happen on the SAME physical connection.
+ */
+async function queryWithContext(text: string, params: any[]): Promise<pg.QueryResult> {
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    await setRlsContext(client);
+    const res = await client.query(text, params);
+    await client.query("commit");
+    return res;
+  } catch (e) {
+    await client.query("rollback").catch(() => {});
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
 /** Thin query helper returning rows. */
 export async function q<T = any>(text: string, params: any[] = []): Promise<T[]> {
-  const res = await pool.query(text, params);
+  const res = await queryWithContext(text, params);
   return res.rows as T[];
 }
 
 /** Query helper returning the first row or null. */
 export async function q1<T = any>(text: string, params: any[] = []): Promise<T | null> {
-  const res = await pool.query(text, params);
+  const res = await queryWithContext(text, params);
   return (res.rows[0] as T) ?? null;
 }

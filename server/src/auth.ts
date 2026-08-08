@@ -18,6 +18,7 @@ import type { Request, Response, NextFunction, RequestHandler } from "express";
 import { getAdminAllowedEmails, SESSION_COOKIE } from "./config.js";
 import { verifySession, type SessionClaims } from "./lib/native-auth.js";
 import { isSessionActive } from "./db.js";
+import { runWithRequestContext } from "./lib/requestContext.js";
 
 export interface AuthResult {
   userId: string | null;
@@ -78,15 +79,23 @@ async function verify(token: string | null): Promise<AuthResult> {
   };
 }
 
-/** Express middleware: verify the session once, stash on req. Always next(). */
+/**
+ * Express middleware: verify the session once, stash on req, and establish
+ * the AsyncLocalStorage request context (see lib/requestContext.ts) that
+ * pool.ts's q()/q1() read on every query for Row-Level Security. Always
+ * calls next() - never blocks a request, even on a verification error
+ * (routes that need a user still reject via requireUser downstream).
+ */
 export function authMiddleware(): RequestHandler {
   return async function sessionAuthMw(req: AuthedRequest, _res: Response, next: NextFunction) {
+    let auth: AuthResult;
     try {
-      req[AUTH_KEY] = await verify(sessionToken(req));
+      auth = await verify(sessionToken(req));
     } catch {
-      req[AUTH_KEY] = EMPTY_AUTH;
+      auth = EMPTY_AUTH;
     }
-    next();
+    req[AUTH_KEY] = auth;
+    runWithRequestContext({ userId: auth.userId, isAdmin: auth.isAdmin }, () => next());
   };
 }
 
