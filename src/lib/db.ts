@@ -15,6 +15,8 @@ export type CompanyPayload = {
   // vendor + investor profile arrays (all optional)
   coverage_areas?: string[]; service_categories?: string[]; capabilities?: string[];
   focus_areas?: string[]; geographies?: string[];
+  // required for kind === 'vendor' - the server rejects vendor creation without it
+  vendorAgreementAccepted?: boolean;
 };
 
 export async function createCompanyForUser(_userId: string, payload: CompanyPayload) {

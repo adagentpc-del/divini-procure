@@ -326,6 +326,7 @@ export default function Onboarding() {
       if (kind === 'vendor') {
         payload.services = services;
         payload.service_categories = services;
+        payload.vendorAgreementAccepted = agreed;
       } else if (kind === 'investor') {
         payload.focus_areas = focusAreas;
       } else {

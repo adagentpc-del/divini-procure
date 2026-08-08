@@ -340,6 +340,33 @@ export async function getMyCompany(userId: string) {
   );
 }
 
+// Bump when the Vendor Agreement text in Onboarding.tsx materially changes
+// (matches the plain hardcoded-string pattern already used for
+// termsVersion in routes/auth-native.ts, rather than a new versioning
+// system this one call site doesn't need).
+const VENDOR_AGREEMENT_VERSION = "2026-08";
+
+/**
+ * Append-only acceptance record (see db/schema-consent-and-audit.sql).
+ * Never throws into the caller's transaction failing silently - callers
+ * that need this inside an existing transaction (createCompanyForUser)
+ * use client.query directly instead; this standalone helper is for call
+ * sites with no transaction of their own (registration).
+ */
+export async function recordLegalAcceptance(
+  userId: string,
+  documentType: string,
+  version: string,
+  source: string,
+  ipAddress: string | null,
+): Promise<void> {
+  await q(
+    `insert into user_legal_acceptances (user_id, document_type, version, source, ip_address)
+     values ($1, $2, $3, $4, $5)`,
+    [userId, documentType, version, source, ipAddress],
+  );
+}
+
 /** createCompanyForUser - creates company, owner membership, vendor profile.
  *  Backward compatible: the original buyer/vendor + contact fields still work;
  *  the richer real-estate-developer profile fields are all optional. */
@@ -370,7 +397,9 @@ export async function createCompanyForUser(
     capabilities?: string[];
     focus_areas?: string[];
     geographies?: string[];
+    vendorAgreementAccepted?: boolean;
   },
+  consent?: { userId: string; consentIp: string | null },
 ) {
   const client = await pool.connect();
   try {
@@ -419,6 +448,13 @@ export async function createCompanyForUser(
          values ($1, 70, 'pending', $2)`,
         [company.id, payload.services ?? []],
       );
+      if (payload.vendorAgreementAccepted && consent) {
+        await client.query(
+          `insert into user_legal_acceptances (user_id, document_type, version, source, ip_address)
+           values ($1, 'vendor_agreement', $2, 'onboarding', $3)`,
+          [consent.userId, VENDOR_AGREEMENT_VERSION, consent.consentIp],
+        );
+      }
     }
     await client.query("commit");
     return company;

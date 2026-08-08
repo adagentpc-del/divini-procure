@@ -34,3 +34,23 @@ create table if not exists campaign_blast_audit (
 );
 create index if not exists idx_campaign_blast_campaign
   on campaign_blast_audit (campaign_id);
+
+-- Append-only legal-document acceptance log. The users.terms_agreed_at /
+-- terms_version / consent_ip columns above capture only the MOST RECENT
+-- acceptance (an UPDATE overwrites the prior value), so there is no way to
+-- prove what a user agreed to at an earlier point in time if terms_version
+-- changes more than once. This table is the durable history: one row per
+-- acceptance event, never updated or deleted. Written alongside (not instead
+-- of) the existing users columns, so no existing caller of those columns
+-- needs to change.
+create table if not exists user_legal_acceptances (
+  id           bigserial    primary key,
+  user_id      text         not null references users(id) on delete cascade,
+  document_type text        not null,   -- 'terms' | 'privacy' | 'payment_policy' | 'vendor_agreement' | 'referral_partner_agreement' | ...
+  version      text         not null,   -- matches the hardcoded version string used at the acceptance site
+  accepted_at  timestamptz  not null default now(),
+  source       text,                    -- e.g. 'register', 'onboarding_vendor_agreement'
+  ip_address   text
+);
+create index if not exists idx_user_legal_acceptances_user
+  on user_legal_acceptances (user_id, document_type, accepted_at desc);

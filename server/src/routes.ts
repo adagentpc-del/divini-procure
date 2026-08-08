@@ -114,6 +114,7 @@ import paymentEtaRouter from "./routes/payment-eta.js";
 // ---- Monetization V2 (flag-gated): bid credits + verification gate -----------
 import { PROCURE_MONETIZATION_V2 } from "./config.js";
 import { getBidCredits, consumeBidCredit } from "./lib/bidCredits.js";
+import { validateCompanyCreation } from "./lib/company-validation.js";
 import { assertVendorVerified, getVerificationDetail } from "./lib/verificationGate.js";
 import { isVendorPro } from "./lib/entitlements.js";
 
@@ -257,7 +258,12 @@ router.post(
   h(async (req, res) => {
     const auth = getAuth(req);
     await db.ensureUser(auth.userId!, auth.email);
-    const company = await db.createCompanyForUser(auth.userId!, req.body);
+    const companyValidation = validateCompanyCreation(req.body ?? {});
+    if (!companyValidation.ok) {
+      return res.status(400).json({ error: companyValidation.error });
+    }
+    const consentIp = req.ip ?? req.socket?.remoteAddress ?? null;
+    const company = await db.createCompanyForUser(auth.userId!, req.body, { userId: auth.userId!, consentIp });
     res.status(201).json(company);
   }),
 );
