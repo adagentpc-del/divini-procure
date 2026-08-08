@@ -668,12 +668,34 @@ router.post(
     );
     if (ent?.stripe_subscription_id && stripe.isConfigured()) {
       try {
-        // Cancel at period end so the user keeps access until the period they paid for.
+        // Cancel at period end so the user keeps access until the period they
+        // paid for - matches the confirmation copy in Subscription.tsx
+        // ("you will keep access until the end of your current billing
+        // period"). Do NOT downgrade tier_key here: Stripe keeps the
+        // subscription active until the real period boundary and fires
+        // customer.subscription.deleted (or .updated with status
+        // canceled/unpaid) at that point, which is what actually calls
+        // assignFreeTier below in the webhook handler. Downgrading eagerly
+        // here would cut off access the user already paid for, and would
+        // also null out stripe_subscription_id before the webhook needs it
+        // to find this company.
         await stripe.cancelSubscription(ent.stripe_subscription_id, true);
+        await q(
+          `update subscription_entitlements
+              set subscription_status = 'cancel_at_period_end', updated_at = now()
+            where company_id = $1`,
+          [companyId],
+        );
+        return res.json({ ok: true, effective: await getEntitlement(companyId) });
       } catch {
-        // Already cancelled or expired - proceed to downgrade anyway.
+        // Stripe call failed (already cancelled/expired remotely, or a
+        // transient error) - fall through to the immediate record-only
+        // downgrade below, since there is no live subscription left to honor.
       }
     }
+    // No Stripe subscription to defer to (Stripe not configured, or the
+    // company was only ever assigned a tier record-only): nothing to wait
+    // for, so downgrade immediately.
     await assignFreeTier(companyId);
     res.json({ ok: true, effective: await getEntitlement(companyId) });
   }),

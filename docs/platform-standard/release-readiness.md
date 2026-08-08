@@ -18,7 +18,8 @@ launch-readiness verdict.
 | 02 Baseline Legal/Privacy/Consent | **READY WITH P1 ITEMS** | Legal-doc inventory, privacy-request architecture (delete/export), and deletion-revokes-sessions were already solidly built and are confirmed PASS. Two real gaps found and fixed live: (1) consent acceptance was overwrite-only with no history - added an append-only `user_legal_acceptances` log; (2) the Vendor Agreement's binding fee terms were accepted client-side only with zero server record or enforcement - now server-verified with a 400 rejection and an automated test. Two items remain genuinely open: no DMCA/AUP content (legal drafting, not carried out unilaterally) and no automated data-retention enforcement job (documented in a new retention matrix, not built) |
 | 03 Repo/Env/Secrets/CI-CD/Supply Chain | **READY WITH P1 ITEMS** | Secrets hygiene is genuinely strong (nothing found in git history, `.gitignore` comprehensive, fail-closed prod config). Two real gaps fixed: (1) CI never ran a real build or validated the schema bootstrap - added both as required gates, simulated locally before committing to prove they actually catch the failure class they're meant to; (2) no environment-identity signal at startup - added a safe log line. Governance gaps (branch protection, CODEOWNERS, release tagging) are correctly left open as operator actions, not invented unilaterally. Noted but not fixed: no SAST/SBOM tooling (P2), one dead Supabase CSP code path (P2, cosmetic - later closed as R-13) |
 | 04 Auth/OAuth/Sessions/MFA/Account Recovery | **READY** | Password hashing, session cookie attributes, server-side revocation, enumeration resistance, rate limiting, and CORS/CSRF posture were all already solid. Two real gaps found and fixed: (1) `verify_token` stored in plaintext despite granting a full login session on use (and backing the ownership-transfer claim flow) - now hashed to match `reset_token`'s existing protection, verified at the DB level; (2) no user-facing "sign out of all devices" control existed - added and verified live with a real two-device simulation. OAuth/MFA/recovery-codes correctly marked N/A (not offered; a future business decision, not a gap in what exists) |
-| 05-18 | NOT STARTED | Queued; see task list |
+| 05 Authorization/RBAC/RLS/Tenancy/Admin/Impersonation | **READY WITH P1 ITEMS** | No database RLS exists (by design, documented); every authorization guarantee is server-code, verified by real adversarial live testing (two separate tenant companies, real cross-tenant read/write/document/signed-URL/admin-route attempts) rather than policy inspection. Cross-tenant write, document access, signed-URL integrity, and admin-route protection all PASS. One intentional-by-design "read any" building/package behavior confirmed against docs, not flagged as a defect. One real bug found and fixed: cancelling a paid subscription downgraded access immediately instead of at the paid period's end, contradicting the disclosed cancellation terms - fixed to defer to the pre-existing, already-correct webhook-driven downgrade; the record-only path was verified live, the real-Stripe path could only be verified by code review (no Stripe test credentials available) and is flagged for a pre-production smoke test. Admin impersonation is N/A - the feature doesn't exist |
+| 06-18 | NOT STARTED | Queued; see task list |
 
 ## Gap-closure pass (post-Section-02, same day)
 
@@ -51,6 +52,7 @@ belong to a section not yet reached (R-03 → 14, R-08 → 06, R-05 → 03).
 - **R-13** — **CLOSED.** Dead Supabase CSP code removed, verified no CSP violations.
 - **R-14** — **CLOSED.** `verify_token` now hashed at rest, matching `reset_token`.
 - **R-15** — **CLOSED.** "Sign out of all devices" now exists and is verified live.
+- **R-16** — **CLOSED** (record-only path verified live; Stripe-configured path verified by code review only - `OA-13` flags the pre-production smoke test).
 
 ## Second gap-closure pass (post-Section-03, same day)
 
@@ -79,4 +81,4 @@ duplicate or contradict what's already there.
 
 ## Next section
 
-Section 05 — Authorization, RBAC/ABAC, RLS, Tenancy, Admin & Impersonation.
+Section 06 — Database Integrity, Data Lifecycle, Backups & Recovery.

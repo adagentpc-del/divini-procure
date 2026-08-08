@@ -142,6 +142,7 @@ export default function Subscription() {
   const limitOrder = Object.keys(LIMIT_LABELS);
 
   const isPastDue = ent?.subscription_status === 'past_due';
+  const isCancelScheduled = ent?.subscription_status === 'cancel_at_period_end';
 
   return (
     <>
@@ -159,6 +160,11 @@ export default function Subscription() {
       {isPastDue && (
         <div className="err" style={{ marginBottom: 12 }}>
           Your last payment failed. Please update your payment method in the Stripe customer portal to avoid losing access.
+        </div>
+      )}
+      {isCancelScheduled && (
+        <div className="note" style={{ marginBottom: 12, background: 'var(--accent-soft, #f4efe0)', padding: '10px 14px', borderRadius: 8 }}>
+          Your subscription is cancelled and will not renew. You'll keep {ent?.name} access until the end of your current billing period, then move to the free plan.
         </div>
       )}
 

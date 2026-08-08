@@ -77,3 +77,17 @@ Evidence references for PASS/PARTIAL controls, by section.
 | S04-07 | Code | `server/src/routes/auth-native.ts` `GENERIC = "Incorrect email or password."`; `/auth/forgot` and `/auth/resend-verification` handlers |
 | S04-08 | Code | `server/src/lib/rateLimit.ts` exports wired into each route in `auth-native.ts` |
 | S04-09 | Code | `server/src/app.ts:98-107` `cors({credentials: true, origin(...)})` |
+
+## Section 05
+
+| Control ID | Evidence type | Reference |
+|---|---|---|
+| S05-01 | File (new) | `docs/platform-standard/authorization-matrix.md`; `docs/SECURITY-PRIVACY.md` (reused) |
+| S05-02 | Command output (live) | Two-tenant curl test: `POST /buildings/:id/packages` on Tenant A's building using Tenant B's session → `403 {"error":"not the owner of this building"}` |
+| S05-03 | Command output (live) | `GET /documents?buildingId=<A's building>` and `GET /documents/signed-url?path=<A's doc>` both from Tenant B's session → `403` |
+| S05-04 | Command output (live) | Valid signed URL → `200` + file content; bit-flipped `sig` → `403`; `exp` in the past → `403` |
+| S05-05 | Command output (live) | `GET /admin/subscriptions` from a non-admin session → `403 {"error":"forbidden"}` |
+| S05-06 | Command output (live) | `GET /buildings/:id` for Tenant A's building using Tenant B's session → `200`, full record |
+| S05-07 | Command output | `grep -rln "impersonat" server/src src` → only an unrelated AUP-text match in `Terms.tsx` |
+| S05-08 | Code | `server/src/routes/subscriptions.ts` `/subscriptions/cancel` (modified), `customer.subscription.deleted`/`.updated` webhook cases (unmodified, already correct) |
+| S05-08 | Command output (live) | Record-only branch: assigned `vendor_pro` record-only, confirmed `tier_key=vendor_pro` in DB, called `/subscriptions/cancel`, confirmed `tier_key=vendor_free, subscription_status=cancelled` immediately (correct for this branch) |
