@@ -106,3 +106,17 @@ Evidence references for PASS/PARTIAL controls, by section.
 | S06-02 | Command output (live) | Full restore round trip: `pg_restore` the superuser-taken dump into a fresh database → `select count(*) from information_schema.tables` matches (160 = 160); `select count(*) from users` matches (38 = 38); `select count(*) from pg_policies where tablename='users'` on the restored copy → 4 (RLS policies survived the restore intact) |
 | S06-03 | Code | `server/src/index.ts` (`purgeExpiredSessions` import + hourly `setInterval`, matching the existing `processDueFollowUps`/`publishDueScheduledPackages` pattern) |
 | S06-04 | Command output (live) | Full sweep: `grep -rn "company_members" server/src --include=*.ts` (~50 matches) manually triaged into "own-row filter" (safe, majority) vs "cross-user lookup" (the 4 fixed: `deleteMyAccount`, Stripe webhook, blueprint addendum notify, referral commission) vs "already admin-gated" (verified safe without changes: `follow-up.ts`'s notify-target resolver, `split-engine.ts`'s commission computation - both confirmed behind `requireAdmin` or a truly-absent background-job context) |
+
+## Section 07
+
+| Control ID | Evidence type | Reference |
+|---|---|---|
+| S07-01 | Code | `server/src/app.ts` `helmet()` config |
+| S07-02 | Code | `server/src/app.ts` CORS origin callback (same evidence already used in Section 04) |
+| S07-03 | Code | `server/src/routes.ts` (documents upload), `server/src/routes/onboarding.ts` (brand media), `server/src/routes/rfq-assist.ts` (spec/CAD) - all 3 `multer` configs |
+| S07-04 | Code | `server/src/routes.ts` `GET /documents/download` - no explicit `Content-Type` set |
+| S07-05 | Command output | `grep -rn "dangerouslySetInnerHTML" src` → 0 matches |
+| S07-06 | Command output | `grep -rn "query(\`.*\${" server/src --include=*.ts` filtered for unescaped user-input interpolation → 0 matches beyond known-safe patterns |
+| S07-07 | Command output | `grep -rln "router.post" server/src/routes*.ts \| xargs grep -L "requireUser\|requireAdmin"` → 0 files; manual read of `public-capture.ts` confirmed its 2 public endpoints are `GET`-only lookups |
+| S07-08 | Code (new) | `server/src/lib/rateLimit.ts` (`apiRateLimit`, new); `server/src/app.ts` (mounted globally on `/api`) |
+| S07-08 | Command output (live) | 5 sequential `GET /api/healthz` → all `200`. 305-request rapid-fire loop against `GET /api/packages/open` → `429` at request 295 (consistent with `max: 300`). `npm test` (repo root) → `1..173`, `# pass 173`, `# fail 0` after the change |

@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { authMiddleware } from "./auth.js";
 import router, { errorHandler } from "./routes.js";
 import { getAllowedOrigins, IS_PROD, PUBLIC_APP_URL } from "./config.js";
-import { authRateLimit } from "./lib/rateLimit.js";
+import { authRateLimit, apiRateLimit } from "./lib/rateLimit.js";
 
 const app: Express = express();
 app.set("trust proxy", 1);
@@ -127,6 +127,11 @@ app.use(authMiddleware());
 // verify) to blunt credential-stuffing and email-bomb abuse. Mounted before the
 // router so it covers every /api/auth/* route.
 app.use("/api/auth", authRateLimit);
+
+// General backstop for every other /api route (ALFY2 Section 07) - see
+// apiRateLimit's own doc comment. Mounted after the tighter auth-specific
+// limiter above so /api/auth/* is still governed by its own stricter rule.
+app.use("/api", apiRateLimit);
 
 // API
 app.use("/api", router);

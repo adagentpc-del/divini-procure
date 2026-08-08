@@ -55,6 +55,21 @@ export function rateLimit(opts: { windowMs: number; max: number }) {
 }
 
 /**
+ * General API-wide backstop (ALFY2 Section 07). Before this, only the auth
+ * surface, invite/referral lookups, score-refresh, and LLM calls had any
+ * rate limit at all - every other route (document upload, bid submission,
+ * search, admin actions under a compromised session) had none. This is
+ * intentionally generous (300 req/IP/min) - it exists to blunt obvious
+ * scripted abuse and scraping, not to constrain normal interactive use; a
+ * real user clicking around the app will never come close to it. Same
+ * "courtesy throttle, not DDoS protection" caveat as every other limiter
+ * in this file - see the module header comment. Applied globally in
+ * app.ts, ahead of the router, so it covers every /api route including
+ * ones added later without each one needing to remember to opt in.
+ */
+export const apiRateLimit = rateLimit({ windowMs: 60_000, max: 300 });
+
+/**
  * Global auth-surface limiter: 20 requests per IP per minute.
  * Applied ahead of the entire auth router in app.ts.
  */
