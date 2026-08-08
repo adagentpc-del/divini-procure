@@ -6,7 +6,7 @@ on:
 
 jobs:
   test:
-    name: Typecheck and test
+    name: Typecheck, build, and test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -26,6 +26,12 @@ jobs:
       - name: Typecheck SPA
         run: npx tsc -p tsconfig.json --noEmit
 
+      - name: Build SPA (real vite build, not just typecheck)
+        # tsc --noEmit above only catches type errors; a real `vite build`
+        # exercises bundling/asset-resolution/plugin failures that noEmit
+        # cannot, and is what deploy.sh actually runs before every release.
+        run: npm run build
+
       - name: Run tests
         run: npm test
 
@@ -35,3 +41,52 @@ jobs:
         # tooling. Review output manually; see AI_PROJECT_OS/52_COMPLIANCE.md
         # (SOC 2 CC4/CC7) for the triage process.
         run: npm audit --omit=dev || true
+
+  db-schema:
+    name: Validate db/apply-all.sql on a fresh database
+    runs-on: ubuntu-latest
+    # This is a REQUIRED gate, not report-only: a schema-file edit that
+    # breaks a from-scratch bootstrap has repeatedly been a real, silent bug
+    # in this repo (see AI_PROJECT_OS/13_CHANGELOG.md) - typecheck cannot
+    # catch it because it is a runtime SQL/ordering problem, not a type
+    # error. Mirrors the documented production bootstrap procedure exactly
+    # (23_DEPLOYMENT.md): apply-all.sql is run TWICE to resolve cross-file
+    # FK ordering, and that is expected/idempotent, not a bug.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: divini
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: divini_procure
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U divini -d divini_procure"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Apply schema (first pass - resolves some cross-file FK ordering)
+        env:
+          PGPASSWORD: ci-only-password
+        run: psql -h localhost -U divini -d divini_procure -v ON_ERROR_STOP=1 -f db/apply-all.sql
+
+      - name: Apply schema (second pass - required, see 23_DEPLOYMENT.md)
+        env:
+          PGPASSWORD: ci-only-password
+        run: psql -h localhost -U divini -d divini_procure -v ON_ERROR_STOP=1 -f db/apply-all.sql
+
+      - name: Sanity check - table count is plausible
+        env:
+          PGPASSWORD: ci-only-password
+        run: |
+          COUNT=$(psql -h localhost -U divini -d divini_procure -t -A -c "select count(*) from information_schema.tables where table_schema='public';")
+          echo "public tables: $COUNT"
+          if [ "$COUNT" -lt 100 ]; then
+            echo "Expected 100+ tables after a full apply-all.sql bootstrap, got $COUNT - schema likely did not apply cleanly." >&2
+            exit 1
+          fi

@@ -46,3 +46,19 @@ Evidence references for PASS/PARTIAL controls, by section.
 | S02-10 | Command output (live) | `GET /partner/onboarding/banking` (authenticated as the owning partner) → `{"account_number":"****6789","routing_number":"****0021","iban":"****6819", ...}` - correctly masked from the real decrypted values, not the ciphertext |
 | S02-11 | Command output (live) | Before fix: `POST /partner/onboarding/agreement/sign` and `POST /partner/onboarding/banking` both returned `500 {"error":"internal error"}` with server log `column "referred_by_partner_id" does not exist`. After fix: both returned `200`. |
 | S02-11 | Command output | `grep -rn "referred_by_partner_id" db/*.sql` → no matches anywhere in the schema (confirms this was never a valid column, not a local environment drift) |
+
+## Section 03
+
+| Control ID | Evidence type | Reference |
+|---|---|---|
+| S03-01 | Command output | `find . -iname CODEOWNERS` → none; `git tag` → empty; `grep '"version"' package.json server/package.json` → both `0.1.0` |
+| S03-02 | File (new) | `server/src/index.ts` `logEnvironmentIdentity()` |
+| S03-02 | Command output (live) | Server restart log: `[divini-procure] environment=development db_host=localhost db_name=divini_procure` |
+| S03-03 | Command output | `grep -rohE "process\.env\.[A-Z_0-9]+" server/src/ \| sort -u` → 55 distinct variables (full list retained in this session's working notes, not reproduced here per rule 5 - names only, no values) |
+| S03-04 | File | `.gitignore` (root) - `.env`, `.env.*`, `!.env.example`, `!.env.local.example`, `*.pem`, `*.key`, `serviceAccount*.json` |
+| S03-04 | Command output | `git check-ignore -v server/.env` → matched by `.gitignore:16`; `git ls-files \| grep -iE "\.(env\|pem\|key\|p12\|pfx)$"` → no output; `git log --all -p \| grep -iE "sk_live_\|AKIA[0-9A-Z]{16}\|AIza..."` → only doc references to variable names |
+| S03-05 | File | `.github/dependabot.yml`; `package-lock.json`, `server/package-lock.json` |
+| S03-06 | Code | `server/src/app.ts:65-74` |
+| S03-06 | Command output | `grep -rl "supabase" src/` → no matches |
+| S03-07 | File (modified) | `.github/workflows/ci.yml` - added "Build SPA" step + new `db-schema` job |
+| S03-07 | Command output (live simulation) | Fresh Postgres DB (`create database divini_ci_test`), two-pass `psql -v ON_ERROR_STOP=1 -f db/apply-all.sql`: pass 1 exit 0 / 0 errors, pass 2 exit 0 / 0 errors, final `select count(*) from information_schema.tables where table_schema='public'` = 160 (gate threshold is 100) |

@@ -16,7 +16,8 @@ launch-readiness verdict.
 | 00 Read First | READY | Rules acknowledged, followed throughout |
 | 01 Discovery & Applicability | **READY** | Architecture mapped, actors/data classified, 30-regime applicability matrix populated with evidence. One procedural P0 (securities-law posture) and one P1 code finding (plaintext banking field) surfaced and carried forward |
 | 02 Baseline Legal/Privacy/Consent | **READY WITH P1 ITEMS** | Legal-doc inventory, privacy-request architecture (delete/export), and deletion-revokes-sessions were already solidly built and are confirmed PASS. Two real gaps found and fixed live: (1) consent acceptance was overwrite-only with no history - added an append-only `user_legal_acceptances` log; (2) the Vendor Agreement's binding fee terms were accepted client-side only with zero server record or enforcement - now server-verified with a 400 rejection and an automated test. Two items remain genuinely open: no DMCA/AUP content (legal drafting, not carried out unilaterally) and no automated data-retention enforcement job (documented in a new retention matrix, not built) |
-| 03-18 | NOT STARTED | Queued; see task list |
+| 03 Repo/Env/Secrets/CI-CD/Supply Chain | **READY WITH P1 ITEMS** | Secrets hygiene is genuinely strong (nothing found in git history, `.gitignore` comprehensive, fail-closed prod config). Two real gaps fixed: (1) CI never ran a real build or validated the schema bootstrap - added both as required gates, simulated locally before committing to prove they actually catch the failure class they're meant to; (2) no environment-identity signal at startup - added a safe log line. Governance gaps (branch protection, CODEOWNERS, release tagging) are correctly left open as operator actions, not invented unilaterally. Noted but not fixed: no SAST/SBOM tooling (P2), one dead Supabase CSP code path (P2, cosmetic) |
+| 04-18 | NOT STARTED | Queued; see task list |
 
 ## Gap-closure pass (post-Section-02, same day)
 
@@ -38,11 +39,15 @@ belong to a section not yet reached (R-03 → 14, R-08 → 06, R-05 → 03).
 - **R-02** (P0, procedural): no securities counsel review yet on the investment-matching feature — owned by Section 17, must stay resolved (i.e., no per-close fee added) until reviewed.
 - **R-03** (P1): no server-side error monitoring — owned by Section 14.
 - **R-04** (CONDITIONAL): state privacy-law thresholds unconfirmed — owned by Section 02/17 (partially addressed: the mechanics to honor a right-to-delete/export request now exist regardless of threshold; only the "must we proactively offer X" legal question remains).
-- **R-05** (P1): no branch-protection rule visible — owned by Section 03.
+- **R-05** (P1): no branch-protection rule visible — owned by Owner (GitHub UI), restated as OA-09.
 - **R-06** (P1): no DMCA/AUP content — owned by Owner/Counsel, not an engineering task.
 - **R-07** (P2): cookie-consent choice captured but unenforced (nothing to enforce today) — re-open to P1 if a tracking SDK is ever added.
 - **R-08** (P1): no automated data-retention/purge job — owned by Section 06.
 - **R-09** — **CLOSED.** Referral-partner onboarding endpoints were completely broken (unconditional 500); fixed.
+- **R-10** — **CLOSED.** CI now has real build + fresh-database schema gates, verified to actually catch the failure class they target.
+- **R-11** (P1): no branch protection / CODEOWNERS / release tagging — owned by Owner (process decisions).
+- **R-12** (P2): no SAST/license/SBOM tooling — owned by a future maturity pass.
+- **R-13** (P2): dead Supabase CSP code — cosmetic, deliberately untouched inside this section.
 
 ## What "existed already" going into this engagement
 
@@ -57,4 +62,4 @@ duplicate or contradict what's already there.
 
 ## Next section
 
-Section 03 — Repository, Environments, Secrets, CI/CD & Software Supply Chain.
+Section 04 — Authentication, OAuth, Sessions, MFA & Account Recovery.
