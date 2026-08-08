@@ -4763,6 +4763,11 @@ COMMIT;
 -- (AI_PROJECT_OS/13_CHANGELOG.md entry 14).
 \i db/schema-unsubscribe.sql
 
+-- Fix account deletion hard-failing for any user with real product usage
+-- (ALFY2 Section 06 - see db/schema-user-fk-cascade-fix.sql for the full
+-- writeup and the live-reproduced failure this closes).
+\i db/schema-user-fk-cascade-fix.sql
+
 -- Row-Level Security (Section 05 follow-up). server/src/lib/requestContext.ts
 -- + auth.ts + pool.ts now set app.user_id / app.is_admin on every query (see
 -- db/schema-rls.sql's own header comment), so the policies below are live,

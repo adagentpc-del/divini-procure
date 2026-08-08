@@ -30,6 +30,7 @@
  */
 import { q1 } from "../pool.js";
 import { resolveContextFee } from "./fee-matrix.js";
+import { runAsAdmin } from "./requestContext.js";
 
 function num(v: number | string | null | undefined, fallback = 0): number {
   if (v == null) return fallback;
@@ -245,30 +246,39 @@ export async function maybeRecordReferralCommission(
     // via a user_referrals row whose code matches a partner referral_code and
     // whose referred_email belongs to a member of this company. Prefer a direct
     // company link; fall back to the email-based attribution.
-    const partner = await q1<{
-      id: string;
-      commission_type: string | null;
-      revenue_share_pct: number | string | null;
-      flat_fee_cents: number | string | null;
-      status: string | null;
-    }>(
-      `select rp.id, rp.commission_type, rp.revenue_share_pct, rp.flat_fee_cents, rp.status
-         from referral_partners rp
-        where rp.status = 'active'
-          and (
-            rp.company_id = $1
-            or exists (
-              select 1
-                from user_referrals ur
-                join company_members cm on lower(cm_user.email) = lower(ur.referred_email)
-                join users cm_user on cm_user.id = cm.user_id
-               where ur.code = rp.referral_code
-                 and cm.company_id = $1
+    // Runs admin-equivalent: this attribution lookup must see every member of
+    // referredCompanyId, not just the acting user's own row - company_members'
+    // RLS policy only allows "your own row" (see db/schema-rls.sql's comment
+    // on why), which would silently zero out referral attribution for any
+    // award made by a non-admin buyer (the normal case - this route is
+    // requireUser, not requireAdmin). Attribution is a revenue-accounting
+    // read, not a data exposure - it never returns member rows to the caller.
+    const partner = await runAsAdmin(() =>
+      q1<{
+        id: string;
+        commission_type: string | null;
+        revenue_share_pct: number | string | null;
+        flat_fee_cents: number | string | null;
+        status: string | null;
+      }>(
+        `select rp.id, rp.commission_type, rp.revenue_share_pct, rp.flat_fee_cents, rp.status
+           from referral_partners rp
+          where rp.status = 'active'
+            and (
+              rp.company_id = $1
+              or exists (
+                select 1
+                  from user_referrals ur
+                  join company_members cm on lower(cm_user.email) = lower(ur.referred_email)
+                  join users cm_user on cm_user.id = cm.user_id
+                 where ur.code = rp.referral_code
+                   and cm.company_id = $1
+              )
             )
-          )
-        order by case when rp.company_id = $1 then 0 else 1 end
-        limit 1`,
-      [referredCompanyId],
+          order by case when rp.company_id = $1 then 0 else 1 end
+          limit 1`,
+        [referredCompanyId],
+      ),
     );
 
     if (!partner) return { created: false, commissionCents: 0, reason: "no_partner" };

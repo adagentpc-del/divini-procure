@@ -2,6 +2,7 @@ import app from "./app.js";
 import { PORT, DATABASE_URL, IS_PROD } from "./config.js";
 import { processDueFollowUps } from "./routes/follow-up.js";
 import { publishDueScheduledPackages } from "./routes/marketplace-publication.js";
+import { purgeExpiredSessions } from "./db.js";
 
 // Environment identity guard (ALFY2 Section 03): log which environment and
 // which database HOST/NAME this process bound to at startup - never the
@@ -55,3 +56,20 @@ setInterval(() => {
     console.error("[marketplace-publication] publishDueScheduledPackages failed", e);
   });
 }, MARKETPLACE_PUBLISH_INTERVAL_MS);
+
+// Session retention (ALFY2 Section 06 / R-08): purge user_sessions rows past
+// their expires_at. Previously this function existed (db.ts's
+// purgeExpiredSessions) but nothing ever called it - expired-but-undeleted
+// rows accumulated forever, and a stale row sitting past its TTL is a
+// larger blast radius if the sessions table were ever exposed by a future
+// bug (data-retention-matrix.md's own gap #1). Same in-process interval
+// pattern as the two jobs above, no external cron dependency. Hourly is
+// far more than sufficient given the 30-day session TTL - this is
+// housekeeping, not a real-time requirement.
+const SESSION_PURGE_INTERVAL_MS = 60 * 60_000;
+setInterval(() => {
+  purgeExpiredSessions().catch((e) => {
+    // eslint-disable-next-line no-console
+    console.error("[sessions] purgeExpiredSessions failed", e);
+  });
+}, SESSION_PURGE_INTERVAL_MS);

@@ -42,6 +42,7 @@ import { extractPdfText, renderPdfPageToPng } from "../lib/text-extraction.js";
 import { ocrImage } from "../lib/ocr.js";
 import { extractDxfInfo } from "../lib/dxf-extraction.js";
 import { readFileBytes } from "../storage.js";
+import { runAsAdmin } from "../lib/requestContext.js";
 
 const h =
   (fn: (req: Request, res: Response) => Promise<unknown>) =>
@@ -845,7 +846,17 @@ router.post(
          on conflict (addendum_id, vendor_company_id) do update set notified_at = now()`,
         [addendum.id, vendorCompanyId],
       );
-      const members = await q<{ user_id: string }>(`select user_id from company_members where company_id = $1`, [vendorCompanyId]);
+      // authorizeAddendum (above) already confirmed the caller owns this
+      // addendum's own organization, so notifying every member of an
+      // UNRELATED vendor company bidding on it is already authorized - but
+      // company_members' own RLS policy only allows seeing your own row
+      // (see db/schema-rls.sql's comment on why), which would silently
+      // return zero members for a company the caller doesn't belong to.
+      // Reproduced live: addendum-publish notifications stopped reaching
+      // any bidder before this was added. See requestContext.ts's runAsAdmin.
+      const members = await runAsAdmin(() =>
+        q<{ user_id: string }>(`select user_id from company_members where company_id = $1`, [vendorCompanyId]),
+      );
       for (const m of members) {
         await q(`insert into notifications (user_id, title, detail, kind) values ($1,$2,$3,'addendum')`, [
           m.user_id,

@@ -655,7 +655,24 @@ export async function deleteMyAccount(userId: string): Promise<void> {
   const client = await pool.connect();
   try {
     await client.query("begin");
-    await setRlsContext(client);
+    // Admin-equivalent escalation (same pattern as upsertUserForRegistration/
+    // transferCompanyOwnerEmail), REQUIRED for correctness here, not just
+    // convenience: company_members_select only allows seeing your own
+    // membership row (see db/schema-rls.sql's comment on why - avoiding the
+    // current_user_company_ids() self-recursion). Under the acting user's
+    // own (non-escalated) identity, the "does this company have any OTHER
+    // members left" check below would only ever see rows the departing user
+    // themselves owns - i.e. none, since their own row is deleted first -
+    // making EVERY company look orphaned regardless of real membership.
+    // Reproduced live: a second real member's company, building, and
+    // uploaded documents were all wrongly cascade-deleted the moment the
+    // first member deleted their own account, before this escalation was
+    // added. This function is already fully authorized to act here (it
+    // only ever operates on the caller's own userId, enforced at the route
+    // layer - never a different target user), so this is not a privilege
+    // escalation, only a correctness fix for a query RLS cannot answer
+    // truthfully from a single member's own restricted view.
+    await client.query(`select set_config('app.is_admin', 't', true)`);
     const companies = (
       await client.query(`select company_id from company_members where user_id = $1`, [userId])
     ).rows.map((r) => r.company_id);

@@ -48,6 +48,7 @@ import {
 } from "../lib/entitlements.js";
 import { sendEmail } from "../lib/email.js";
 import { inviteLookupRateLimit } from "../lib/rateLimit.js";
+import { runAsAdmin } from "../lib/requestContext.js";
 
 /** Vendor-facing self-serve tiers (the "upgrade to Pro / buy Verified+" set). */
 const SELF_SERVE_TIER_KEYS = new Set(["vendor_pro", "verified_plus", "vendor_featured"]);
@@ -727,6 +728,15 @@ router.post(
 
     const obj = event.data.object as Record<string, unknown>;
 
+    // Admin-equivalent RLS context for the whole handler (see requestContext.ts's
+    // runAsAdmin doc comment): authenticity is already verified via the Stripe
+    // signature above, but this request still passed through authMiddleware
+    // with no user session, so without this every write below (subscription_
+    // entitlements insert/update, the company-owner lookup for the
+    // confirmation email) would fail or silently no-op under RLS - reproduced
+    // live as a hard "new row violates row-level security policy" on the very
+    // first checkout.session.completed test before this was added.
+    await runAsAdmin(async () => {
     try {
       switch (event.type) {
         // -----------------------------------------------------------------
@@ -863,6 +873,7 @@ router.post(
       // events where processing would always fail (e.g. missing tier in DB).
       console.error("[webhook:stripe] processing error", event.type, e);
     }
+    });
 
     res.json({ received: true });
   }),
