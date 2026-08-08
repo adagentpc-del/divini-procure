@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
-import { getVendorProfile, updateCompany, deleteMyAccount, exportMyData, transferOwnership } from '../lib/db';
+import { getVendorProfile, updateCompany, deleteMyAccount, exportMyData, transferOwnership, signOutAllDevices } from '../lib/db';
 import { useToast } from '../lib/toast';
 import { apiGet } from '../lib/api';
 import { type Entitlement, type LimitCheck, money } from '../lib/tiers';
@@ -23,6 +23,8 @@ export default function Profile() {
   const [derr, setDerr] = useState('');
   const [xbusy, setXbusy] = useState(false);
   const [xerr, setXerr] = useState('');
+  const [sbusy, setSbusy] = useState(false);
+  const [serr, setSerr] = useState('');
   // Owner-email transfer.
   const [newOwnerEmail, setNewOwnerEmail] = useState('');
   const [tbusy, setTbusy] = useState(false);
@@ -90,6 +92,23 @@ export default function Profile() {
       setXerr(e?.message ?? 'Could not export your data. Please try again.');
     } finally {
       setXbusy(false);
+    }
+  }
+
+  async function signOutEverywhere() {
+    setSerr('');
+    const sure = window.confirm(
+      "Sign out of every device and browser where you're currently logged in, including this one? " +
+      "You'll need to log in again here too."
+    );
+    if (!sure) return;
+    setSbusy(true);
+    try {
+      await signOutAllDevices();
+      await signOut();
+    } catch (e: any) {
+      setSerr(e?.message ?? 'Could not sign out other sessions. Please try again.');
+      setSbusy(false);
     }
   }
 
@@ -203,6 +222,19 @@ export default function Profile() {
             <button type="button" className="btn" style={{ marginTop: 12 }}
               onClick={downloadData} disabled={xbusy}>
               {xbusy ? 'Preparing…' : 'Download my data'}
+            </button>
+          </div>
+
+          <div className="card">
+            <h3 style={{ fontSize: 18, marginBottom: 10 }}>Security</h3>
+            <div className="note" style={{ lineHeight: 1.7 }}>
+              If you think your account may have been accessed by someone else, sign out everywhere
+              at once. This also signs you out of this device — you'll need to log back in.
+            </div>
+            {serr && <div className="err" style={{ marginTop: 10 }}>{serr}</div>}
+            <button type="button" className="btn" style={{ marginTop: 12 }}
+              onClick={signOutEverywhere} disabled={sbusy}>
+              {sbusy ? 'Signing out…' : 'Sign out of all devices'}
             </button>
           </div>
 

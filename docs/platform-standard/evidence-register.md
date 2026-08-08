@@ -62,3 +62,18 @@ Evidence references for PASS/PARTIAL controls, by section.
 | S03-06 | Command output | `grep -rl "supabase" src/` → no matches |
 | S03-07 | File (modified) | `.github/workflows/ci.yml` - added "Build SPA" step + new `db-schema` job |
 | S03-07 | Command output (live simulation) | Fresh Postgres DB (`create database divini_ci_test`), two-pass `psql -v ON_ERROR_STOP=1 -f db/apply-all.sql`: pass 1 exit 0 / 0 errors, pass 2 exit 0 / 0 errors, final `select count(*) from information_schema.tables where table_schema='public'` = 160 (gate threshold is 100) |
+
+## Section 04
+
+| Control ID | Evidence type | Reference |
+|---|---|---|
+| S04-02 | Code | `server/src/lib/passwordHash.ts` |
+| S04-03 | Code | `server/src/routes/auth-native.ts` `setSessionCookie`/`clearSessionCookie` |
+| S04-04 | Code | `server/src/auth.ts:66-79` `verify()`; `db/schema-sessions.sql:7` cascade FK |
+| S04-05 | File (new) | `server/src/db.ts` `hashToken()`, applied in `getUserByVerifyToken`, `getUserByResetToken`, `upsertUserForRegistration`, `setVerifyToken`, `setResetToken`, `transferCompanyOwnerEmail` |
+| S04-05 | Command output (live) | Direct DB-level script (`node --env-file=.env` against the compiled `server/dist/db.js`): registered a real user via `upsertUserForRegistration`, confirmed `select verify_token from users where id=$1` returned `sha256(rawToken)` byte-for-byte, confirmed `getUserByVerifyToken(rawToken)` found the user, confirmed `getUserByVerifyToken(storedHashValue)` returned `null` (proves a DB-breach reader cannot use the stored value directly) |
+| S04-06 | File (new) | `server/src/routes.ts` `POST /account/sessions/revoke-all`; `src/lib/db.ts` `signOutAllDevices()`; `src/pages/Profile.tsx` "Security" card |
+| S04-06 | Command output (live) | Two curl-driven sessions (separate cookie jars) both `200` on `/auth/me`; after device 1 called `/account/sessions/revoke-all`, both devices returned `401` on the next `/auth/me` call |
+| S04-07 | Code | `server/src/routes/auth-native.ts` `GENERIC = "Incorrect email or password."`; `/auth/forgot` and `/auth/resend-verification` handlers |
+| S04-08 | Code | `server/src/lib/rateLimit.ts` exports wired into each route in `auth-native.ts` |
+| S04-09 | Code | `server/src/app.ts:98-107` `cors({credentials: true, origin(...)})` |

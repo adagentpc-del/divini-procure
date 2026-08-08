@@ -298,6 +298,22 @@ router.post(
   }),
 );
 
+// Sign out of all devices: revokes every session for this account, including
+// the one making this request - the caller gets a fresh 200 response, but the
+// session cookie it's holding stops working on the very next request (the
+// jti is gone from user_sessions). This was previously only a side effect of
+// password reset; there was no direct way for a user who suspects a stolen
+// session to kill it without also changing their password.
+router.post(
+  "/account/sessions/revoke-all",
+  requireUser,
+  h(async (req, res) => {
+    const auth = getAuth(req);
+    await db.revokeAllSessions(auth.userId!);
+    res.json({ ok: true });
+  }),
+);
+
 // GDPR/CPRA data portability: download everything tied to this account.
 router.get(
   "/account/export",

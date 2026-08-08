@@ -170,6 +170,10 @@ export async function updateCompany(id: string, patch: { name?: string; contact_
 export async function deleteMyAccount() {
   await apiSend('POST', '/account/delete');
 }
+/** Revokes every session for this account, including the one calling this - the current tab will be logged out too. */
+export async function signOutAllDevices() {
+  await apiSend('POST', '/account/sessions/revoke-all');
+}
 export async function exportMyData() {
   const blob = await apiBlob('/account/export');
   const url = URL.createObjectURL(blob);

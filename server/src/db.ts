@@ -31,10 +31,21 @@
  * A `ForbiddenError` is thrown when a caller violates the policy; routes map it
  * to HTTP 403. This is the critical correctness work of the re-platform.
  */
+import { createHash } from "node:crypto";
 import { q, q1, pool } from "./pool.js";
 import { getAdminAllowedEmails } from "./config.js";
 import { PlanLimitError, enforceLimit } from "./lib/entitlement-guard.js";
 import { ForbiddenError, NotFoundError } from "./lib/errors.js";
+
+/**
+ * Single-purpose tokens (email verification, password reset, ownership-
+ * transfer claims) are hashed before storage, same rationale as a password:
+ * a database breach must not hand out directly-usable links. The raw token
+ * (sent only in the email) is hashed the same way at lookup time.
+ */
+function hashToken(rawToken: string): string {
+  return createHash("sha256").update(rawToken).digest("hex");
+}
 export { ForbiddenError, NotFoundError };
 
 /**
@@ -97,19 +108,13 @@ export async function getUserById(id: string): Promise<UserRow | null> {
   return q1<UserRow>(`select * from users where id = $1`, [id]);
 }
 
-export async function getUserByVerifyToken(token: string): Promise<UserRow | null> {
-  return q1<UserRow>(`select * from users where verify_token = $1`, [token]);
+export async function getUserByVerifyToken(rawToken: string): Promise<UserRow | null> {
+  return q1<UserRow>(`select * from users where verify_token = $1`, [hashToken(rawToken)]);
 }
 
-/**
- * Look up a user by a password-reset token. The token is SHA-256 hashed before
- * storage so a database breach does not expose usable reset links.
- * The raw token (sent in email) is hashed here before the lookup.
- */
+/** Look up a user by a password-reset token. See hashToken() above. */
 export async function getUserByResetToken(rawToken: string): Promise<UserRow | null> {
-  const { createHash } = await import("node:crypto");
-  const hashed = createHash("sha256").update(rawToken).digest("hex");
-  return q1<UserRow>(`select * from users where reset_token = $1`, [hashed]);
+  return q1<UserRow>(`select * from users where reset_token = $1`, [hashToken(rawToken)]);
 }
 
 /**
@@ -128,6 +133,7 @@ export async function upsertUserForRegistration(args: {
   termsVersion?: string;
   consentIp?: string | null;
 }): Promise<UserRow> {
+  const hashedVerifyToken = hashToken(args.verifyToken);
   const existing = await getUserByEmail(args.email);
   if (existing) {
     return (await q1<UserRow>(
@@ -142,7 +148,7 @@ export async function upsertUserForRegistration(args: {
          consent_ip = coalesce($8, consent_ip)
        where id = $1
        returning *`,
-      [existing.id, args.email, args.passwordHash, args.verifyToken, args.verifyExpires.toISOString(),
+      [existing.id, args.email, args.passwordHash, hashedVerifyToken, args.verifyExpires.toISOString(),
        args.termsAgreedAt?.toISOString() ?? null, args.termsVersion ?? null, args.consentIp ?? null],
     ))!;
   }
@@ -151,7 +157,7 @@ export async function upsertUserForRegistration(args: {
                         terms_agreed_at, terms_version, consent_ip)
      values ($1, $2, $3, false, $4, $5, $6, $7, $8)
      returning *`,
-    [args.newUserId, args.email, args.passwordHash, args.verifyToken, args.verifyExpires.toISOString(),
+    [args.newUserId, args.email, args.passwordHash, hashedVerifyToken, args.verifyExpires.toISOString(),
      args.termsAgreedAt?.toISOString() ?? null, args.termsVersion ?? null, args.consentIp ?? null],
   ))!;
 }
@@ -174,34 +180,28 @@ export async function markEmailVerified(userId: string): Promise<UserRow | null>
   );
 }
 
-/** Set a fresh verify token (resend-verification). */
+/** Set a fresh verify token (resend-verification). rawToken is hashed before storage. */
 export async function setVerifyToken(
   userId: string,
-  token: string,
+  rawToken: string,
   expires: Date,
 ): Promise<void> {
   await q(`update users set verify_token = $2, verify_expires = $3 where id = $1`, [
     userId,
-    token,
+    hashToken(rawToken),
     expires.toISOString(),
   ]);
 }
 
-/**
- * Set a fresh password-reset token. The raw token is SHA-256 hashed before
- * storage so a database breach does not expose usable links. The raw token is
- * sent to the user's inbox and never persisted.
- */
+/** Set a fresh password-reset token. rawToken is hashed before storage (see hashToken() above). */
 export async function setResetToken(
   userId: string,
   rawToken: string,
   expires: Date,
 ): Promise<void> {
-  const { createHash } = await import("node:crypto");
-  const hashed = createHash("sha256").update(rawToken).digest("hex");
   await q(`update users set reset_token = $2, reset_expires = $3 where id = $1`, [
     userId,
-    hashed,
+    hashToken(rawToken),
     expires.toISOString(),
   ]);
 }
@@ -239,6 +239,7 @@ export async function transferCompanyOwnerEmail(args: {
   // The acting user must be a member (owner) of the company.
   await assertMemberOfCompany(args.actingUserId, args.companyId);
 
+  const hashedVerifyToken = hashToken(args.verifyToken);
   const client = await pool.connect();
   try {
     await client.query("begin");
@@ -255,7 +256,7 @@ export async function transferCompanyOwnerEmail(args: {
         await client.query<UserRow>(
           `insert into users (id, email, email_verified, verify_token, verify_expires)
            values ($1, $2, false, $3, $4) returning *`,
-          [args.newUserId, args.newEmail, args.verifyToken, args.verifyExpires.toISOString()],
+          [args.newUserId, args.newEmail, hashedVerifyToken, args.verifyExpires.toISOString()],
         )
       ).rows[0];
       created = true;
@@ -263,7 +264,7 @@ export async function transferCompanyOwnerEmail(args: {
       target = (
         await client.query<UserRow>(
           `update users set verify_token = $2, verify_expires = $3 where id = $1 returning *`,
-          [target.id, args.verifyToken, args.verifyExpires.toISOString()],
+          [target.id, hashedVerifyToken, args.verifyExpires.toISOString()],
         )
       ).rows[0];
     }
