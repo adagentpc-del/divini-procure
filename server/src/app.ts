@@ -61,17 +61,8 @@ app.use(
         styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
         imgSrc: ["'self'", "data:", "blob:"],
         fontSrc: ["'self'", "https://fonts.gstatic.com"],
-        // Allow calls to the Supabase project URL (auth, storage, realtime).
-        // VITE_SUPABASE_URL is available server-side only as SUPABASE_URL.
-        // Without this the browser blocks all fetch() to *.supabase.co.
         connectSrc: [
           "'self'",
-          ...(process.env.VITE_SUPABASE_URL ? [process.env.VITE_SUPABASE_URL] : []),
-          ...(process.env.SUPABASE_URL ? [process.env.SUPABASE_URL] : []),
-          // Allow wss:// for Supabase Realtime (same host, different scheme).
-          ...(process.env.VITE_SUPABASE_URL
-            ? [process.env.VITE_SUPABASE_URL.replace(/^https?:/, "wss:")]
-            : []),
           // Stripe.js makes XHR/fetch calls to api.stripe.com for payment
           // tokenisation and 3DS challenges.
           "https://api.stripe.com",

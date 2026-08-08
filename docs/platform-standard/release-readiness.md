@@ -40,14 +40,28 @@ belong to a section not yet reached (R-03 → 14, R-08 → 06, R-05 → 03).
 - **R-03** (P1): no server-side error monitoring — owned by Section 14.
 - **R-04** (CONDITIONAL): state privacy-law thresholds unconfirmed — owned by Section 02/17 (partially addressed: the mechanics to honor a right-to-delete/export request now exist regardless of threshold; only the "must we proactively offer X" legal question remains).
 - **R-05** (P1): no branch-protection rule visible — owned by Owner (GitHub UI), restated as OA-09.
-- **R-06** (P1): no DMCA/AUP content — owned by Owner/Counsel, not an engineering task.
+- **R-06** — **PARTIALLY CLOSED.** AUP + DMCA notice-and-takedown text now live in `Terms.tsx`; owner still needs to register the designated agent with the U.S. Copyright Office (OA-12).
 - **R-07** (P2): cookie-consent choice captured but unenforced (nothing to enforce today) — re-open to P1 if a tracking SDK is ever added.
 - **R-08** (P1): no automated data-retention/purge job — owned by Section 06.
 - **R-09** — **CLOSED.** Referral-partner onboarding endpoints were completely broken (unconditional 500); fixed.
 - **R-10** — **CLOSED.** CI now has real build + fresh-database schema gates, verified to actually catch the failure class they target.
 - **R-11** (P1): no branch protection / CODEOWNERS / release tagging — owned by Owner (process decisions).
 - **R-12** (P2): no SAST/license/SBOM tooling — owned by a future maturity pass.
-- **R-13** (P2): dead Supabase CSP code — cosmetic, deliberately untouched inside this section.
+- **R-13** — **CLOSED.** Dead Supabase CSP code removed, verified no CSP violations.
+
+## Second gap-closure pass (post-Section-03, same day)
+
+Per a second explicit instruction to close what's fixable before continuing:
+removed the dead Supabase CSP code (R-13), and - reconsidering the earlier
+call to only flag R-06 - implemented the actual AUP and DMCA notice-and-
+takedown text in `Terms.tsx` rather than leaving it purely as a flagged gap.
+Statutory notice-and-takedown boilerplate (17 U.S.C. §512(c)(3)) is
+standardized, template-able text, not a novel legal conclusion this session
+isn't positioned to make - the same reasoning already applied when the
+E-SIGN consent-tracking mechanics were implemented directly in Section 02.
+What remains genuinely owner-only (real estate: a monitored inbox and a
+federal designated-agent registration) is flagged as OA-12, not glossed
+over.
 
 ## What "existed already" going into this engagement
 
