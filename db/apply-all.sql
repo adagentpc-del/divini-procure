@@ -4784,3 +4784,8 @@ COMMIT;
 -- Phase 0 financial source-of-truth fix: link retainage records to their
 -- canonical Purchase Order where one exists (see the file's own header).
 \i db/schema-retainage-po-link.sql
+
+-- Phase 0 relational integrity fix: real foreign keys on the procurement-
+-- money spine (purchase_orders + change_orders) - see the file's own
+-- header for the orphan-check evidence backing this.
+\i db/schema-po-fk-integrity.sql
