@@ -4830,3 +4830,6 @@ COMMIT;
 -- Phase 1 P1-09: change order <-> purchase order linkage - see the file's
 -- own header.
 \i db/schema-change-order-po-link.sql
+
+-- Phase 1 P1-10: invoices / payment applications - see the file's own header.
+\i db/schema-invoices.sql

@@ -118,6 +118,7 @@ import marketplaceSearchRouter from "./routes/marketplace-search.js";
 // ---- Phase 1: canonical procurement + financial spine ------------------------
 import budgetRouter from "./routes/budget.js";
 import bidRevisionsRouter from "./routes/bid-revisions.js";
+import invoicesRouter from "./routes/invoices.js";
 // ---- Monetization V2 (flag-gated): bid credits + verification gate -----------
 import { PROCURE_MONETIZATION_V2 } from "./config.js";
 import { getBidCredits, consumeBidCredit } from "./lib/bidCredits.js";
@@ -236,6 +237,7 @@ router.use(marketplaceSearchRouter);
 // ---- Phase 1: canonical procurement + financial spine -----------------------
 router.use(budgetRouter);
 router.use(bidRevisionsRouter);
+router.use(invoicesRouter);
 
 // ---- health ----------------------------------------------------------------
 router.get("/healthz", async (_req, res) => {
