@@ -4,10 +4,13 @@ import type { CapacitorConfig } from '@capacitor/cli';
 //
 // PRIMARY (managed webview) configuration: the native app loads the HOSTED
 // production site over HTTPS via server.url. This is the fastest, lowest-risk
-// path for a research-preview launch because Authentik OIDC login works exactly
-// as it does on the web (standard browser redirect flow, no native deep-link
-// plumbing required). It does mean the app depends on the live HTTPS domain
-// being up.
+// path for a research-preview launch because login works exactly as it does
+// on the web: native email/password session auth (server/src/auth.ts) sets
+// an httpOnly `divini_session` cookie via a same-origin fetch, so the webview
+// just needs to be pointed at the real HTTPS origin - no OIDC redirect flow,
+// no native deep-link callback plumbing required (this app retired Authentik
+// OIDC; see auth.ts's own header comment). It does mean the app depends on
+// the live HTTPS domain being up.
 //
 // NOTE: server.url points at https://app.diviniprocure.com. That host MUST
 // exist and serve the hosted SPA over HTTPS before the native build will load
@@ -65,10 +68,13 @@ export default config;
 //
 // Ship the SPA assets INSIDE the app bundle instead of loading the hosted URL.
 // This makes the shell work offline and removes the runtime dependency on the
-// live domain, but OIDC login needs extra handling (the redirect must return to
-// a native custom-scheme deep link, e.g. diviniprocure://callback, and that
-// redirect URI must be registered in Authentik). Do NOT enable this without
-// doing that login plumbing first.
+// live domain, but the session cookie is set by the API origin
+// (app.diviniprocure.com), while bundled assets load from a local
+// file/custom-scheme origin - the browser will not send/store that cookie
+// for requests made from a different origin. Do NOT enable this without
+// first switching the API calls to carry the session as a Bearer token
+// (server/src/auth.ts already accepts one as a fallback to the cookie -
+// see `bearer()`/`sessionToken()`) instead of relying on the cookie alone.
 //
 // IMPORTANT: this requires a SEPARATE, relatively-based web build so the app
 // can load assets from the local file system. Do this in a throwaway output dir

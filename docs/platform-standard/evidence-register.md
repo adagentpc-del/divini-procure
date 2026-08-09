@@ -212,3 +212,13 @@ Evidence references for PASS/PARTIAL controls, by section.
 | S15-03 | Command output (live) | Two-pass `apply-all.sql` against a fresh `divini_s15_test` database → both `exit 0`; `select count(*) from information_schema.tables` → 161 |
 | S15-04 | Command output | `npm test` (repo root) → `1..173`, `# pass 173`, `# fail 0` |
 | S15-05 | N/A | Not performed - disclosed as out of scope for this sandbox, not fabricated |
+
+## Section 16
+
+| Control ID | Evidence type | Reference |
+|---|---|---|
+| S16-01 | Command output | `grep -rn "Authentik\|OIDC" server/src/config.ts server/src/auth.ts` → both confirm OIDC is retired, cross-referenced against the stale `capacitor.config.ts` comments before fixing |
+| S16-01 | Code (new) | `capacitor.config.ts` (both comment blocks rewritten) |
+| S16-02 | Cross-reference | `IOS-APP-STORE-RUNBOOK.md` Section 7 against this engagement's own R-19/R-21 (Sections 06/13/15) account-deletion fixes and live tests |
+| S16-03 | Code | `mobile/PrivacyInfo.xcprivacy` cross-checked against verified real features (auth, Stripe, documents, audit trails) and the Section 13 confirmation of no third-party analytics SDK |
+| S16-04 | Command output | `find ios android -maxdepth 2` → not present (native projects not yet generated) |
