@@ -222,3 +222,10 @@ Evidence references for PASS/PARTIAL controls, by section.
 | S16-02 | Cross-reference | `IOS-APP-STORE-RUNBOOK.md` Section 7 against this engagement's own R-19/R-21 (Sections 06/13/15) account-deletion fixes and live tests |
 | S16-03 | Code | `mobile/PrivacyInfo.xcprivacy` cross-checked against verified real features (auth, Stripe, documents, audit trails) and the Section 13 confirmation of no third-party analytics SDK |
 | S16-04 | Command output | `find ios android -maxdepth 2` → not present (native projects not yet generated) |
+
+## Section 17
+
+| Control ID | Evidence type | Reference |
+|---|---|---|
+| S17-01 through S17-03 | Cross-reference | Every code change made in this session (Sections 05-16, `git log`) cross-checked against `applicability-register.md`'s CONDITIONAL rows for any fact that would change the applicability conclusion - none found |
+| S17-04 | Code | `server/src/routes/verification.ts` (independently re-derived the FCRA-N/A reasoning: first-party documents-on-file review, never a third-party consumer report) |
