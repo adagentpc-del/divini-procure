@@ -467,6 +467,7 @@ router.post(
       platformFeeCents: recordedFeeCents,
       source: "transaction",
       actorEmail: auth.email ?? null,
+      platformRevenueId: revenueId,
     });
 
     res.status(201).json({

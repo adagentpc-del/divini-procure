@@ -404,6 +404,28 @@ router.post(
     );
     if (!instr) return res.status(404).json({ error: "instruction not found" });
 
+    // Cross-rail double-payout guard (Phase 0 financial-integrity fix): a
+    // referral-partner instruction and a partner_commissions row can both
+    // exist for the same underlying platform_revenue event (this rail via
+    // source_revenue_id, the bookkeeping rail via
+    // partner_commissions.platform_revenue_id - see
+    // schema-referral-commission-dedup.sql). If an admin already marked that
+    // commission paid through the bookkeeping ledger (partner-rev.ts, e.g. a
+    // manual wire), refuse to also pay it for real here.
+    if (instr.recipient_kind === "referral_partner" && instr.source_revenue_id) {
+      const alreadyPaid = await q1<{ id: string }>(
+        `select id from partner_commissions where platform_revenue_id = $1 and status = 'paid'`,
+        [instr.source_revenue_id],
+      );
+      if (alreadyPaid) {
+        return res.status(409).json({
+          error:
+            "This commission was already marked paid through the partner revenue ledger " +
+            "(bookkeeping rail). Refusing to release a second payment for the same commission.",
+        });
+      }
+    }
+
     // Only releasable from a pending/ready/blocked/failed state. Already-paid /
     // releasing / held / canceled rows are left untouched.
     if (!["pending", "ready", "blocked", "failed"].includes(instr.status)) {

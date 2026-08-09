@@ -4775,3 +4775,8 @@ COMMIT;
 -- bid/document/account-delete, plus adversarial cross-tenant reads blocked
 -- at the DB layer independent of the app layer).
 \i db/schema-rls.sql
+
+-- Phase 0 financial-integrity fix: link the two independent referral-
+-- commission rails so the same commission cannot be paid twice (see the
+-- file's own header for the full writeup).
+\i db/schema-referral-commission-dedup.sql

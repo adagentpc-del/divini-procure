@@ -202,6 +202,17 @@ export interface MaybeReferralInput {
   /** partner_commissions.source: subscription | transaction | setup | enterprise | manual_adjustment */
   source?: string | null;
   actorEmail?: string | null;
+  /**
+   * The platform_revenue row this commission is attributable to, when known
+   * (award-workflow.ts's resolveAndRecordFee() call already returns one).
+   * Recorded on partner_commissions.platform_revenue_id and enforced unique
+   * (see schema-referral-commission-dedup.sql) so calling this twice for the
+   * same revenue event can never create two commission rows, and so the
+   * Stripe-rail payout_instructions (which key off the same platform_revenue
+   * row via source_revenue_id) can be cross-checked against this one before
+   * either rail is marked paid - see payouts.ts / partner-rev.ts.
+   */
+  platformRevenueId?: string | null;
 }
 
 export interface MaybeReferralResult {
@@ -269,10 +280,10 @@ export async function maybeRecordReferralCommission(
               or exists (
                 select 1
                   from user_referrals ur
-                  join company_members cm on lower(cm_user.email) = lower(ur.referred_email)
+                  join company_members cm on cm.company_id = $1
                   join users cm_user on cm_user.id = cm.user_id
                  where ur.code = rp.referral_code
-                   and cm.company_id = $1
+                   and lower(cm_user.email) = lower(ur.referred_email)
               )
             )
           order by case when rp.company_id = $1 then 0 else 1 end
@@ -290,22 +301,52 @@ export async function maybeRecordReferralCommission(
     const commissionCents =
       type === "flat" ? flat : Math.max(0, Math.round((netProfit * sharePct) / 100));
 
-    const row = await q1<{ id: string }>(
-      `insert into partner_commissions
-         (partner_id, referred_company_id, source, gross_cents, platform_fee_cents,
-          processing_cost_cents, net_profit_cents, commission_cents, status)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,'pending') returning id`,
-      [
-        partner.id,
-        referredCompanyId,
-        source,
-        platformFee, // gross reference: the platform fee that triggered this
-        platformFee,
-        processingCost,
-        netProfit,
-        commissionCents,
-      ],
-    );
+    const platformRevenueId = input.platformRevenueId ?? null;
+
+    // Idempotent when the caller knows the platform_revenue row this
+    // commission is for: a second call for the same revenue event (e.g. a
+    // retried request) hits the partial unique index and creates nothing
+    // new, rather than a second, duplicate commission.
+    const row = platformRevenueId
+      ? await q1<{ id: string }>(
+          `insert into partner_commissions
+             (partner_id, referred_company_id, source, gross_cents, platform_fee_cents,
+              processing_cost_cents, net_profit_cents, commission_cents, status, platform_revenue_id)
+           values ($1,$2,$3,$4,$5,$6,$7,$8,'pending',$9)
+           on conflict (platform_revenue_id) where platform_revenue_id is not null do nothing
+           returning id`,
+          [
+            partner.id,
+            referredCompanyId,
+            source,
+            platformFee,
+            platformFee,
+            processingCost,
+            netProfit,
+            commissionCents,
+            platformRevenueId,
+          ],
+        )
+      : await q1<{ id: string }>(
+          `insert into partner_commissions
+             (partner_id, referred_company_id, source, gross_cents, platform_fee_cents,
+              processing_cost_cents, net_profit_cents, commission_cents, status)
+           values ($1,$2,$3,$4,$5,$6,$7,$8,'pending') returning id`,
+          [
+            partner.id,
+            referredCompanyId,
+            source,
+            platformFee, // gross reference: the platform fee that triggered this
+            platformFee,
+            processingCost,
+            netProfit,
+            commissionCents,
+          ],
+        );
+
+    if (!row && platformRevenueId) {
+      return { created: false, commissionCents: 0, partnerId: partner.id, reason: "already_recorded" };
+    }
 
     return {
       created: !!row,
