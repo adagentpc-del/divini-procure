@@ -220,13 +220,31 @@ router.post(
     const investorRequired = investorApprovalRequired === true;
     const investorStatus = investorRequired ? "pending" : "not_required";
 
+    // Phase 1 P1-09: resolve the package's currently active award's purchase
+    // order, if one exists, so this change order's cost impact can be
+    // attributed to the exact commitment it revises. Best effort - a change
+    // order may legitimately be raised before a package has an active
+    // award/PO (or against a package that never goes through one), so a
+    // missing PO is never fabricated or blocked on.
+    let purchaseOrderId: string | null = null;
+    if (packageId && typeof packageId === "string") {
+      const po = await q1<{ id: string }>(
+        `select po.id from purchase_orders po
+           join awards a on a.id = po.award_id
+          where po.package_id = $1 and a.status = 'active'
+          order by po.created_at desc limit 1`,
+        [packageId],
+      );
+      purchaseOrderId = po?.id ?? null;
+    }
+
     const co = await q1<any>(
       `insert into change_orders
          (building_id, package_id, vendor_company_id, developer_company_id, co_number,
           title, description, cost_impact_cents, schedule_impact_days,
           status, investor_approval_required, investor_approval_status,
-          document_url, created_by)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,'draft',$10,$11,$12,$13)
+          document_url, created_by, purchase_order_id)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,'draft',$10,$11,$12,$13,$14)
        returning *`,
       [
         buildingId,
@@ -242,6 +260,7 @@ router.post(
         investorStatus,
         documentUrl ? String(documentUrl) : null,
         auth.userId,
+        purchaseOrderId,
       ],
     );
     await audit(co.id, auth.email ?? auth.userId ?? null, "created", {
@@ -363,11 +382,29 @@ router.patch(
     }
 
     params.push(co.id);
-    const updated = await q1<any>(
-      `update change_orders set ${sets.join(", ")}, updated_at = now()
-        where id = $${params.length} returning *`,
-      params,
-    );
+    let updateSql = `update change_orders set ${sets.join(", ")}, updated_at = now()
+        where id = $${params.length}`;
+    // Phase 1 P1-09 concurrency guard: when this request includes a status
+    // transition, the UPDATE is compare-and-swap on the status it was read
+    // at - two concurrent PATCH requests approving the same change order
+    // race to be the one whose WHERE clause still matches; the loser gets
+    // zero rows back instead of silently re-applying (and re-auditing,
+    // re-notifying) a transition someone else already made. This does not
+    // change the financial total either way (SUM over status='approved' is
+    // idempotent to how many times the same row reached that status), but
+    // it keeps the audit trail and notifications honest - exactly one entry
+    // per real transition.
+    if (statusChanged) {
+      params.push(co.status);
+      updateSql += ` and status = $${params.length}`;
+    }
+    updateSql += ` returning *`;
+    const updated = await q1<any>(updateSql, params);
+    if (!updated) {
+      return res.status(409).json({
+        error: `this change order's status was already changed by a concurrent request (expected it to still be ${co.status})`,
+      });
+    }
 
     if (statusChanged) {
       await audit(co.id, auth.email ?? auth.userId ?? null, "status_changed", {

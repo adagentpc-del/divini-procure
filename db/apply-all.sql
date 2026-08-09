@@ -4826,3 +4826,7 @@ COMMIT;
 -- Phase 1 P1-08: explicit agreement <-> purchase order linkage + contract
 -- amount - see the file's own header.
 \i db/schema-agreement-po-link.sql
+
+-- Phase 1 P1-09: change order <-> purchase order linkage - see the file's
+-- own header.
+\i db/schema-change-order-po-link.sql
