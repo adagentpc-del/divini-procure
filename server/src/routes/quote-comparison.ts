@@ -19,6 +19,7 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { getAuth, requireUser } from "../auth.js";
 import { q, q1 } from "../pool.js";
 import { ForbiddenError, NotFoundError } from "../db.js";
+import { getBidLineItems } from "../lib/bid-line-items.js";
 
 // Async handler wrapper that funnels errors to the error middleware.
 const h =
@@ -127,40 +128,18 @@ router.get(
       [packageId],
     );
 
-    // Per-bid priced line items. `bid_items` is the live priced-bid table
-    // (line_item_id + amount); `bid_line_items` is the legacy/standalone table
-    // (name + unit_price). Pull both so the total can be computed even when the
-    // bids.price column is absent/zero.
+    // Per-bid priced line items. Resolved via the single consolidated
+    // prefer-bid_items-fallback-to-bid_line_items rule (Phase 1 P1-05,
+    // lib/bid-line-items.ts) - this used to be duplicated inline here.
     const bids: CompareBid[] = [];
     for (const r of bidRows) {
-      const items = await q<any>(
-        `select bi.id, coalesce(pli.description, 'Line item') as name,
-                coalesce(bi.qty, pli.qty, 1) as qty,
-                coalesce(bi.unit_price, 0) as unit_price,
-                coalesce(bi.amount, coalesce(bi.unit_price,0) * coalesce(bi.qty, pli.qty, 1)) as amount
-           from bid_items bi
-           left join package_line_items pli on pli.id = bi.line_item_id
-          where bi.bid_id = $1
-          order by pli.sort nulls last, bi.id`,
-        [r.id],
-      );
-      // Fallback to the standalone bid_line_items table if no priced bid_items.
-      let lineRows = items;
-      if (lineRows.length === 0) {
-        lineRows = await q<any>(
-          `select id, coalesce(name, 'Line item') as name,
-                  coalesce(qty, 1) as qty, coalesce(unit_price, 0) as unit_price,
-                  coalesce(unit_price, 0) * coalesce(qty, 1) as amount
-             from bid_line_items where bid_id = $1 order by id`,
-          [r.id],
-        );
-      }
-      const line_items = lineRows.map((li) => ({
-        id: String(li.id),
-        name: String(li.name),
-        qty: toNum(li.qty),
-        unit_price_cents: Math.round(toNum(li.unit_price) * 100),
-        amount_cents: Math.round(toNum(li.amount) * 100),
+      const resolved = await getBidLineItems(r.id);
+      const line_items = resolved.map((li) => ({
+        id: li.id,
+        name: li.name,
+        qty: li.qty,
+        unit_price_cents: li.unitPriceCents,
+        amount_cents: li.amountCents,
       }));
 
       // Canonical total: prefer the bids.price column; else sum the line items.

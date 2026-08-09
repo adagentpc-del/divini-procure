@@ -101,6 +101,26 @@ export interface TxQuery {
 }
 
 /**
+ * Escalate the CURRENT withTransaction() to admin-equivalent RLS for its
+ * remaining statements only (is_local, discarded at commit/rollback like
+ * every other GUC this file sets). Use this ONLY after the caller has
+ * already been independently verified as authorized for the specific write
+ * about to happen - mirrors lib/requestContext.ts's runAsAdmin() escalation
+ * pattern for q()/q1(), but scoped to an open transaction's tx handle
+ * instead of starting a fresh one, for writes that must happen atomically
+ * alongside other statements already inside that transaction. Concrete
+ * example: a developer accepting a vendor's bid_revisions price proposal
+ * must write bids.price, but bids_update's RLS policy (schema-rls.sql) only
+ * permits the VENDOR company (or admin) to update a bid - the developer's
+ * acceptance is the authorized trigger for that specific write, exactly the
+ * same "already-authorized cross-company write" situation award-workflow.ts
+ * documents for marking a bid awarded.
+ */
+export async function escalateToAdmin(tx: TxQuery): Promise<void> {
+  await tx.q(`select set_config('app.is_admin', 't', true)`);
+}
+
+/**
  * Run `fn` inside a single Postgres transaction (RLS context set once, up
  * front, on the same connection used for every statement `fn` issues via the
  * TxQuery it receives). Commits on success, rolls back on any thrown error

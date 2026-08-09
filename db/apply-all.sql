@@ -4812,3 +4812,8 @@ COMMIT;
 -- Phase 0 item 21: modest Postgres-native (pg_trgm) marketplace search -
 -- see the file's own header.
 \i db/schema-marketplace-search.sql
+
+-- Phase 1 P1-03/P1-04: project budget + package allowance ledgers - typed,
+-- historically-honest revision history replacing the dead buildings.budget
+-- field - see the file's own header.
+\i db/schema-financial-ledgers.sql

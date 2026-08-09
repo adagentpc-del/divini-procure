@@ -22,3 +22,20 @@ export class NotFoundError extends Error {
     this.name = "NotFoundError";
   }
 }
+/**
+ * A caller-facing 400: valid request shape, but the operation is not legal
+ * right now (e.g. "revision is already declined", "this bid has already
+ * been awarded"). Distinct from a plain malformed-input 400 that a route
+ * would normally just `return res.status(400)` for directly - this class
+ * exists specifically so financial write paths that must run INSIDE a
+ * withTransaction() callback (pool.ts) can throw to trigger a rollback and
+ * still have the error handler below map it to 400, not the generic 500
+ * every other uncaught throw becomes.
+ */
+export class ValidationError extends Error {
+  status = 400;
+  constructor(msg = "invalid request") {
+    super(msg);
+    this.name = "ValidationError";
+  }
+}

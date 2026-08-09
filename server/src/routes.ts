@@ -115,6 +115,9 @@ import notificationsRouter from "./routes/notifications.js";
 import jobsAdminRouter from "./routes/jobs-admin.js";
 import reviewsRouter from "./routes/reviews.js";
 import marketplaceSearchRouter from "./routes/marketplace-search.js";
+// ---- Phase 1: canonical procurement + financial spine ------------------------
+import budgetRouter from "./routes/budget.js";
+import bidRevisionsRouter from "./routes/bid-revisions.js";
 // ---- Monetization V2 (flag-gated): bid credits + verification gate -----------
 import { PROCURE_MONETIZATION_V2 } from "./config.js";
 import { getBidCredits, consumeBidCredit } from "./lib/bidCredits.js";
@@ -230,6 +233,9 @@ router.use(notificationsRouter);
 router.use(jobsAdminRouter);
 router.use(reviewsRouter);
 router.use(marketplaceSearchRouter);
+// ---- Phase 1: canonical procurement + financial spine -----------------------
+router.use(budgetRouter);
+router.use(bidRevisionsRouter);
 
 // ---- health ----------------------------------------------------------------
 router.get("/healthz", async (_req, res) => {
@@ -755,6 +761,14 @@ router.get(
 export function errorHandler(err: any, req: Request, res: Response, _next: NextFunction) {
   if (err instanceof ForbiddenError) return res.status(403).json({ error: err.message });
   if (err instanceof NotFoundError) return res.status(404).json({ error: err.message });
+  // ValidationError (lib/errors.ts) and any ad-hoc `{status: <4xx>}` thrown
+  // from inside a withTransaction() callback (pool.ts) - a plain object/Error
+  // cannot `return res.status(...)` directly mid-transaction, since the
+  // rollback must still happen via the thrown error reaching withTransaction's
+  // catch block first.
+  if (typeof err?.status === "number" && err.status >= 400 && err.status < 500) {
+    return res.status(err.status).json({ error: err.message || "invalid request" });
+  }
   // Log the full stack trace (never returned to the client) for debugging.
   // eslint-disable-next-line no-console
   console.error(
