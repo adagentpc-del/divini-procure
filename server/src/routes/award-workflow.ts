@@ -34,6 +34,7 @@ import { ForbiddenError, NotFoundError, ValidationError } from "../lib/errors.js
 import { resolveAndRecordFee, maybeRecordReferralCommission } from "../lib/monetization.js";
 import { notifyCompanyMembers } from "../lib/notify.js";
 import { enqueueJob } from "../lib/jobs.js";
+import { contractDiscrepancyCents as contractDiscrepancyCentsFn } from "../lib/financial-model.js";
 
 // Async handler wrapper that funnels errors to the error middleware.
 const h =
@@ -445,10 +446,23 @@ router.get(
       `select * from award_documents where purchase_order_id = $1 order by created_at desc`,
       [po.id],
     );
+    // The governing agreement/contract, if one has been linked (P1-08). The
+    // contract amount discrepancy vs. the award is surfaced explicitly, per
+    // the Phase 1 instruction: "the system must show the $10,000 difference
+    // and why" - never silently reconciled with the award/PO amount.
+    const agreement = await q1<any>(
+      `select * from agreements where purchase_order_id = $1 order by created_at desc limit 1`,
+      [po.id],
+    );
+    const contractDiscrepancyCents = agreement
+      ? contractDiscrepancyCentsFn(agreement.contract_amount_cents, po.original_amount_cents)
+      : null;
     res.json({
       purchaseOrder: { ...po, vendor_name: vendor?.name ?? null },
       payments,
       documents,
+      agreement,
+      contractDiscrepancyCents,
     });
   }),
 );

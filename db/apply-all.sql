@@ -4822,3 +4822,7 @@ COMMIT;
 -- award per package enforced at the database level - see the file's own
 -- header.
 \i db/schema-awards.sql
+
+-- Phase 1 P1-08: explicit agreement <-> purchase order linkage + contract
+-- amount - see the file's own header.
+\i db/schema-agreement-po-link.sql

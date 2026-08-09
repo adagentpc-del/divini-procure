@@ -532,4 +532,66 @@ router.patch(
   }),
 );
 
+// ---- PATCH /agreements/:id/link-purchase-order -------------------------------
+// Phase 1 P1-08: explicit agreement <-> purchase order relationship (the
+// Phase 0 audit found agreements disconnected from POs). Does NOT merge the
+// two objects - a PO keeps referencing its award/amount independently; this
+// only records WHICH agreement governs it, plus the contract's own recorded
+// amount, which may legitimately differ from the award/PO amount (surfaced,
+// never silently reconciled - see lib/financial-model.ts
+// contractDiscrepancyCents(), read via GET /award/purchase-orders/:id).
+// {purchaseOrderId, contractAmountCents?}
+router.patch(
+  "/agreements/:id/link-purchase-order",
+  requireUser,
+  h(async (req, res) => {
+    const auth = getAuth(req);
+    const ag = await q1<Record<string, any>>("select * from agreements where id=$1", [req.params.id]);
+    if (!ag) throw new NotFoundError("agreement not found");
+    if (!auth.isAdmin) await assertMember(auth.userId!, ag.party_company_id);
+
+    const purchaseOrderId = req.body?.purchaseOrderId ? String(req.body.purchaseOrderId) : "";
+    if (!purchaseOrderId) return res.status(400).json({ error: "purchaseOrderId required" });
+    const po = await q1<Record<string, any>>("select * from purchase_orders where id = $1", [
+      purchaseOrderId,
+    ]);
+    if (!po) throw new NotFoundError("purchase order not found");
+
+    // The agreement must actually relate to this PO's procurement
+    // relationship (same company on either side, or the same project) -
+    // never fabricate a link between unrelated records (Phase 1 instruction
+    // section 19: "Do not fabricate relationships for ambiguous historical
+    // records").
+    const relates =
+      po.developer_company_id === ag.party_company_id ||
+      po.vendor_company_id === ag.party_company_id ||
+      (!!ag.project_id && ag.project_id === po.building_id);
+    if (!relates) {
+      return res
+        .status(400)
+        .json({ error: "this agreement and purchase order do not share a company or project; refusing to link" });
+    }
+
+    const rawAmount = req.body?.contractAmountCents;
+    let contractAmountCents: number | null = null;
+    if (rawAmount != null && rawAmount !== "") {
+      contractAmountCents = Math.round(Number(rawAmount));
+      if (!Number.isFinite(contractAmountCents)) {
+        return res.status(400).json({ error: "contractAmountCents must be a number" });
+      }
+    }
+
+    const row = await q1<Record<string, any>>(
+      `update agreements
+          set purchase_order_id = $2,
+              contract_amount_cents = coalesce($3, contract_amount_cents),
+              updated_at = now()
+        where id = $1
+        returning *`,
+      [ag.id, po.id, contractAmountCents],
+    );
+    res.json({ agreement: row });
+  }),
+);
+
 export default router;
