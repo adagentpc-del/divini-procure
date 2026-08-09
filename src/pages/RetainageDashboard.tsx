@@ -1,6 +1,10 @@
 /**
  * RetainageDashboard -- retainage tracking and lien waiver management page.
- * Vendors see what's being held from them; developers see what they owe and can approve releases.
+ * Vendors see what's being held from them; developers see what they owe and
+ * can approve releases. Talks to /api/retainage + /api/lien-waivers
+ * (server/src/routes/retainage.ts). Styling matches the rest of Procure
+ * (card / table / btn / badge / field / two) - see theme.css.
+ * Zero em dashes by convention.
  */
 import { useEffect, useState } from 'react';
 
@@ -60,40 +64,38 @@ const dollars = (cents: number | null | undefined) =>
 const fmtDate = (iso: string) =>
   new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
+const STATUS_BADGE: Record<string, string> = {
+  holding: 'badge b-amber',
+  partial_release: 'badge b-amber',
+  fully_released: 'badge b-green',
+  disputed: 'badge b-red',
+  requested: 'badge b-neutral',
+  submitted: 'badge b-amber',
+  accepted: 'badge b-green',
+  rejected: 'badge b-red',
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  holding: 'Holding',
+  partial_release: 'Partial Release',
+  fully_released: 'Fully Released',
+  disputed: 'Disputed',
+  requested: 'Requested',
+  submitted: 'Submitted',
+  accepted: 'Accepted',
+  rejected: 'Rejected',
+};
+
 function StatusBadge({ status }: { status: string }) {
-  const map: Record<string, string> = {
-    holding: 'bg-amber-100 text-amber-800',
-    partial_release: 'bg-blue-100 text-blue-800',
-    fully_released: 'bg-green-100 text-green-800',
-    disputed: 'bg-red-100 text-red-800',
-    requested: 'bg-slate-100 text-slate-700',
-    submitted: 'bg-blue-100 text-blue-800',
-    accepted: 'bg-green-100 text-green-800',
-    rejected: 'bg-red-100 text-red-800',
-  };
-  const labels: Record<string, string> = {
-    holding: 'Holding',
-    partial_release: 'Partial Release',
-    fully_released: 'Fully Released',
-    disputed: 'Disputed',
-    requested: 'Requested',
-    submitted: 'Submitted',
-    accepted: 'Accepted',
-    rejected: 'Rejected',
-  };
-  return (
-    <span className={`inline-block px-2 py-0.5 rounded text-xs font-semibold ${map[status] ?? 'bg-slate-100 text-slate-700'}`}>
-      {labels[status] ?? status}
-    </span>
-  );
+  return <span className={STATUS_BADGE[status] ?? 'badge b-neutral'}>{STATUS_LABELS[status] ?? status}</span>;
 }
 
 function StatCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
-    <div className="bg-white border border-slate-200 rounded-xl p-4 flex-1 min-w-0">
-      <p className="text-xs text-slate-500 uppercase tracking-wide mb-1">{label}</p>
-      <p className="text-2xl font-bold text-slate-800">{value}</p>
-      {sub && <p className="text-xs text-slate-400 mt-0.5">{sub}</p>}
+    <div className="card metric" style={{ flex: 1, minWidth: 0 }}>
+      <div className="k">{label}</div>
+      <div className="v">{value}</div>
+      {sub && <div className="d">{sub}</div>}
     </div>
   );
 }
@@ -271,45 +273,48 @@ export default function RetainageDashboard() {
   const pendingCount = summary?.asVendor.pendingReleaseCount ?? 0;
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
-      {/* Header */}
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-slate-800 mb-1">Retainage &amp; Lien Waivers 💰</h1>
-        <p className="text-slate-500 text-sm">Track contract retainage held and lien waiver workflows.</p>
+    <div>
+      <div className="page-head">
+        <div>
+          <h1>Retainage &amp; Lien Waivers</h1>
+          <div className="sub">Track contract retainage held and lien waiver workflows.</div>
+        </div>
       </div>
 
-      {/* Alerts */}
       {err && (
-        <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 mb-4 text-sm flex justify-between">
+        <div className="err" style={{ display: 'flex', justifyContent: 'space-between' }}>
           {err}
-          <button onClick={() => setErr('')} className="ml-4 font-bold">x</button>
+          <button onClick={() => setErr('')} style={{ background: 'none', border: 'none', color: 'inherit', fontWeight: 700, cursor: 'pointer' }}>×</button>
         </div>
       )}
       {actionMsg && (
-        <div className="bg-green-50 border border-green-200 text-green-700 rounded-lg px-4 py-3 mb-4 text-sm flex justify-between">
+        <div className="ok" style={{ display: 'flex', justifyContent: 'space-between' }}>
           {actionMsg}
-          <button onClick={() => setActionMsg('')} className="ml-4 font-bold">x</button>
+          <button onClick={() => setActionMsg('')} style={{ background: 'none', border: 'none', color: 'inherit', fontWeight: 700, cursor: 'pointer' }}>×</button>
         </div>
       )}
 
-      {/* Summary stats */}
-      <div className="flex gap-3 mb-6 flex-wrap">
+      <div className="grid cards3" style={{ marginBottom: 18 }}>
         <StatCard label="Total Held" value={dollars(totalHeld)} sub="across all records" />
         <StatCard label="Total Released" value={dollars(totalReleased)} sub="approved releases" />
         <StatCard label="Pending Releases" value={String(pendingCount)} sub="awaiting approval" />
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 mb-6 border-b border-slate-200">
+      <div style={{ display: 'flex', gap: 4, marginBottom: 18, borderBottom: '1px solid var(--line)' }}>
         {(['receivables', 'payables'] as const).map(t => (
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`px-4 py-2 text-sm font-medium capitalize border-b-2 transition-colors ${
-              tab === t
-                ? 'border-emerald-500 text-emerald-700'
-                : 'border-transparent text-slate-500 hover:text-slate-700'
-            }`}
+            className="btn"
+            style={{
+              border: 'none',
+              borderBottom: tab === t ? '2px solid var(--emerald)' : '2px solid transparent',
+              borderRadius: 0,
+              background: 'transparent',
+              color: tab === t ? 'var(--emerald-deep)' : 'var(--muted)',
+              textTransform: 'capitalize',
+            }}
           >
             {t === 'receivables' ? 'My Receivables' : 'My Payables'}
           </button>
@@ -319,82 +324,77 @@ export default function RetainageDashboard() {
       {/* MY RECEIVABLES TAB */}
       {tab === 'receivables' && (
         <div>
-          {vendorLoading && <p className="text-slate-400 text-sm">Loading...</p>}
+          {vendorLoading && <div className="note">Loading...</div>}
           {!vendorLoading && vendorRecords.length === 0 && (
-            <div className="bg-slate-50 border border-slate-200 rounded-xl p-8 text-center">
-              <p className="text-slate-500">No retainage records found where you are the vendor.</p>
+            <div className="card" style={{ textAlign: 'center', padding: 32 }}>
+              <p className="note">No retainage records found where you are the vendor.</p>
             </div>
           )}
           {vendorRecords.map(record => (
-            <div key={record.id} className="bg-white border border-slate-200 rounded-xl p-5 mb-4">
-              <div className="flex justify-between items-start flex-wrap gap-2 mb-3">
+            <div key={record.id} className="card" style={{ marginBottom: 14 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
                 <div>
-                  <p className="font-semibold text-slate-800 text-sm">Building: {record.building_id}</p>
-                  <p className="text-xs text-slate-500">Developer: {record.developer_name ?? record.developer_company_id}</p>
-                  {record.package_id && <p className="text-xs text-slate-400">Package: {record.package_id}</p>}
+                  <div style={{ fontWeight: 700, fontSize: 13.5 }}>Building: {record.building_id}</div>
+                  <div className="note">Developer: {record.developer_name ?? record.developer_company_id}</div>
+                  {record.package_id && <div className="note">Package: {record.package_id}</div>}
                 </div>
                 <StatusBadge status={record.status} />
               </div>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3 text-sm">
+              <div className="grid cards3" style={{ gridTemplateColumns: 'repeat(4,1fr)', marginBottom: 10, gap: 10 }}>
                 <div>
-                  <p className="text-xs text-slate-400">Contract</p>
-                  <p className="font-medium text-slate-700">{dollars(record.contract_amount_cents)}</p>
+                  <div className="note">Contract</div>
+                  <div style={{ fontWeight: 600, fontSize: 13.5 }}>{dollars(record.contract_amount_cents)}</div>
                 </div>
                 <div>
-                  <p className="text-xs text-slate-400">Retainage %</p>
-                  <p className="font-medium text-slate-700">{record.retainage_pct}%</p>
+                  <div className="note">Retainage %</div>
+                  <div style={{ fontWeight: 600, fontSize: 13.5 }}>{record.retainage_pct}%</div>
                 </div>
                 <div>
-                  <p className="text-xs text-slate-400">Held</p>
-                  <p className="font-medium text-amber-700">{dollars(record.retainage_held_cents)}</p>
+                  <div className="note">Held</div>
+                  <div style={{ fontWeight: 600, fontSize: 13.5, color: 'var(--amber)' }}>{dollars(record.retainage_held_cents)}</div>
                 </div>
                 <div>
-                  <p className="text-xs text-slate-400">Released</p>
-                  <p className="font-medium text-green-700">{dollars(record.retainage_released_cents)}</p>
+                  <div className="note">Released</div>
+                  <div style={{ fontWeight: 600, fontSize: 13.5, color: 'var(--green)' }}>{dollars(record.retainage_released_cents)}</div>
                 </div>
               </div>
               {record.milestone_required && (
-                <p className="text-xs text-slate-500 mb-2">Milestone: {record.milestone_required}</p>
+                <div className="note" style={{ marginBottom: 8 }}>Milestone: {record.milestone_required}</div>
               )}
               {record.release_requested_at && !record.release_approved_at && (
-                <p className="text-xs text-blue-600 mb-2">Release requested {fmtDate(record.release_requested_at)} -- awaiting approval.</p>
+                <div className="note" style={{ marginBottom: 8 }}>Release requested {fmtDate(record.release_requested_at)}, awaiting approval.</div>
               )}
               {record.release_approved_at && (
-                <p className="text-xs text-green-600 mb-2">Release approved {fmtDate(record.release_approved_at)}.</p>
+                <div className="note" style={{ marginBottom: 8, color: 'var(--green)' }}>Release approved {fmtDate(record.release_approved_at)}.</div>
               )}
               {!record.release_requested_at && record.status !== 'fully_released' && (
-                <button
-                  onClick={() => requestRelease(record.id)}
-                  className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg font-medium transition-colors"
-                >
-                  Request Release
-                </button>
+                <button onClick={() => requestRelease(record.id)} className="btn primary">Request Release</button>
               )}
-              <p className="text-xs text-slate-400 mt-2">Created {fmtDate(record.created_at)}</p>
+              <div className="note" style={{ marginTop: 8 }}>Created {fmtDate(record.created_at)}</div>
             </div>
           ))}
 
           {/* Lien Waivers sub-section */}
-          <h2 className="text-base font-semibold text-slate-700 mt-8 mb-3">My Lien Waivers</h2>
+          <div className="sectitle" style={{ marginTop: 30 }}>My Lien Waivers</div>
           {vendorWaivers.length === 0 && (
-            <div className="bg-slate-50 border border-slate-200 rounded-xl p-6 text-center">
-              <p className="text-slate-500 text-sm">No lien waivers found.</p>
+            <div className="card" style={{ textAlign: 'center', padding: 24 }}>
+              <p className="note">No lien waivers found.</p>
             </div>
           )}
           {vendorWaivers.map(w => (
-            <div key={w.id} className="bg-white border border-slate-200 rounded-xl p-4 mb-3">
-              <div className="flex justify-between items-start flex-wrap gap-2 mb-2">
+            <div key={w.id} className="card" style={{ marginBottom: 10 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
                 <div>
-                  <p className="text-sm font-medium text-slate-700 capitalize">{w.waiver_type.replace(/_/g, ' ')}</p>
-                  <p className="text-xs text-slate-400">Building: {w.building_id}</p>
+                  <div style={{ fontSize: 13.5, fontWeight: 600, textTransform: 'capitalize' }}>{w.waiver_type.replace(/_/g, ' ')}</div>
+                  <div className="note">Building: {w.building_id}</div>
                 </div>
                 <StatusBadge status={w.status} />
               </div>
-              <div className="flex gap-4 text-xs text-slate-500">
+              <div className="note" style={{ display: 'flex', gap: 14 }}>
                 {w.through_date && <span>Through: {w.through_date}</span>}
                 {w.payment_amount_cents != null && <span>Amount: {dollars(w.payment_amount_cents)}</span>}
               </div>
-              <p className="text-xs text-slate-400 mt-1">Requested {fmtDate(w.created_at)}</p>
+              <div className="note" style={{ marginTop: 4 }}>Requested {fmtDate(w.created_at)}</div>
             </div>
           ))}
         </div>
@@ -403,21 +403,16 @@ export default function RetainageDashboard() {
       {/* MY PAYABLES TAB */}
       {tab === 'payables' && (
         <div>
-          {/* Add retainage button */}
-          <div className="flex justify-end mb-4">
-            <button
-              onClick={() => setShowAddForm(!showAddForm)}
-              className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-            >
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 14 }}>
+            <button onClick={() => setShowAddForm(!showAddForm)} className="btn primary">
               {showAddForm ? 'Cancel' : '+ Add Retainage Record'}
             </button>
           </div>
 
-          {/* Add retainage form */}
           {showAddForm && (
-            <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 mb-5">
-              <h3 className="font-semibold text-slate-700 mb-3 text-sm">New Retainage Record</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+            <div className="card" style={{ marginBottom: 18 }}>
+              <h3 style={{ fontSize: 15, marginBottom: 12 }}>New Retainage Record</h3>
+              <div className="two">
                 {[
                   { label: 'Building ID', key: 'buildingId', placeholder: 'UUID' },
                   { label: 'Vendor Company ID', key: 'vendorCompanyId', placeholder: 'UUID' },
@@ -426,10 +421,9 @@ export default function RetainageDashboard() {
                   { label: 'Release Trigger', key: 'releaseTrigger', placeholder: 'e.g. Substantial completion' },
                   { label: 'Notes', key: 'notes', placeholder: 'Optional notes' },
                 ].map(({ label, key, placeholder }) => (
-                  <div key={key}>
-                    <label className="block text-xs text-slate-500 mb-1">{label}</label>
+                  <div className="field" key={key}>
+                    <label>{label}</label>
                     <input
-                      className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-400"
                       placeholder={placeholder}
                       value={(addForm as any)[key]}
                       onChange={e => setAddForm(prev => ({ ...prev, [key]: e.target.value }))}
@@ -437,68 +431,61 @@ export default function RetainageDashboard() {
                   </div>
                 ))}
               </div>
-              <button
-                onClick={submitAddForm}
-                disabled={addLoading}
-                className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-              >
+              <button onClick={submitAddForm} disabled={addLoading} className="btn primary">
                 {addLoading ? 'Saving...' : 'Create Record'}
               </button>
             </div>
           )}
 
-          {devLoading && <p className="text-slate-400 text-sm">Loading...</p>}
+          {devLoading && <div className="note">Loading...</div>}
           {!devLoading && devRecords.length === 0 && (
-            <div className="bg-slate-50 border border-slate-200 rounded-xl p-8 text-center">
-              <p className="text-slate-500">No retainage records found where you are the developer.</p>
+            <div className="card" style={{ textAlign: 'center', padding: 32 }}>
+              <p className="note">No retainage records found where you are the developer.</p>
             </div>
           )}
           {devRecords.map(record => (
-            <div key={record.id} className="bg-white border border-slate-200 rounded-xl p-5 mb-4">
-              <div className="flex justify-between items-start flex-wrap gap-2 mb-3">
+            <div key={record.id} className="card" style={{ marginBottom: 14 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
                 <div>
-                  <p className="font-semibold text-slate-800 text-sm">Building: {record.building_id}</p>
-                  <p className="text-xs text-slate-500">Vendor: {record.vendor_name ?? record.vendor_company_id}</p>
+                  <div style={{ fontWeight: 700, fontSize: 13.5 }}>Building: {record.building_id}</div>
+                  <div className="note">Vendor: {record.vendor_name ?? record.vendor_company_id}</div>
                 </div>
                 <StatusBadge status={record.status} />
               </div>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3 text-sm">
+              <div className="grid cards3" style={{ gridTemplateColumns: 'repeat(4,1fr)', marginBottom: 10, gap: 10 }}>
                 <div>
-                  <p className="text-xs text-slate-400">Contract</p>
-                  <p className="font-medium text-slate-700">{dollars(record.contract_amount_cents)}</p>
+                  <div className="note">Contract</div>
+                  <div style={{ fontWeight: 600, fontSize: 13.5 }}>{dollars(record.contract_amount_cents)}</div>
                 </div>
                 <div>
-                  <p className="text-xs text-slate-400">Retainage %</p>
-                  <p className="font-medium text-slate-700">{record.retainage_pct}%</p>
+                  <div className="note">Retainage %</div>
+                  <div style={{ fontWeight: 600, fontSize: 13.5 }}>{record.retainage_pct}%</div>
                 </div>
                 <div>
-                  <p className="text-xs text-slate-400">Held</p>
-                  <p className="font-medium text-amber-700">{dollars(record.retainage_held_cents)}</p>
+                  <div className="note">Held</div>
+                  <div style={{ fontWeight: 600, fontSize: 13.5, color: 'var(--amber)' }}>{dollars(record.retainage_held_cents)}</div>
                 </div>
                 <div>
-                  <p className="text-xs text-slate-400">Released</p>
-                  <p className="font-medium text-green-700">{dollars(record.retainage_released_cents)}</p>
+                  <div className="note">Released</div>
+                  <div style={{ fontWeight: 600, fontSize: 13.5, color: 'var(--green)' }}>{dollars(record.retainage_released_cents)}</div>
                 </div>
               </div>
 
               {/* Approve release */}
               {record.release_requested_at && !record.release_approved_at && (
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-3">
-                  <p className="text-xs text-blue-700 mb-2 font-medium">
+                <div className="card" style={{ background: 'var(--ivory)', marginBottom: 10 }}>
+                  <div className="note" style={{ marginBottom: 8, fontWeight: 600 }}>
                     Release requested {fmtDate(record.release_requested_at)}. Held: {dollars(record.retainage_held_cents)}.
-                  </p>
-                  <div className="flex gap-2 items-center flex-wrap">
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                     <input
                       type="number"
                       placeholder="Release amount ($)"
-                      className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm w-40"
+                      style={{ width: 160 }}
                       value={approveState[record.id] ?? ''}
                       onChange={e => setApproveState(prev => ({ ...prev, [record.id]: e.target.value }))}
                     />
-                    <button
-                      onClick={() => approveRelease(record.id, record.retainage_held_cents)}
-                      className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
-                    >
+                    <button onClick={() => approveRelease(record.id, record.retainage_held_cents)} className="btn primary">
                       Approve Release
                     </button>
                   </div>
@@ -507,13 +494,12 @@ export default function RetainageDashboard() {
 
               {/* Request lien waiver */}
               {waiverForm[record.id] ? (
-                <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 mb-2">
-                  <p className="text-xs font-medium text-slate-600 mb-2">Request Lien Waiver</p>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-2">
-                    <div>
-                      <label className="text-xs text-slate-500 block mb-1">Waiver Type</label>
+                <div className="card" style={{ background: 'var(--ivory)', marginBottom: 8 }}>
+                  <div className="note" style={{ marginBottom: 8, fontWeight: 600 }}>Request Lien Waiver</div>
+                  <div className="two">
+                    <div className="field">
+                      <label>Waiver Type</label>
                       <select
-                        className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm"
                         value={waiverForm[record.id]?.waiverType ?? ''}
                         onChange={e => setWaiverForm(prev => ({ ...prev, [record.id]: { ...prev[record.id]!, waiverType: e.target.value } }))}
                       >
@@ -524,44 +510,36 @@ export default function RetainageDashboard() {
                         <option value="unconditional_final">Unconditional Final</option>
                       </select>
                     </div>
-                    <div>
-                      <label className="text-xs text-slate-500 block mb-1">Through Date</label>
+                    <div className="field">
+                      <label>Through Date</label>
                       <input
                         type="date"
-                        className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm"
                         value={waiverForm[record.id]?.throughDate ?? ''}
                         onChange={e => setWaiverForm(prev => ({ ...prev, [record.id]: { ...prev[record.id]!, throughDate: e.target.value } }))}
                       />
                     </div>
-                    <div>
-                      <label className="text-xs text-slate-500 block mb-1">Payment Amount ($)</label>
+                    <div className="field">
+                      <label>Payment Amount ($)</label>
                       <input
                         type="number"
-                        className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm"
                         value={waiverForm[record.id]?.paymentAmount ?? ''}
                         onChange={e => setWaiverForm(prev => ({ ...prev, [record.id]: { ...prev[record.id]!, paymentAmount: e.target.value } }))}
                       />
                     </div>
-                    <div>
-                      <label className="text-xs text-slate-500 block mb-1">Notes</label>
+                    <div className="field">
+                      <label>Notes</label>
                       <input
                         type="text"
-                        className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm"
                         value={waiverForm[record.id]?.notes ?? ''}
                         onChange={e => setWaiverForm(prev => ({ ...prev, [record.id]: { ...prev[record.id]!, notes: e.target.value } }))}
                       />
                     </div>
                   </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => requestLienWaiver(record)}
-                      className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
-                    >
-                      Submit Request
-                    </button>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button onClick={() => requestLienWaiver(record)} className="btn primary">Submit Request</button>
                     <button
                       onClick={() => setWaiverForm(prev => { const n = { ...prev }; delete n[record.id]; return n; })}
-                      className="text-slate-500 hover:text-slate-700 px-3 py-1.5 text-xs"
+                      className="btn"
                     >
                       Cancel
                     </button>
@@ -570,13 +548,13 @@ export default function RetainageDashboard() {
               ) : (
                 <button
                   onClick={() => setWaiverForm(prev => ({ ...prev, [record.id]: { waiverType: '', throughDate: '', paymentAmount: '', notes: '' } }))}
-                  className="text-xs text-emerald-700 hover:text-emerald-900 underline"
+                  className="btn"
                 >
                   Request Lien Waiver
                 </button>
               )}
 
-              <p className="text-xs text-slate-400 mt-2">Created {fmtDate(record.created_at)}</p>
+              <div className="note" style={{ marginTop: 8 }}>Created {fmtDate(record.created_at)}</div>
             </div>
           ))}
         </div>

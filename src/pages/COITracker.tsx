@@ -1,5 +1,8 @@
 /**
  * COITracker -- Insurance certificate tracking page for Divini Procure.
+ * Talks to /api/coi (server/src/routes/coi.ts). Styling matches the rest of
+ * Procure (card / table / btn / badge / field / two) - see theme.css.
+ * Zero em dashes by convention.
  */
 import { useEffect, useState } from 'react';
 
@@ -21,22 +24,26 @@ function formatMoney(cents: number | null | undefined): string {
   return '$' + Math.round(cents / 100).toLocaleString('en-US');
 }
 
+function badgeClass(status: string): string {
+  switch (status) {
+    case 'active':
+      return 'badge b-green';
+    case 'expiring_soon':
+      return 'badge b-amber';
+    case 'expired':
+      return 'badge b-red';
+    default:
+      return 'badge b-neutral';
+  }
+}
+
 function StatusBadge({ status }: { status: string }) {
-  const cls =
-    status === 'active' ? 'bg-green-100 text-green-800' :
-    status === 'expiring_soon' ? 'bg-amber-100 text-amber-800' :
-    status === 'expired' ? 'bg-red-100 text-red-800' :
-    'bg-gray-100 text-gray-600';
   const label =
     status === 'active' ? 'Active' :
     status === 'expiring_soon' ? 'Expiring Soon' :
     status === 'expired' ? 'Expired' :
     'Suspended';
-  return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${cls}`}>
-      {label}
-    </span>
-  );
+  return <span className={badgeClass(status)}>{label}</span>;
 }
 
 const emptyForm = {
@@ -165,127 +172,80 @@ export default function COITracker() {
   const expiredCount = computed.filter(c => c._status === 'expired').length;
 
   return (
-    <div className="max-w-5xl mx-auto px-4 py-8">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+    <div>
+      <div className="page-head">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">
-            <span className="mr-2">🛡️</span>Insurance Tracker
-          </h1>
-          <p className="text-sm text-gray-500 mt-1">
-            Manage and track certificates of insurance
-          </p>
+          <h1>Insurance Tracker</h1>
+          <div className="sub">Manage and track certificates of insurance</div>
         </div>
-        <button
-          onClick={openAdd}
-          className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 transition-colors"
-        >
-          + Add Certificate
-        </button>
+        <button className="btn primary" onClick={openAdd}>+ Add Certificate</button>
       </div>
 
-      {/* Stat cards */}
       {!loading && (
-        <div className="grid grid-cols-3 gap-4 mb-6">
-          <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-            <p className="text-sm text-green-700 font-medium">Active</p>
-            <p className="text-3xl font-bold text-green-800">{activeCount}</p>
+        <div className="grid cards3" style={{ marginBottom: 18 }}>
+          <div className="card metric">
+            <div className="k">Active</div>
+            <div className="v">{activeCount}</div>
           </div>
-          <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
-            <p className="text-sm text-amber-700 font-medium">Expiring Soon</p>
-            <p className="text-3xl font-bold text-amber-800">{expiringSoonCount}</p>
+          <div className="card metric">
+            <div className="k">Expiring Soon</div>
+            <div className="v">{expiringSoonCount}</div>
           </div>
-          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-            <p className="text-sm text-red-700 font-medium">Expired</p>
-            <p className="text-3xl font-bold text-red-800">{expiredCount}</p>
+          <div className="card metric">
+            <div className="k">Expired</div>
+            <div className="v">{expiredCount}</div>
           </div>
         </div>
       )}
 
-      {/* Expiry warning banner */}
       {!loading && expiringSoonCount > 0 && (
-        <div className="mb-6 bg-amber-50 border border-amber-300 rounded-lg px-4 py-3 flex items-center gap-2">
-          <span className="text-amber-500">⚠️</span>
-          <span className="text-sm text-amber-800 font-medium">
-            {expiringSoonCount} certificate{expiringSoonCount !== 1 ? 's' : ''} expiring within 30 days
-          </span>
+        <div className="badge b-amber" style={{ display: 'block', padding: '10px 14px', marginBottom: 16, fontSize: 13 }}>
+          {expiringSoonCount} certificate{expiringSoonCount !== 1 ? 's' : ''} expiring within 30 days
         </div>
       )}
 
-      {/* Error */}
-      {error && !showForm && (
-        <div className="mb-4 bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700">
-          {error}
-        </div>
-      )}
+      {error && !showForm && <div className="err">{error}</div>}
 
-      {/* Loading skeleton */}
-      {loading && (
-        <div className="space-y-3">
-          {[1, 2, 3].map(i => (
-            <div key={i} className="h-12 bg-gray-100 rounded animate-pulse" />
-          ))}
-        </div>
-      )}
+      {loading && <div className="note">Loading…</div>}
 
-      {/* Empty state */}
       {!loading && certs.length === 0 && !showForm && (
-        <div className="bg-white border border-gray-200 rounded-lg p-12 text-center">
-          <p className="text-gray-500 mb-4">
+        <div className="card" style={{ textAlign: 'center', padding: 40 }}>
+          <p className="note" style={{ marginBottom: 14 }}>
             No insurance certificates on file. Add your first certificate to stay compliant.
           </p>
-          <button
-            onClick={openAdd}
-            className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700"
-          >
-            Add Certificate
-          </button>
+          <button className="btn primary" onClick={openAdd}>Add Certificate</button>
         </div>
       )}
 
-      {/* Table */}
       {!loading && certs.length > 0 && (
-        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden mb-6">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
+        <div className="card" style={{ padding: 0, marginBottom: 18 }}>
+          <table>
+            <thead>
               <tr>
-                {['Type', 'Carrier', 'Policy #', 'Coverage', 'Expiry Date', 'Status', 'Actions'].map(h => (
-                  <th key={h} className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    {h}
-                  </th>
-                ))}
+                <th>Type</th>
+                <th>Carrier</th>
+                <th>Policy #</th>
+                <th>Coverage</th>
+                <th>Expiry Date</th>
+                <th>Status</th>
+                <th></th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-200">
+            <tbody>
               {computed.map(cert => (
-                <tr key={cert.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3 text-sm text-gray-900">
-                    {formatType(cert.certificate_type)}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-gray-600">
-                    {cert.carrier_name ?? <span className="text-gray-400">&mdash;</span>}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-gray-600 font-mono">
-                    {cert.policy_number ?? <span className="text-gray-400">&mdash;</span>}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-gray-600">
-                    {formatMoney(cert.coverage_amount_cents)}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-gray-600">
+                <tr key={cert.id}>
+                  <td>{formatType(cert.certificate_type)}</td>
+                  <td>{cert.carrier_name ?? <span className="note">—</span>}</td>
+                  <td>{cert.policy_number ?? <span className="note">—</span>}</td>
+                  <td>{formatMoney(cert.coverage_amount_cents)}</td>
+                  <td>
                     {cert.expiry_date
                       ? new Date(cert.expiry_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-                      : <span className="text-gray-400">&mdash;</span>}
+                      : <span className="note">—</span>}
                   </td>
-                  <td className="px-4 py-3">
-                    <StatusBadge status={cert._status} />
-                  </td>
-                  <td className="px-4 py-3">
-                    <button
-                      onClick={() => openEdit(cert)}
-                      className="text-sm text-blue-600 hover:text-blue-800 font-medium"
-                    >
-                      Edit
-                    </button>
+                  <td><StatusBadge status={cert._status} /></td>
+                  <td>
+                    <button className="btn" onClick={() => openEdit(cert)}>Edit</button>
                   </td>
                 </tr>
               ))}
@@ -294,138 +254,96 @@ export default function COITracker() {
         </div>
       )}
 
-      {/* Add / Edit form */}
       {showForm && (
-        <div className="bg-white border border-gray-200 rounded-lg p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">
+        <div className="card">
+          <h2 style={{ fontSize: 18, marginBottom: 14 }}>
             {editCert ? 'Edit Certificate' : 'Add Certificate'}
           </h2>
 
-          {error && (
-            <div className="mb-4 bg-red-50 border border-red-200 rounded px-4 py-3 text-sm text-red-700">
-              {error}
-            </div>
-          )}
+          {error && <div className="err">{error}</div>}
 
-          <form onSubmit={handleSubmit} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {/* Type */}
-            <div className="sm:col-span-2">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Type *</label>
-              <select
-                value={form.certificateType}
-                onChange={field('certificateType')}
-                required
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
+          <form onSubmit={handleSubmit}>
+            <div className="field">
+              <label>Type *</label>
+              <select value={form.certificateType} onChange={field('certificateType')} required>
                 {CERT_TYPES.map(t => (
                   <option key={t.value} value={t.value}>{t.label}</option>
                 ))}
               </select>
             </div>
 
-            {/* Carrier */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Carrier Name</label>
-              <input
-                type="text"
-                value={form.carrierName}
-                onChange={field('carrierName')}
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="e.g. Travelers"
-              />
+            <div className="two">
+              <div className="field">
+                <label>Carrier Name</label>
+                <input
+                  type="text"
+                  value={form.carrierName}
+                  onChange={field('carrierName')}
+                  placeholder="e.g. Travelers"
+                />
+              </div>
+              <div className="field">
+                <label>Policy Number</label>
+                <input
+                  type="text"
+                  value={form.policyNumber}
+                  onChange={field('policyNumber')}
+                  placeholder="e.g. GL-123456"
+                />
+              </div>
             </div>
 
-            {/* Policy # */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Policy Number</label>
-              <input
-                type="text"
-                value={form.policyNumber}
-                onChange={field('policyNumber')}
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="e.g. GL-123456"
-              />
+            <div className="two">
+              <div className="field">
+                <label>Coverage Amount ($)</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={form.coverageAmountCents}
+                  onChange={field('coverageAmountCents')}
+                  placeholder="e.g. 1000000"
+                />
+              </div>
+              <div className="field">
+                <label>Aggregate Amount ($)</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={form.aggregateAmountCents}
+                  onChange={field('aggregateAmountCents')}
+                  placeholder="e.g. 2000000"
+                />
+              </div>
             </div>
 
-            {/* Coverage */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Coverage Amount ($)</label>
-              <input
-                type="number"
-                min="0"
-                step="1"
-                value={form.coverageAmountCents}
-                onChange={field('coverageAmountCents')}
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="e.g. 1000000"
-              />
+            <div className="two">
+              <div className="field">
+                <label>Effective Date</label>
+                <input type="date" value={form.effectiveDate} onChange={field('effectiveDate')} />
+              </div>
+              <div className="field">
+                <label>Expiry Date *</label>
+                <input type="date" value={form.expiryDate} onChange={field('expiryDate')} required />
+              </div>
             </div>
 
-            {/* Aggregate */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Aggregate Amount ($)</label>
-              <input
-                type="number"
-                min="0"
-                step="1"
-                value={form.aggregateAmountCents}
-                onChange={field('aggregateAmountCents')}
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="e.g. 2000000"
-              />
-            </div>
-
-            {/* Effective Date */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Effective Date</label>
-              <input
-                type="date"
-                value={form.effectiveDate}
-                onChange={field('effectiveDate')}
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-
-            {/* Expiry Date */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Expiry Date *</label>
-              <input
-                type="date"
-                value={form.expiryDate}
-                onChange={field('expiryDate')}
-                required
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-
-            {/* Notes */}
-            <div className="sm:col-span-2">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+            <div className="field">
+              <label>Notes</label>
               <textarea
                 value={form.notes}
                 onChange={field('notes')}
                 rows={3}
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="Additional notes..."
               />
             </div>
 
-            {/* Actions */}
-            <div className="sm:col-span-2 flex gap-3 pt-2">
-              <button
-                type="submit"
-                disabled={submitting}
-                className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 disabled:opacity-50 transition-colors"
-              >
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button type="submit" className="btn primary" disabled={submitting}>
                 {submitting ? 'Saving...' : editCert ? 'Save Changes' : 'Add Certificate'}
               </button>
-              <button
-                type="button"
-                onClick={cancelForm}
-                className="px-4 py-2 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-md hover:bg-gray-50 transition-colors"
-              >
-                Cancel
-              </button>
+              <button type="button" className="btn" onClick={cancelForm}>Cancel</button>
             </div>
           </form>
         </div>
