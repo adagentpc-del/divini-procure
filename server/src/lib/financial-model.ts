@@ -18,7 +18,7 @@
  * the money-handling code added in Phase 0. Zero em dashes by convention.
  *
  * ============================================================================
- * CANONICAL DEFINITIONS (also reproduced in docs/canonical-financial-model.md)
+ * CANONICAL DEFINITIONS (also reproduced in docs/phase1-financial-spine-implementation.md)
  * ============================================================================
  *
  * COMMITTED         The awarded amount captured at the moment of award
