@@ -202,3 +202,13 @@ Evidence references for PASS/PARTIAL controls, by section.
 | S14-04 | Code (new) | `docs/runbook-incident-response.md` |
 | S14-05 | Code | `docs/platform-standard/risk-register.md` R-03 (updated status) |
 | S14-06 | Command output | `grep -rn "support@" src/pages/*.tsx` → consistent across `Accessibility.tsx`, `Cookies.tsx`, `NonCircumvention.tsx`, `PaymentPolicy.tsx`, `Profile.tsx`, `Subscription.tsx` |
+
+## Section 15
+
+| Control ID | Evidence type | Reference |
+|---|---|---|
+| S15-01 | Command output | `grep -rn "Object.keys(req.body)\|Object.entries(req.body)" server/src` → 0 matches; `server/src/db.ts` `updateCompany` read in full as a representative example (explicit `coalesce($N, column)` per named field) |
+| S15-02 | Command output (live) | Full continuous `curl` sequence: register (both) → login (both) → create companies (both) → building → package → bid → cross-tenant bid read (buyer) → document upload (buyer) → cross-tenant signed-URL denial (vendor, `403 document not found`) → account deletion (both). Post-deletion: `select count(*) from companies/buildings/packages/bids/documents where id in (...)` → `0` for every table, zero orphaned rows |
+| S15-03 | Command output (live) | Two-pass `apply-all.sql` against a fresh `divini_s15_test` database → both `exit 0`; `select count(*) from information_schema.tables` → 161 |
+| S15-04 | Command output | `npm test` (repo root) → `1..173`, `# pass 173`, `# fail 0` |
+| S15-05 | N/A | Not performed - disclosed as out of scope for this sandbox, not fabricated |
