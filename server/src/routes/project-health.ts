@@ -67,6 +67,15 @@ router.post(
   h(async (req, res) => {
     const { buildingId } = req.params;
 
+    // NOTE (Phase 0 honesty fix): this is a bid-PARTICIPATION-rate proxy
+    // (share of packages that have received at least one bid), not a real
+    // financial budget calculation - there is no project/package budget
+    // rollup anywhere in this codebase yet (see the master audit's finance
+    // findings; that engine is real future work, not built here). It is
+    // still stored in the pre-existing `budget_score` column/field (a
+    // schema/API rename is a separate, larger change deferred to that
+    // future work) but is now labeled honestly wherever a person reads it -
+    // see ProjectHealthBadge.tsx's "Bid Participation" label.
     const pkgCount = await q1<{ cnt: string }>(
       `SELECT COUNT(*) AS cnt FROM packages WHERE building_id = $1`,
       [buildingId],
@@ -75,7 +84,7 @@ router.post(
       `SELECT COUNT(DISTINCT package_id) AS cnt FROM bids WHERE package_id IN (SELECT id FROM packages WHERE building_id = $1)`,
       [buildingId],
     );
-    const budgetScore =
+    const bidParticipationScore =
       Number(pkgCount?.cnt) > 0
         ? Math.min(25, Math.round((Number(bidCount?.cnt) / Math.max(Number(pkgCount?.cnt), 1)) * 25))
         : 10;
@@ -92,7 +101,7 @@ router.post(
     const verifiedVendors = await q1<{ cnt: string }>(
       `SELECT COUNT(*) AS cnt
          FROM bids b
-         JOIN vendor_profiles vp ON vp.company_id = b.company_id
+         JOIN vendor_profiles vp ON vp.company_id = b.vendor_company_id
          JOIN packages p ON p.id = b.package_id
         WHERE p.building_id = $1
           AND p.status = 'awarded'
@@ -120,9 +129,11 @@ router.post(
     );
     const documentationScore = Math.min(25, Math.round((Math.min(Number(docCount?.cnt), 5) / 5) * 25));
 
-    const score = budgetScore + scheduleScore + vendorScore + documentationScore;
+    const score = bidParticipationScore + scheduleScore + vendorScore + documentationScore;
     const color = score >= 80 ? "green" : score >= 60 ? "amber" : "red";
 
+    // Persisted column is still named budget_score (see note above) - the
+    // value in it is bidParticipationScore, not a financial calculation.
     const snapshot = await q1<any>(
       `INSERT INTO project_health_snapshots
          (building_id, score, budget_score, schedule_score, vendor_score, documentation_score, score_details)
@@ -131,7 +142,7 @@ router.post(
       [
         buildingId,
         score,
-        budgetScore,
+        bidParticipationScore,
         scheduleScore,
         vendorScore,
         documentationScore,
@@ -142,7 +153,7 @@ router.post(
     res.json({
       snapshot: {
         score,
-        budgetScore,
+        bidParticipationScore,
         scheduleScore,
         vendorScore,
         documentationScore,

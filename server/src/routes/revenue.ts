@@ -188,18 +188,32 @@ router.get(
         WHERE source_type = 'procurement_fee'`,
     );
 
+    // Canonical source of truth for active paid subscriptions is
+    // subscription_entitlements (tier_key, subscription_status) joined to
+    // subscription_tiers (price_cents) - NOT the legacy `subscriptions`
+    // table, which predates this system, has no active writer anywhere in
+    // this codebase, and does not even have the amount_cents/plan_key
+    // columns this query used to reference (it silently returned $0 MRR on
+    // every call, swallowed by the catch below without ever indicating
+    // why). "Pro" subscribers are those on any tier whose key contains
+    // "pro" (developer_pro, vendor_pro, etc. - see the seed data in
+    // schema-subscriptions.sql), matching this endpoint's pre-existing
+    // intent, now computed from the tables that are actually live.
     let proSubscribers = 0;
     let proMrrCents = 0;
     try {
       const subRow = await q1<{ cnt: string; mrr: string }>(
-        `SELECT COUNT(*) AS cnt, COALESCE(SUM(amount_cents), 0) AS mrr
-           FROM subscriptions
-          WHERE status = 'active' AND plan_key ILIKE '%pro%'`,
+        `SELECT COUNT(*) AS cnt, COALESCE(SUM(t.price_cents), 0) AS mrr
+           FROM subscription_entitlements e
+           JOIN subscription_tiers t ON t.key = e.tier_key
+          WHERE e.subscription_status = 'active' AND e.tier_key ILIKE '%pro%'`,
       );
       proSubscribers = num(subRow?.cnt);
       proMrrCents = num(subRow?.mrr);
     } catch {
-      // subscriptions table may not exist yet
+      // subscription_entitlements/subscription_tiers should always exist by
+      // this point in the schema, but this endpoint has historically been
+      // defensive against not-yet-migrated databases - kept for parity.
     }
 
     const verRow = await q1<{ cnt: string }>(
