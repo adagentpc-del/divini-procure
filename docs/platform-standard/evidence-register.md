@@ -145,3 +145,15 @@ Evidence references for PASS/PARTIAL controls, by section.
 | S09-04 | Command output (live) | Direct SQL: `insert into stripe_webhook_events (event_id, event_type) values ('evt_test_dedup_123', ...) on conflict do nothing returning event_id` → row returned first time, `0 rows` on an identical second insert |
 | S09-04 | Command output (live) | Two-pass `apply-all.sql` against a fresh database → both passes `exit 0`; `npm test` (repo root) → `1..173`, `# pass 173`, `# fail 0` |
 | S09-05 | Code | `grep -rn "automatic_tax\|tax_rate" server/src/lib/stripe.ts` → 0 matches (consistent with the applicability register's CONDITIONAL/counsel-review status, not a silent gap) |
+
+## Section 10
+
+| Control ID | Evidence type | Reference |
+|---|---|---|
+| S10-01 | Code | `server/src/lib/email.ts` `wrapHtml` (physical address, 15 U.S.C. 7704(a)(5)(A)(iii) comment) |
+| S10-02 | Code | `server/src/routes/campaigns.ts` (suppression query + filter, before the send loop begins) |
+| S10-03 | Code (new) | `server/src/routes/campaigns.ts` (`unsubscribeByToken` shared helper; `router.post("/unsubscribe", ...)`, new) |
+| S10-03 | Command output (live) | `POST /api/unsubscribe?token=test_token_abc123` (with `List-Unsubscribe=One-Click` body) → `200`; `select email, source from email_suppressions` → `unsub-test@example.com \| campaign_link`; `select unsubscribe_token from campaign_recipients` for that row → empty (invalidated); a replayed POST with the same token → `200` (idempotent no-op, not an error); `GET /api/unsubscribe?token=<fresh>` → still renders the confirmation page correctly. `npm test` (repo root) → `1..173`, `# pass 173`, `# fail 0` |
+| S10-04 | Code | `server/src/routes/campaigns.ts` (`UPDATE email_campaigns ... WHERE status = 'test_sent' RETURNING *`) |
+| S10-05 | Command output | `grep -rln "twilio\|SMS\|sendSms\|push notification\|VAPID" server/src` → 0 matches |
+| S10-06 | Code | `docs/platform-standard/applicability-register.md` line 63; `server/src/routes/campaigns.ts`'s `resolveSegment` (no EU/UK-specific branching either way) |
