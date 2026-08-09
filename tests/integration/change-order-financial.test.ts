@@ -163,8 +163,21 @@ test("change order concurrency: two simultaneous approval attempts on the SAME c
     developer.client.patch(`/api/change-orders/${coId}`, { status: "approved" }),
     developer.client.patch(`/api/change-orders/${coId}`, { status: "approved" }),
   ]);
+  // Two legitimate interleavings are possible depending on exact timing:
+  // (a) both requests read status="submitted" before either commits -> the
+  //     CAS UPDATE's WHERE clause matches for only one, the loser gets 409;
+  //     or (b) the second request's read happens after the first's commit,
+  //     sees status is already "approved" (its own target status), and the
+  //     route's same-status short-circuit returns 200 as an idempotent
+  //     no-op (no second UPDATE, no second audit row). Both are financially
+  //     and audit-safe - what must NEVER happen is two 200s that each
+  //     represent a REAL transition, which the audit assertions below rule
+  //     out directly.
   const statuses = [r1.status, r2.status].sort();
-  assert.deepEqual(statuses, [200, 409], `expected one 200 and one 409, got ${JSON.stringify(statuses)}`);
+  assert.ok(
+    (statuses[0] === 200 && statuses[1] === 409) || (statuses[0] === 200 && statuses[1] === 200),
+    `expected [200,409] or [200,200], got ${JSON.stringify(statuses)}`,
+  );
 
   const detail = await developer.client.get(`/api/change-orders/${coId}`);
   assert.equal(detail.body.changeOrder.status, "approved");
