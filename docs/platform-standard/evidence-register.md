@@ -132,3 +132,16 @@ Evidence references for PASS/PARTIAL controls, by section.
 | S08-05 | Code | `src/pages/Blueprint.tsx` (`DISCLAIMER` constant, verbatim match to the server's), `src/pages/PackageDetail.tsx`, `src/pages/Terms.tsx` (AI-disclosure section) |
 | S08-06 | Code (new) | `server/src/routes/onboarding.ts` (`extractLlmLimit`, 20/hour); `server/src/routes/blueprint.ts` (`analyzeLlmLimit`, 60/hour) |
 | S08-06 | Command output (live) | Typecheck clean; server rebuilt and restarted, `GET /api/healthz` → `200`; `npm test` (repo root) → `1..173`, `# pass 173`, `# fail 0` |
+
+## Section 09
+
+| Control ID | Evidence type | Reference |
+|---|---|---|
+| S09-01 | Code | `server/src/lib/stripe.ts` `constructWebhookEvent` |
+| S09-02 | Code (new) | `server/src/routes/payouts.ts` (atomic `UPDATE ... WHERE status IN (...) RETURNING *` claim, replacing the prior SELECT-then-UPDATE) |
+| S09-02 | Command output (live) | Two genuinely concurrent (backgrounded shell, launched together, `wait`ed together) atomic claim attempts against the same test `payout_instructions` row → one `UPDATE 1` (row returned), one `UPDATE 0` (zero rows, no row returned) |
+| S09-03 | Code (new) | `server/src/lib/stripe-connect.ts` (`stripePost`'s `Idempotency-Key` header, `createTransfer`'s `idempotencyKey` param); `server/src/routes/payouts.ts` (`payout-release-<id>` as the stable key) |
+| S09-04 | Code (new) | `db/schema-stripe-billing.sql` (`stripe_webhook_events` table); `server/src/routes/subscriptions.ts` (claim-and-skip at the top of the webhook handler, inside `runAsAdmin`) |
+| S09-04 | Command output (live) | Direct SQL: `insert into stripe_webhook_events (event_id, event_type) values ('evt_test_dedup_123', ...) on conflict do nothing returning event_id` → row returned first time, `0 rows` on an identical second insert |
+| S09-04 | Command output (live) | Two-pass `apply-all.sql` against a fresh database → both passes `exit 0`; `npm test` (repo root) → `1..173`, `# pass 173`, `# fail 0` |
+| S09-05 | Code | `grep -rn "automatic_tax\|tax_rate" server/src/lib/stripe.ts` → 0 matches (consistent with the applicability register's CONDITIONAL/counsel-review status, not a silent gap) |

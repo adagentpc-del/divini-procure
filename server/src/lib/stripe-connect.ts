@@ -70,12 +70,17 @@ function formEncode(obj: Record<string, unknown>, prefix = ""): string {
   return parts.join("&");
 }
 
-async function stripePost<T = any>(path: string, body: Record<string, unknown>): Promise<T> {
+async function stripePost<T = any>(
+  path: string,
+  body: Record<string, unknown>,
+  idempotencyKey?: string,
+): Promise<T> {
   const res = await fetch(`${STRIPE_API}${path}`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${secret()}`,
       "Content-Type": "application/x-www-form-urlencoded",
+      ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
     },
     body: formEncode(body),
   });
@@ -181,6 +186,14 @@ export async function createTransfer(args: {
   currency?: string;
   destinationAccountId: string;
   metadata?: Record<string, string>;
+  /**
+   * Stable per-payout idempotency key. Required in practice (see the
+   * caller in routes/payouts.ts): if the same key is reused on a retried
+   * request - e.g. after a network timeout where the first transfer
+   * actually succeeded at Stripe but we never received the response -
+   * Stripe returns the ORIGINAL transfer instead of creating a second one.
+   */
+  idempotencyKey?: string;
 }): Promise<{ transferId: string }> {
   if (!isConfigured()) throw new StripeNotConfigured();
   const body: Record<string, unknown> = {
@@ -189,6 +202,6 @@ export async function createTransfer(args: {
     destination: args.destinationAccountId,
   };
   if (args.metadata && Object.keys(args.metadata).length) body.metadata = args.metadata;
-  const transfer = await stripePost<{ id: string }>("/v1/transfers", body);
+  const transfer = await stripePost<{ id: string }>("/v1/transfers", body, args.idempotencyKey);
   return { transferId: transfer.id };
 }

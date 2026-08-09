@@ -737,6 +737,24 @@ router.post(
     // live as a hard "new row violates row-level security policy" on the very
     // first checkout.session.completed test before this was added.
     await runAsAdmin(async () => {
+    // Idempotency: Stripe is at-least-once delivery and can redeliver an
+    // event we already processed. Every write below is itself idempotent
+    // SQL, so a duplicate was never a data-integrity risk - but it would
+    // send a second "your subscription is active" email on a redelivered
+    // checkout.session.completed. event.id is stable across redeliveries
+    // of the same event (unlike a fresh id per delivery attempt), so
+    // claiming it here once is a correct, general dedup across all 4
+    // event types this handler processes.
+    const claimed = await q(
+      `insert into stripe_webhook_events (event_id, event_type) values ($1, $2)
+       on conflict (event_id) do nothing
+       returning event_id`,
+      [event.id, event.type],
+    );
+    if (claimed.length === 0) {
+      console.log("[webhook:stripe] duplicate delivery skipped", event.type, event.id);
+      return;
+    }
     try {
       switch (event.type) {
         // -----------------------------------------------------------------

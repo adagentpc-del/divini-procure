@@ -410,6 +410,12 @@ router.post(
       return res.status(409).json({ error: `cannot release from status '${instr.status}'` });
     }
 
+    // NOTE: the SELECT above only decides whether to even attempt a release
+    // (Stripe configured, recipient payable). The line that actually claims
+    // this instruction for release is the atomic UPDATE below, right before
+    // the real money-moving call - see its own comment for why the SELECT
+    // check alone is not enough to prevent a double transfer.
+
     const amountCents = Math.max(0, Math.round(num(instr.amount_cents)));
     const destination = instr.stripe_account_id as string | null;
     const payoutsEnabled = !!instr.payouts_enabled;
@@ -431,17 +437,42 @@ router.post(
       return res.json({ released: false, status: "blocked", reason });
     }
 
-    // Move to 'releasing' so a double-click cannot double-pay.
-    await q(
-      `update payout_instructions set status = 'releasing', updated_at = now() where id = $1`,
+    // Atomically claim this instruction for release. A plain SELECT-then-
+    // UPDATE (what this used to be) has a race: two near-simultaneous
+    // requests (an impatient double-click, or a client retry firing while
+    // the first request is still in flight) can both pass the status check
+    // above before either one's UPDATE lands, and both go on to call
+    // createTransfer - a genuine double payout, not just a UI glitch. This
+    // single UPDATE ... WHERE status IN (...) is atomic: only the request
+    // that actually flips the row wins the `rows.length` check below, so a
+    // second concurrent request sees 0 rows updated and bails out instead
+    // of moving money twice.
+    const claimed = await q<any>(
+      `update payout_instructions set status = 'releasing', updated_at = now()
+        where id = $1 and status in ('pending','ready','blocked','failed')
+        returning *`,
       [instr.id],
     );
+    if (claimed.length === 0) {
+      return res.status(409).json({ error: "this payout is already being released or was already paid" });
+    }
 
     try {
       const transfer = await createTransfer({
         amountCents,
         currency: instr.currency || "usd",
         destinationAccountId: destination,
+        // Idempotency key: stable per instruction, so a retried request
+        // after a lost/timed-out response (the transfer succeeded at
+        // Stripe, but we never received or processed the confirmation)
+        // returns the ORIGINAL transfer instead of creating a second one.
+        // Without this, the catch block below resets status back to
+        // 'failed' on any network error - including one where the transfer
+        // actually went through - making a retry re-releasable and a real
+        // double-payment possible. This is the single function in the
+        // entire app that moves real money; it is the one place an
+        // idempotency key is not optional.
+        idempotencyKey: `payout-release-${instr.id}`,
         metadata: {
           instruction_id: String(instr.id),
           source_revenue_id: String(instr.source_revenue_id ?? ""),
