@@ -4808,3 +4808,7 @@ COMMIT;
 -- Phase 0 item 19: the first real write path for the existing (previously
 -- write-less) reviews table - see the file's own header.
 \i db/schema-reviews.sql
+
+-- Phase 0 item 21: modest Postgres-native (pg_trgm) marketplace search -
+-- see the file's own header.
+\i db/schema-marketplace-search.sql

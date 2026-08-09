@@ -16,6 +16,25 @@ async function freshJobsModule() {
   return import("../../server/dist/lib/jobs.js");
 }
 
+// The `jobs` table is genuinely shared across every integration test file
+// (that is the whole point of a durable, cross-process queue) - other
+// suites in this repo (award-workflow/intel invite flows) enqueue real
+// 'send_email' jobs but never drain them, since draining is this file's
+// job to test. Running the full suite back to back leaves a real backlog
+// of old pending rows sitting ahead of this file's freshly-enqueued jobs
+// in claim order (oldest first). Drain everything before this file's own
+// tests run so each test starts against a (mostly) empty queue, same as
+// it would standalone.
+test.before(async () => {
+  const { processDueJobs, registerJobHandler } = await import("../../server/dist/lib/jobs.js");
+  await import("../../server/dist/jobs/handlers.js"); // real send_email handler, so backlog drains cleanly
+  registerJobHandler("noop_for_dedup_test", async () => {}); // a prior run's dedup-test rows, if any
+  for (let i = 0; i < 20; i++) {
+    const result = await processDueJobs(500);
+    if (result.processed === 0) break;
+  }
+});
+
 test("jobs: a queued job is claimed and marked succeeded", async () => {
   const { enqueueJob, registerJobHandler, processDueJobs } = await freshJobsModule();
   const jobType = `test_succeed_${Date.now()}`;
@@ -25,9 +44,23 @@ test("jobs: a queued job is claimed and marked succeeded", async () => {
   });
 
   const { id } = await enqueueJob({ jobType, payload: { hello: "world" } });
-  const result = await processDueJobs();
-  assert.ok(result.processed >= 1);
-  assert.ok(result.succeeded >= 1);
+  // A single processDueJobs() call drains up to `limit` due jobs across
+  // the WHOLE shared queue, not just this test's own row - other suites
+  // may have left (or be concurrently leaving) unrelated jobs in the
+  // queue, which this test does not control and must not assume away.
+  // Loop until this test's own target row resolves, rather than trusting
+  // the aggregate counters from a single call.
+  let status = "pending";
+  for (let i = 0; i < 20 && status === "pending"; i++) {
+    await processDueJobs(200);
+    const { q1 } = await import("../../server/dist/pool.js");
+    const { runWithRequestContext } = await import("../../server/dist/lib/requestContext.js");
+    const row = await runWithRequestContext({ userId: null, isAdmin: true, email: null }, () =>
+      q1<{ status: string }>(`select status from jobs where id = $1`, [id]),
+    );
+    status = row?.status ?? "pending";
+  }
+  assert.equal(status, "succeeded");
   assert.equal(invocations, 1);
 
   const { q1 } = await import("../../server/dist/pool.js");
@@ -54,12 +87,17 @@ test("jobs: a failing handler retries with backoff, then permanently fails after
 
   const { id } = await enqueueJob({ jobType, payload: {}, maxAttempts: 2 });
 
-  const first = await processDueJobs();
-  assert.ok(first.retried >= 1, "first failure must retry, not permanently fail");
-  let row = await admin(() => q1<{ status: string; attempts: number; run_after: string }>(
-    `select status, attempts, run_after from jobs where id = $1`,
-    [id],
-  ));
+  // Drain until THIS job specifically leaves 'pending' with attempts=1 (a
+  // retry), tolerating unrelated jobs elsewhere in the shared queue.
+  let row: { status: string; attempts: number; run_after: string } | null = null;
+  for (let i = 0; i < 20; i++) {
+    await processDueJobs(200);
+    row = await admin(() => q1<{ status: string; attempts: number; run_after: string }>(
+      `select status, attempts, run_after from jobs where id = $1`,
+      [id],
+    ));
+    if (row && (row.status !== "pending" || row.attempts >= 1)) break;
+  }
   assert.equal(row?.status, "pending");
   assert.equal(row?.attempts, 1);
   assert.ok(new Date(row!.run_after).getTime() > Date.now(), "backoff must push run_after into the future");
@@ -67,18 +105,26 @@ test("jobs: a failing handler retries with backoff, then permanently fails after
   // Force it due now so the test does not wait for the real backoff delay.
   await admin(() => q(`update jobs set run_after = now() where id = $1`, [id]));
 
-  const second = await processDueJobs();
-  assert.ok(second.failed >= 1, "second failure must exceed max_attempts=2 and permanently fail");
-  row = await admin(() => q1<{ status: string; attempts: number; last_error: string }>(
-    `select status, attempts, last_error from jobs where id = $1`,
-    [id],
-  ));
-  assert.equal(row?.status, "failed");
-  assert.equal(row?.attempts, 2);
-  assert.match(row!.last_error, /synthetic failure #2/);
+  for (let i = 0; i < 20; i++) {
+    await processDueJobs(200);
+    row = await admin(() => q1<{ status: string; attempts: number; run_after: string }>(
+      `select status, attempts, run_after from jobs where id = $1`,
+      [id],
+    ));
+    if (row && row.status !== "pending") break;
+  }
+  const finalRow = await admin(() =>
+    q1<{ status: string; attempts: number; last_error: string }>(
+      `select status, attempts, last_error from jobs where id = $1`,
+      [id],
+    ),
+  );
+  assert.equal(finalRow?.status, "failed");
+  assert.equal(finalRow?.attempts, 2);
+  assert.match(finalRow!.last_error, /synthetic failure #2/);
   assert.equal(attempts, 2, "the handler must not run again once permanently failed");
 
-  const third = await processDueJobs();
+  await processDueJobs(200);
   assert.equal(attempts, 2, "a permanently-failed job must not be picked up again");
 });
 
@@ -112,7 +158,16 @@ test("jobs: two concurrent processDueJobs() calls never both execute the same jo
 
   await enqueueJob({ jobType, payload: {} });
 
-  const [a, b] = await Promise.all([processDueJobs(), processDueJobs()]);
-  assert.equal(invocations, 1, "exactly one of the two concurrent callers must have claimed and run the job");
-  assert.equal((a.succeeded + b.succeeded), 1);
+  // Fire pairs of concurrent claimers repeatedly until this test's own
+  // job has actually been claimed by SOMEONE (the shared queue may also
+  // contain unrelated jobs from other suites, which a single round may
+  // exhaust its `limit` on before ever reaching this one). The property
+  // under test - SKIP LOCKED preventing a double-claim - holds
+  // regardless of how many rounds it takes: invocations must never
+  // exceed 1 at any point.
+  for (let i = 0; i < 10 && invocations === 0; i++) {
+    await Promise.all([processDueJobs(200), processDueJobs(200)]);
+    assert.ok(invocations <= 1, "invocations must never exceed 1, even mid-loop, across any number of concurrent rounds");
+  }
+  assert.equal(invocations, 1, "exactly one of the concurrent callers must have claimed and run the job");
 });

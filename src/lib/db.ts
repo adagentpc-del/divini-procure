@@ -60,6 +60,25 @@ export async function getOpenPackages(filter?: { categories?: string[] }) {
   return apiGet<any[]>(`/packages/open${qs}`);
 }
 
+export async function searchMarketplace(filter: {
+  q?: string;
+  categories?: string[];
+  location?: string;
+  limit?: number;
+  offset?: number;
+}) {
+  const params = new URLSearchParams();
+  if (filter.q) params.set('q', filter.q);
+  if (filter.categories?.length) params.set('categories', filter.categories.join(','));
+  if (filter.location) params.set('location', filter.location);
+  if (filter.limit) params.set('limit', String(filter.limit));
+  if (filter.offset) params.set('offset', String(filter.offset));
+  const qs = params.toString();
+  return apiGet<{ results: any[]; total: number; limit: number; offset: number }>(
+    `/marketplace/search${qs ? `?${qs}` : ''}`,
+  );
+}
+
 export async function getMyBids(companyId: string) {
   return apiGet<any[]>(`/bids/mine?companyId=${encodeURIComponent(companyId)}`);
 }
