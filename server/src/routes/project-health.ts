@@ -16,7 +16,7 @@ const router = Router();
 async function getCompanyId(userId: string | null | undefined): Promise<string | null> {
   if (!userId) return null;
   const row = await q1<{ company_id: string }>(
-    `SELECT company_id FROM company_members WHERE user_id = $1 LIMIT 1`,
+    `SELECT company_id FROM company_members WHERE user_id = $1 ORDER BY created_at ASC LIMIT 1`,
     [userId],
   );
   return row?.company_id ?? null;
