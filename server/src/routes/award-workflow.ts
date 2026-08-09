@@ -32,6 +32,7 @@ import { getAuth, requireUser } from "../auth.js";
 import { q, q1 } from "../pool.js";
 import { ForbiddenError, NotFoundError } from "../db.js";
 import { resolveAndRecordFee, maybeRecordReferralCommission } from "../lib/monetization.js";
+import { runAsAdmin } from "../lib/requestContext.js";
 
 // Async handler wrapper that funnels errors to the error middleware.
 const h =
@@ -165,9 +166,22 @@ router.post(
       budgetWarning = `Bid amount $${Number(ctx.price).toLocaleString()} exceeds package budget cap $${Number(budgetRow.budget_max).toLocaleString()}. Confirm to proceed or revise the budget.`;
     }
 
-    // Mark the bid awarded if it is not already.
+    // Mark the bid awarded if it is not already. bids' RLS update policy only
+    // allows the VENDOR company to update its own bid (see schema-rls.sql) -
+    // the developer confirming an award is not a member of that company, so
+    // this write needs the same runAsAdmin() escalation requestContext.ts
+    // documents for other already-authorized cross-company writes. It is
+    // safe here specifically because userOwnsPackage() above already proved
+    // the caller owns this package/building before any write happens.
     if (!ctx.awarded) {
-      await q(`update bids set awarded = true, status = 'awarded' where id = $1`, [bidId]);
+      const updated = await runAsAdmin(() =>
+        q(`update bids set awarded = true, status = 'awarded' where id = $1 returning id`, [
+          bidId,
+        ]),
+      );
+      if (updated.length === 0) {
+        throw new Error(`failed to mark bid ${bidId} as awarded`);
+      }
     }
 
     // Reuse an existing draft PO for this bid if one was already started, so
