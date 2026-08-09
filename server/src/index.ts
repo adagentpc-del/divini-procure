@@ -3,6 +3,8 @@ import { PORT, DATABASE_URL, IS_PROD } from "./config.js";
 import { processDueFollowUps } from "./routes/follow-up.js";
 import { publishDueScheduledPackages } from "./routes/marketplace-publication.js";
 import { purgeExpiredSessions } from "./db.js";
+import { processDueJobs } from "./lib/jobs.js";
+import "./jobs/handlers.js";
 
 // Environment identity guard (ALFY2 Section 03): log which environment and
 // which database HOST/NAME this process bound to at startup - never the
@@ -73,3 +75,18 @@ setInterval(() => {
     console.error("[sessions] purgeExpiredSessions failed", e);
   });
 }, SESSION_PURGE_INTERVAL_MS);
+
+// Durable background job queue (db/schema-jobs.sql, lib/jobs.ts): the
+// outbound email send for award/bid-invite notifications is enqueued here
+// instead of being awaited on the request path (see routes/award-workflow.ts
+// and routes/intel.ts). Every 30 seconds is frequent enough that a queued
+// email goes out promptly without polling so hard it matters; also
+// triggerable on demand via POST /api/admin/jobs/process-due for testing
+// or an external cron, same pattern as follow-up's process-due route.
+const JOBS_POLL_INTERVAL_MS = 30_000;
+setInterval(() => {
+  processDueJobs().catch((e) => {
+    // eslint-disable-next-line no-console
+    console.error("[jobs] processDueJobs failed", e);
+  });
+}, JOBS_POLL_INTERVAL_MS);

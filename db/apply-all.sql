@@ -4800,3 +4800,7 @@ COMMIT;
 -- Phase 0: RLS on notifications, added alongside routes/notifications.ts
 -- (the first real reader of this previously write-only table).
 \i db/schema-notifications-rls.sql
+
+-- Phase 0 item 17: minimal durable background job queue (see the file's
+-- own header for what moved onto it and why).
+\i db/schema-jobs.sql

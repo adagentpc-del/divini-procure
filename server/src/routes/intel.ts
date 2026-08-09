@@ -22,8 +22,8 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { getAuth, requireUser } from "../auth.js";
 import { q, q1 } from "../pool.js";
 import { llmEnabled, llmText } from "../lib/llm.js";
-import { sendEmail } from "../lib/email.js";
 import { notifyCompanyMembers } from "../lib/notify.js";
+import { enqueueJob } from "../lib/jobs.js";
 import { PROCURE_MONETIZATION_V2 } from "../config.js";
 import { llmRateLimit } from "../lib/rateLimit.js";
 
@@ -725,6 +725,8 @@ router.post(
     // idempotent while still allowing an intentional future "resend"
     // feature to be added explicitly later, rather than happening by
     // accident on every retry today.
+    // emailed reflects "an email was queued for delivery", not "delivered" -
+    // the actual send now happens off the request path (see below).
     let emailed = false;
     if (row?.was_inserted) {
       const vendor = await q1<{ email: string | null; billing_email: string | null; name: string }>(
@@ -738,11 +740,17 @@ router.post(
         kind: "bid_invite",
       });
 
-      // Best-effort email to the vendor company (never blocks the invite).
-      try {
-        const to = vendor?.email || vendor?.billing_email || null;
-        if (to) {
-          const r = await sendEmail({
+      // The company-level invite email (a slow, unreliable third-party HTTP
+      // call) is enqueued onto the durable job queue (lib/jobs.ts) rather
+      // than awaited here, same reasoning as award-workflow.ts's award
+      // notification: a Resend outage must not add latency to, or fail,
+      // an already-successful invite. Keyed by (invite row, resolved
+      // recipient) so a retried enqueue can never double-send.
+      const to = vendor?.email || vendor?.billing_email || null;
+      if (to) {
+        await enqueueJob({
+          jobType: "send_email",
+          payload: {
             to,
             subject: "You have been invited to bid",
             text:
@@ -750,11 +758,10 @@ router.post(
               `You have been invited to submit a bid for a ${pkg.category} package on Divini Procure.\n` +
               (message ? `\nMessage from the developer:\n${message}\n` : "") +
               `\nSign in to Divini Procure to view the opportunity and respond.\n`,
-          });
-          emailed = !!r.ok;
-        }
-      } catch {
-        /* email is best-effort */
+          },
+          idempotencyKey: `bid-invite-email:${row!.id}:${to}`,
+        });
+        emailed = true;
       }
     }
 

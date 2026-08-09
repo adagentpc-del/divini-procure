@@ -34,7 +34,7 @@ import { ForbiddenError, NotFoundError } from "../db.js";
 import { resolveAndRecordFee, maybeRecordReferralCommission } from "../lib/monetization.js";
 import { runAsAdmin } from "../lib/requestContext.js";
 import { notifyCompanyMembers } from "../lib/notify.js";
-import { sendEmail } from "../lib/email.js";
+import { enqueueJob } from "../lib/jobs.js";
 
 // Async handler wrapper that funnels errors to the error middleware.
 const h =
@@ -221,9 +221,13 @@ router.post(
     // gated by the same `if (existing)` early-return above: a retried
     // /confirm for a bid that already has a PO returns 200 before ever
     // reaching this line, so this fires exactly once per real award, not
-    // once per request. Best-effort - notifyCompanyMembers never throws,
-    // and sendEmail never throws (see lib/email.ts) - so a notification
-    // failure can never turn an already-successful award into a 500.
+    // once per request. The in-app row is fast/local and stays on the
+    // request path; the outbound email (a slow, unreliable third-party
+    // HTTP call) is enqueued onto the durable job queue (lib/jobs.ts)
+    // instead of awaited here, so a Resend outage cannot add latency to -
+    // or fail - an already-successful award confirmation. One job per
+    // recipient, keyed by (purchase order, recipient) so a retried enqueue
+    // can never double-send.
     if (ctx.vendor_company_id) {
       const poNumber = purchaseOrder?.po_number || purchaseOrder?.id;
       const amountText =
@@ -235,18 +239,18 @@ router.post(
       });
       for (const r of recipients) {
         if (!r.email) continue;
-        try {
-          await sendEmail({
+        await enqueueJob({
+          jobType: "send_email",
+          payload: {
             to: r.email,
             subject: "You were awarded a package on Divini Procure",
             text:
               `Congratulations - your bid was awarded.\n\n` +
               `Purchase order: ${poNumber}\nAmount: ${amountText}\n\n` +
               `Sign in to Divini Procure to view the purchase order and next steps.\n`,
-          });
-        } catch {
-          /* email is best-effort */
-        }
+          },
+          idempotencyKey: `award-email:${purchaseOrder.id}:${r.userId}`,
+        });
       }
     }
 
