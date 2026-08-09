@@ -120,3 +120,15 @@ Evidence references for PASS/PARTIAL controls, by section.
 | S07-07 | Command output | `grep -rln "router.post" server/src/routes*.ts \| xargs grep -L "requireUser\|requireAdmin"` → 0 files; manual read of `public-capture.ts` confirmed its 2 public endpoints are `GET`-only lookups |
 | S07-08 | Code (new) | `server/src/lib/rateLimit.ts` (`apiRateLimit`, new); `server/src/app.ts` (mounted globally on `/api`) |
 | S07-08 | Command output (live) | 5 sequential `GET /api/healthz` → all `200`. 305-request rapid-fire loop against `GET /api/packages/open` → `429` at request 295 (consistent with `max: 300`). `npm test` (repo root) → `1..173`, `# pass 173`, `# fail 0` after the change |
+
+## Section 08
+
+| Control ID | Evidence type | Reference |
+|---|---|---|
+| S08-01 | Code | `server/src/lib/llm.ts` (`llmEnabled`, `LLM_API_KEY` not exported, per-call timeouts) |
+| S08-02 | Code | `server/src/lib/extract.ts` (`sanitizeForLlm`, the grounding `system` prompt, `onboarding.ts`'s human-review-before-submit flow) |
+| S08-03 | Code | `server/src/routes/intel.ts` (`vendorLabel` anonymization, `#52` comment referencing the original fix) |
+| S08-04 | Code | `server/src/routes/blueprint.ts` (`confidence: "manual_confirmation_required"`), `server/src/routes/intel.ts` (narrative is supplementary to the deterministic `stats`/`recommended_bid_id` fields), `server/src/routes/onboarding.ts` (`/onboarding/extract` only returns a suggestion; `POST /companies` is the actual, separately-submitted write) |
+| S08-05 | Code | `src/pages/Blueprint.tsx` (`DISCLAIMER` constant, verbatim match to the server's), `src/pages/PackageDetail.tsx`, `src/pages/Terms.tsx` (AI-disclosure section) |
+| S08-06 | Code (new) | `server/src/routes/onboarding.ts` (`extractLlmLimit`, 20/hour); `server/src/routes/blueprint.ts` (`analyzeLlmLimit`, 60/hour) |
+| S08-06 | Command output (live) | Typecheck clean; server rebuilt and restarted, `GET /api/healthz` → `200`; `npm test` (repo root) → `1..173`, `# pass 173`, `# fail 0` |

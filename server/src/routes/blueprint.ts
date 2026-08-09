@@ -43,6 +43,18 @@ import { ocrImage } from "../lib/ocr.js";
 import { extractDxfInfo } from "../lib/dxf-extraction.js";
 import { readFileBytes } from "../storage.js";
 import { runAsAdmin } from "../lib/requestContext.js";
+import { llmRateLimit } from "../lib/rateLimit.js";
+
+// /analyze's classification work is deterministic and cheap regardless of
+// LLM state, but it conditionally calls draftAiSummaryFields() (an LLM
+// completion) when a projectDescription is supplied. A per-request limit
+// keyed to only the LLM sub-call would be more precise, but rateLimit.ts's
+// helpers are Express middleware, not a standalone check-and-consume
+// function; applying it at the route level here (same pattern as intel.ts's
+// own LLM route) is the simple, consistent fix. Sized generously (60/hour)
+// so repeated legitimate classification-only runs (no LLM involved) are not
+// squeezed by a budget meant for the optional AI narrative sub-feature.
+const analyzeLlmLimit = llmRateLimit({ max: 60, windowMs: 60 * 60_000 });
 
 const h =
   (fn: (req: Request, res: Response) => Promise<unknown>) =>
@@ -395,6 +407,7 @@ async function draftAiSummaryFields(
 router.post(
   "/analyze",
   requireUser,
+  analyzeLlmLimit,
   h(async (req, res) => {
     const auth = getAuth(req);
     const b = req.body ?? {};
