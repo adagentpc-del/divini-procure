@@ -23,6 +23,14 @@ import { AsyncLocalStorage } from "node:async_hooks";
 export interface RequestContext {
   userId: string | null;
   isAdmin: boolean;
+  /**
+   * The verified session email (server-derived from the session JWT in
+   * auth.ts, never client-supplied) - propagated to Postgres as
+   * app.user_email so RLS policies can match it against columns like
+   * agreements.counterparty_email, the same trust model the app layer
+   * already uses (see agreements.ts's isCounterparty()).
+   */
+  email: string | null;
 }
 
 const storage = new AsyncLocalStorage<RequestContext>();
@@ -66,5 +74,5 @@ export function getRequestContext(): RequestContext | undefined {
  */
 export function runAsAdmin<T>(fn: () => T): T {
   const ctx = getRequestContext();
-  return runWithRequestContext({ userId: ctx?.userId ?? null, isAdmin: true }, fn);
+  return runWithRequestContext({ userId: ctx?.userId ?? null, isAdmin: true, email: ctx?.email ?? null }, fn);
 }

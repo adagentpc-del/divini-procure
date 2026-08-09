@@ -45,9 +45,10 @@ export async function setRlsContext(client: pg.PoolClient): Promise<void> {
   const ctx = getRequestContext();
   const userId = ctx?.userId ?? "";
   const isAdmin = ctx ? ctx.isAdmin : true;
+  const email = ctx?.email ?? "";
   await client.query(
-    `select set_config('app.user_id', $1, true), set_config('app.is_admin', $2, true)`,
-    [userId, isAdmin ? "t" : "f"],
+    `select set_config('app.user_id', $1, true), set_config('app.is_admin', $2, true), set_config('app.user_email', $3, true)`,
+    [userId, isAdmin ? "t" : "f", email],
   );
 }
 

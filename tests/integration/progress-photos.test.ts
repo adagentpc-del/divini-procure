@@ -86,5 +86,12 @@ test("progress photos: an unrelated company cannot modify another company's phot
     caption: "tampered by outsider",
     visibleToInvestors: true,
   });
-  assert.equal(attempt.status, 403, JSON.stringify(attempt.body));
+  // 404, not 403: Phase 0's RLS pass (db/schema-rls-high-risk.sql) makes a
+  // progress photo invisible at the database layer to anyone who is not the
+  // building owner, an assigned vendor, or the uploader, so the route's own
+  // SELECT returns zero rows before its app-layer ownership check ever
+  // runs. Strictly stronger than the old 403 (which confirmed the photo
+  // existed) - the security property under test (an outsider cannot modify
+  // it) still holds, now enforced twice.
+  assert.equal(attempt.status, 404, JSON.stringify(attempt.body));
 });

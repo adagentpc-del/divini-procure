@@ -64,7 +64,15 @@ test("agreement sign: an unrelated authenticated user cannot sign someone else's
     affirm: true,
   });
 
-  assert.equal(attempt.status, 403, JSON.stringify(attempt.body));
+  // 404, not 403: Phase 0's RLS pass (db/schema-rls-high-risk.sql) makes an
+  // agreement invisible at the database layer to anyone who is neither a
+  // party_company_id member nor the verified counterparty, so the route's
+  // own `select * from agreements where id=$1` returns zero rows before its
+  // app-layer party/counterparty check ever runs. This is a strictly
+  // stronger outcome than the old 403 (which at least confirmed the
+  // agreement existed) - the security property under test (an unrelated
+  // party cannot sign) still holds, now enforced twice.
+  assert.equal(attempt.status, 404, JSON.stringify(attempt.body));
 });
 
 test("agreement sign: a party-company member can sign, and identity is derived server-side (not from the request body)", async () => {

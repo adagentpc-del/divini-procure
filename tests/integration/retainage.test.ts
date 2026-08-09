@@ -115,7 +115,14 @@ test("lien waivers: an unrelated company cannot PATCH (accept) another pair's li
   const attempt = await attacker.client.patch(`/api/lien-waivers/${waiverId}`, {
     status: "accepted",
   });
-  assert.equal(attempt.status, 403, JSON.stringify(attempt.body));
+  // 404, not 403: Phase 0's RLS pass (db/schema-rls-high-risk.sql) makes a
+  // lien waiver invisible at the database layer to anyone who is neither
+  // the named vendor nor the named developer company, so the route's own
+  // SELECT returns zero rows before its app-layer party check ever runs.
+  // Strictly stronger than the old 403 (which confirmed the waiver
+  // existed) - the security property under test (an unrelated company
+  // cannot act on it) still holds, now enforced twice.
+  assert.equal(attempt.status, 404, JSON.stringify(attempt.body));
 });
 
 test("lien waivers: the vendor cannot unilaterally accept its own waiver (developer/admin only)", async () => {

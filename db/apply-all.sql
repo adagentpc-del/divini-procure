@@ -4789,3 +4789,10 @@ COMMIT;
 -- money spine (purchase_orders + change_orders) - see the file's own
 -- header for the orphan-check evidence backing this.
 \i db/schema-po-fk-integrity.sql
+
+-- Phase 0 RLS extension: the procurement-financial and legal-document
+-- tables (purchase orders, payments, revenue, payouts, agreements, change
+-- orders, disputes, retainage, progress photos, COI, referral financials,
+-- and the remaining bid/package satellite tables) - see the file's own
+-- header for exactly which route each policy mirrors.
+\i db/schema-rls-high-risk.sql

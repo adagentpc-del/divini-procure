@@ -95,7 +95,7 @@ export function authMiddleware(): RequestHandler {
       auth = EMPTY_AUTH;
     }
     req[AUTH_KEY] = auth;
-    runWithRequestContext({ userId: auth.userId, isAdmin: auth.isAdmin }, () => next());
+    runWithRequestContext({ userId: auth.userId, isAdmin: auth.isAdmin, email: auth.email }, () => next());
   };
 }
 
