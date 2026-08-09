@@ -69,8 +69,14 @@ async function audit(
        values ($1,$2,$3,$4::jsonb)`,
       [instructionId, actorEmail, action, JSON.stringify(detail)],
     );
-  } catch {
-    // Audit is best effort; never break the request on a log failure.
+  } catch (e) {
+    // Audit is best effort; never break the request on a log failure - but
+    // a lost audit row on a money-movement action must never be silent.
+    console.error("[payouts] failed to write payout_audit row", {
+      instructionId,
+      action,
+      error: e instanceof Error ? e.message : String(e),
+    });
   }
 }
 
@@ -249,8 +255,16 @@ router.get(
           );
         }
         return res.json({ configured: true, account: updated });
-      } catch {
-        // Stripe read failed: hand back the stored row unchanged.
+      } catch (e) {
+        // Stripe read failed: hand back the stored row unchanged. This also
+        // covers the payout_instructions promotion above, so a real DB
+        // write failure here (not just a transient Stripe API error) must
+        // not go unlogged - it can mean an instruction that should have
+        // become releasable silently stayed 'pending'.
+        console.error("[payouts] connect/status refresh failed, returning stored account unchanged", {
+          accountId: account.id,
+          error: e instanceof Error ? e.message : String(e),
+        });
         return res.json({ configured: true, account });
       }
     }
@@ -539,8 +553,15 @@ router.post(
               `This was sent by Stripe, the licensed money transmitter. Divini Procure never stores your bank account numbers.`,
           });
         }
-      } catch {
-        // Email is best effort.
+      } catch (e) {
+        // Email is best effort - the payout itself already succeeded and
+        // is already recorded above - but a lost recipient notification
+        // on a real money movement is still worth a diagnostic, not
+        // silence.
+        console.error("[payouts] recipient notification email failed after a successful release", {
+          instructionId: instr.id,
+          error: e instanceof Error ? e.message : String(e),
+        });
       }
 
       return res.json({ released: true, status: "paid", instruction: row });

@@ -180,7 +180,11 @@ async function resolveStripeCustomer(
       [companyId, customerId],
     );
     return customerId;
-  } catch {
+  } catch (e) {
+    console.error("[subscriptions] resolveStripeCustomer failed", {
+      companyId,
+      error: e instanceof Error ? e.message : String(e),
+    });
     return null;
   }
 }
@@ -688,10 +692,14 @@ router.post(
           [companyId],
         );
         return res.json({ ok: true, effective: await getEntitlement(companyId) });
-      } catch {
+      } catch (e) {
         // Stripe call failed (already cancelled/expired remotely, or a
         // transient error) - fall through to the immediate record-only
         // downgrade below, since there is no live subscription left to honor.
+        console.error("[subscriptions] Stripe cancelSubscription failed, falling through to immediate downgrade", {
+          companyId,
+          error: e instanceof Error ? e.message : String(e),
+        });
       }
     }
     // No Stripe subscription to defer to (Stripe not configured, or the

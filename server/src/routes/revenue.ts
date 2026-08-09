@@ -210,10 +210,17 @@ router.get(
       );
       proSubscribers = num(subRow?.cnt);
       proMrrCents = num(subRow?.mrr);
-    } catch {
+    } catch (e) {
       // subscription_entitlements/subscription_tiers should always exist by
       // this point in the schema, but this endpoint has historically been
       // defensive against not-yet-migrated databases - kept for parity.
+      // Phase 0: this used to fail SILENTLY (the exact failure mode that
+      // made the legacy-table bug this replaced invisible for so long -
+      // see the comment above). Never again: a structured diagnostic now
+      // always accompanies a silently-degraded $0 MRR reading.
+      console.error("[revenue] admin monetization-summary: pro-subscriber query failed, reporting 0", {
+        error: e instanceof Error ? e.message : String(e),
+      });
     }
 
     const verRow = await q1<{ cnt: string }>(

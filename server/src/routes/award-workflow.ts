@@ -495,9 +495,17 @@ router.post(
         ],
       );
       if (updated) row = updated;
-    } catch {
+    } catch (e) {
       // Recording fees must never break the authorization (no money moves
-      // either way). Leave the base authorization row in place on error.
+      // either way). Leave the base authorization row in place on error -
+      // but a payment_authorizations row left with placeholder $0 fee
+      // values is a real revenue-integrity gap, not a routine miss, and
+      // must not vanish without a trace.
+      console.error("[award-workflow] fee resolution/recording failed; authorization left with placeholder fee values", {
+        paymentAuthorizationId: row.id,
+        purchaseOrderId: po.id,
+        error: e instanceof Error ? e.message : String(e),
+      });
     }
 
     // Record a referral commission if the developer (the referred party for a

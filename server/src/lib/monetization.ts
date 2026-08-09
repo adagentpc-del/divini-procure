@@ -353,8 +353,22 @@ export async function maybeRecordReferralCommission(
       commissionCents,
       partnerId: partner.id,
     };
-  } catch {
-    // Best effort: never throw into the caller.
+  } catch (e) {
+    // Best effort: never throw into the caller (the award/payment flow
+    // this is called from must never fail because referral attribution
+    // did). But this exact silence is what hid a real bug for a long time
+    // - the email-attribution fallback query's join order was broken
+    // (missing FROM-clause entry) and threw on EVERY invocation for a
+    // referral partner with no direct company_id link, silently zeroing
+    // out that partner's commissions with no trace anywhere. Discovered
+    // only by temporarily adding debug logging during Phase 0 testing.
+    // Never again: this is a revenue-integrity failure, not a routine
+    // best-effort miss, and it now always leaves a structured diagnostic.
+    console.error("[monetization] maybeRecordReferralCommission failed, no commission recorded", {
+      referredCompanyId: input.referredCompanyId ?? null,
+      source: input.source ?? null,
+      error: e instanceof Error ? e.message : String(e),
+    });
     return { created: false, commissionCents: 0, reason: "error" };
   }
 }

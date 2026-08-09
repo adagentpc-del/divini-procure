@@ -91,7 +91,17 @@ export function authMiddleware(): RequestHandler {
     let auth: AuthResult;
     try {
       auth = await verify(sessionToken(req));
-    } catch {
+    } catch (e) {
+      // verify() itself already treats an invalid/expired/malformed token as
+      // a normal, silent "not logged in" (returns EMPTY_AUTH, never throws)
+      // - so reaching this catch means something genuinely unexpected broke
+      // (e.g. the session-revocation DB check itself failed). That is a
+      // security-relevant failure mode - every request platform-wide would
+      // silently start looking logged-out - and must never go unlogged.
+      console.error("[auth] session verification threw unexpectedly, treating request as unauthenticated", {
+        path: req.path,
+        error: e instanceof Error ? e.message : String(e),
+      });
       auth = EMPTY_AUTH;
     }
     req[AUTH_KEY] = auth;
