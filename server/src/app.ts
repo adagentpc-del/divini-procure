@@ -30,11 +30,18 @@ declare global {
     }
   }
 }
-app.use((req: Request, _res: Response, next: NextFunction) => {
+app.use((req: Request, res: Response, next: NextFunction) => {
   req.correlationId =
     (req.headers["x-request-id"] as string | undefined) ||
     (req.headers["x-correlation-id"] as string | undefined) ||
     randomUUID();
+  // ALFY2 Section 14 (observability/support): until this pass, the
+  // correlation ID only ever reached the server's own logs - a user
+  // reporting "the app broke" via email/support had nothing to give
+  // support that could be searched against the actual log entry.
+  // Echoing it back as a response header on every request lets support
+  // (or a browser devtools Network tab) recover it after the fact.
+  res.setHeader("X-Request-Id", req.correlationId);
   next();
 });
 

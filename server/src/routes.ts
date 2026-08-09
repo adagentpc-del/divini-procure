@@ -759,7 +759,11 @@ export function errorHandler(err: any, req: Request, res: Response, _next: NextF
       stack: err?.stack,
     }),
   );
-  res.status(500).json({ error: "internal error" });
+  // Include the correlation id in the response (already returned as the
+  // X-Request-Id header on every response - see app.ts) so a user who
+  // screenshots or reports this error gives support something to search
+  // the server logs by, without exposing any actual error detail.
+  res.status(500).json({ error: "internal error", requestId: (req as any).correlationId });
 }
 
 export default router;

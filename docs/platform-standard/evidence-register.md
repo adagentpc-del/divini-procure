@@ -190,3 +190,15 @@ Evidence references for PASS/PARTIAL controls, by section.
 | S13-04 | Code (new) | `server/src/routes/follow-up.ts` (`/workflows`), `server/src/routes/scope-builder.ts` (`/templates`) - membership checks added, matching every sibling route in each file |
 | S13-04 | Command output (live) | Seeded a victim company's `follow_up_workflows` row ("CONFIDENTIAL: internal escalation workflow") and `scope_templates` row ("CONFIDENTIAL: proprietary RFP template"); an unrelated authenticated user's requests to both endpoints with `companyId=<victim>` returned only global defaults post-fix, confirming the leak is closed |
 | S13-04 | Command output | Full 173-test suite re-verified clean after all 5 fixes |
+
+## Section 14
+
+| Control ID | Evidence type | Reference |
+|---|---|---|
+| S14-01 | Code | `server/src/routes.ts` `errorHandler` |
+| S14-02 | Code (new) | `server/src/app.ts` (`res.setHeader("X-Request-Id", ...)`); `server/src/routes.ts` (`requestId` in the 500 JSON body) |
+| S14-02 | Command output (live) | `curl -s -i http://localhost:8080/api/healthz \| grep -i x-request-id` → present; `curl -s -i .../documents/download?path=nonexistent \| grep -i "x-request-id\|HTTP"` → `403` with `X-Request-Id` present |
+| S14-03 | Command output | `GET /api/healthz` used and correctly reflected real state throughout this entire engagement's live testing (dozens of restarts across Sections 05-14) |
+| S14-04 | Code (new) | `docs/runbook-incident-response.md` |
+| S14-05 | Code | `docs/platform-standard/risk-register.md` R-03 (updated status) |
+| S14-06 | Command output | `grep -rn "support@" src/pages/*.tsx` → consistent across `Accessibility.tsx`, `Cookies.tsx`, `NonCircumvention.tsx`, `PaymentPolicy.tsx`, `Profile.tsx`, `Subscription.tsx` |
