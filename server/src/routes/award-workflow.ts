@@ -29,10 +29,9 @@
  */
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { getAuth, requireUser } from "../auth.js";
-import { q, q1 } from "../pool.js";
-import { ForbiddenError, NotFoundError } from "../db.js";
+import { q, q1, withTransaction, escalateToAdmin } from "../pool.js";
+import { ForbiddenError, NotFoundError, ValidationError } from "../lib/errors.js";
 import { resolveAndRecordFee, maybeRecordReferralCommission } from "../lib/monetization.js";
-import { runAsAdmin } from "../lib/requestContext.js";
 import { notifyCompanyMembers } from "../lib/notify.js";
 import { enqueueJob } from "../lib/jobs.js";
 
@@ -123,8 +122,17 @@ async function authorizePoWrite(req: Request, poId: string): Promise<any> {
 }
 
 // ---- POST /award/confirm -- confirm an award + draft a purchase order -------
-// {bidId} -> mark the bid awarded (if not already), then create a draft PO
-// derived from the bid. The developer must own the package the bid belongs to.
+// {bidId} -> the canonical COMMITMENT event (Phase 1 P1-06): creates an
+// awards row (awarded_amount_cents locked at this moment forever - change
+// orders adjust the REVISED commitment on top, never this figure), marks the
+// bid awarded, and drafts a purchase order linked to that award - all inside
+// one transaction, so a mid-way failure (e.g. the PO insert erroring) can
+// never leave a "half-awarded" bid with no purchase order, or a purchase
+// order with no award behind it. ONE ACTIVE AWARD PER PACKAGE is enforced by
+// a database-level partial unique index (db/schema-awards.sql) - a second
+// concurrent /confirm for a different bid on the same package fails
+// atomically, not via an application-level race-prone check. The developer
+// must own the package the bid belongs to.
 router.post(
   "/confirm",
   requireUser,
@@ -133,106 +141,166 @@ router.post(
     const bidId: string = req.body?.bidId ?? "";
     if (!bidId) return res.status(400).json({ error: "bidId required" });
 
-    // Resolve the bid + its package + building + developer company.
-    const ctx = await q1<any>(
-      `select b.id as bid_id, b.price, b.vendor_company_id, b.awarded,
-              p.id as package_id, p.building_id, bl.company_id as developer_company_id
-         from bids b
-         join packages p on p.id = b.package_id
-         join buildings bl on bl.id = p.building_id
-        where b.id = $1`,
-      [bidId],
-    );
-    if (!ctx) throw new NotFoundError("bid not found");
-
-    // Only the developer that owns the package (or admin) may confirm.
-    if (!auth.isAdmin && !(await userOwnsPackage(auth.userId!, ctx.package_id))) {
-      throw new ForbiddenError("only the developer may confirm this award");
-    }
-
-    // #53: Validate bid amount against the package budget before confirming.
-    // If the bid price exceeds the package's budget_max, warn (do not block)
-    // so the developer sees a clear flag in the response. A hard block would be
-    // too restrictive (budgets are estimates; developers may approve overages),
-    // but a silent over-budget award is a data-quality gap that should be surfaced.
-    let budgetWarning: string | null = null;
-    const budgetRow = await q1<{ budget_max: number | null }>(
-      `select budget_max from packages where id = $1`,
-      [ctx.package_id],
-    );
-    if (
-      budgetRow?.budget_max != null &&
-      ctx.price != null &&
-      Number(ctx.price) > Number(budgetRow.budget_max)
-    ) {
-      budgetWarning = `Bid amount $${Number(ctx.price).toLocaleString()} exceeds package budget cap $${Number(budgetRow.budget_max).toLocaleString()}. Confirm to proceed or revise the budget.`;
-    }
-
-    // Mark the bid awarded if it is not already. bids' RLS update policy only
-    // allows the VENDOR company to update its own bid (see schema-rls.sql) -
-    // the developer confirming an award is not a member of that company, so
-    // this write needs the same runAsAdmin() escalation requestContext.ts
-    // documents for other already-authorized cross-company writes. It is
-    // safe here specifically because userOwnsPackage() above already proved
-    // the caller owns this package/building before any write happens.
-    if (!ctx.awarded) {
-      const updated = await runAsAdmin(() =>
-        q(`update bids set awarded = true, status = 'awarded' where id = $1 returning id`, [
-          bidId,
-        ]),
+    const result = await withTransaction(async (tx) => {
+      // Resolve the bid + its package + building + developer company.
+      const ctx = await tx.q1<any>(
+        `select b.id as bid_id, b.price, b.vendor_company_id, b.awarded,
+                p.id as package_id, p.building_id, bl.company_id as developer_company_id
+           from bids b
+           join packages p on p.id = b.package_id
+           join buildings bl on bl.id = p.building_id
+          where b.id = $1`,
+        [bidId],
       );
-      if (updated.length === 0) {
-        throw new Error(`failed to mark bid ${bidId} as awarded`);
+      if (!ctx) throw new NotFoundError("bid not found");
+
+      // Only the developer that owns the package (or admin) may confirm.
+      if (!auth.isAdmin) {
+        const owns = await tx.q1(
+          `select 1 from packages p
+             join buildings b on b.id = p.building_id
+             join company_members cm on cm.company_id = b.company_id
+            where p.id = $1 and cm.user_id = $2`,
+          [ctx.package_id, auth.userId],
+        );
+        if (!owns) throw new ForbiddenError("only the developer may confirm this award");
       }
-    }
 
-    // Reuse an existing draft PO for this bid if one was already started, so
-    // confirm is idempotent and does not spawn duplicate purchase orders.
-    const existing = await q1<any>(
-      `select * from purchase_orders where bid_id = $1 order by created_at limit 1`,
-      [bidId],
-    );
-    if (existing) {
-      return res.status(200).json({ purchaseOrder: existing });
-    }
+      // Idempotent: a PO already exists for this exact bid (a retried
+      // request, or /confirm called twice) -> return it unchanged, no
+      // duplicate award/PO. This is the SAME idempotency contract as before
+      // P1-06, just now resolving the award alongside it.
+      const existingPo = await tx.q1<any>(
+        `select * from purchase_orders where bid_id = $1 order by created_at limit 1`,
+        [bidId],
+      );
+      if (existingPo) {
+        const existingAward = existingPo.award_id
+          ? await tx.q1<any>(`select * from awards where id = $1`, [existingPo.award_id])
+          : null;
+        return { purchaseOrder: existingPo, award: existingAward, budgetWarning: null, alreadyExisted: true };
+      }
 
-    // bids.price is dollars; store integer cents on the PO.
-    const amountCents =
-      ctx.price != null ? Math.round(Number(ctx.price) * 100) : null;
+      // A DIFFERENT bid on this package already holds the one active award.
+      // Checked here for a clean error message; the database's partial
+      // unique index (awards_one_active_per_package) is still the real,
+      // race-proof enforcement - see the catch block below.
+      const conflicting = await tx.q1<any>(
+        `select id, bid_id from awards where package_id = $1 and status = 'active'`,
+        [ctx.package_id],
+      );
+      if (conflicting && conflicting.bid_id !== bidId) {
+        throw new ValidationError(
+          "this package already has an active award for a different bid; cancel it before awarding this one",
+        );
+      }
 
-    const purchaseOrder = await q1<any>(
-      `insert into purchase_orders
-         (bid_id, package_id, building_id, developer_company_id, vendor_company_id,
-          amount_cents, status, created_by)
-       values ($1,$2,$3,$4,$5,$6,'draft',$7)
-       returning *`,
-      [
-        bidId,
-        ctx.package_id,
-        ctx.building_id,
-        ctx.developer_company_id,
-        ctx.vendor_company_id,
-        amountCents,
-        auth.userId,
-      ],
-    );
+      // #53: Validate bid amount against the package budget before confirming.
+      // If the bid price exceeds the package's budget_max, warn (do not block)
+      // so the developer sees a clear flag in the response. A hard block would
+      // be too restrictive (budgets are estimates; developers may approve
+      // overages), but a silent over-budget award is a data-quality gap that
+      // should be surfaced.
+      let budgetWarning: string | null = null;
+      const budgetRow = await tx.q1<{ budget_max: number | null }>(
+        `select budget_max from packages where id = $1`,
+        [ctx.package_id],
+      );
+      if (
+        budgetRow?.budget_max != null &&
+        ctx.price != null &&
+        Number(ctx.price) > Number(budgetRow.budget_max)
+      ) {
+        budgetWarning = `Bid amount $${Number(ctx.price).toLocaleString()} exceeds package budget cap $${Number(budgetRow.budget_max).toLocaleString()}. Confirm to proceed or revise the budget.`;
+      }
 
-    // Notify the awarded vendor. Placed AFTER the purchase order insert and
-    // gated by the same `if (existing)` early-return above: a retried
-    // /confirm for a bid that already has a PO returns 200 before ever
-    // reaching this line, so this fires exactly once per real award, not
-    // once per request. The in-app row is fast/local and stays on the
-    // request path; the outbound email (a slow, unreliable third-party
-    // HTTP call) is enqueued onto the durable job queue (lib/jobs.ts)
-    // instead of awaited here, so a Resend outage cannot add latency to -
-    // or fail - an already-successful award confirmation. One job per
-    // recipient, keyed by (purchase order, recipient) so a retried enqueue
-    // can never double-send.
-    if (ctx.vendor_company_id) {
-      const poNumber = purchaseOrder?.po_number || purchaseOrder?.id;
+      // bids.price is dollars; store integer cents on the award/PO.
+      const amountCents = ctx.price != null ? Math.round(Number(ctx.price) * 100) : 0;
+
+      let award: any;
+      try {
+        award = await tx.q1<any>(
+          `insert into awards
+             (package_id, bid_id, building_id, vendor_company_id, developer_company_id,
+              awarded_amount_cents, created_by)
+           values ($1,$2,$3,$4,$5,$6,$7)
+           returning *`,
+          [
+            ctx.package_id,
+            bidId,
+            ctx.building_id,
+            ctx.vendor_company_id,
+            ctx.developer_company_id,
+            amountCents,
+            auth.userId,
+          ],
+        );
+      } catch (e: any) {
+        // 23505 = unique_violation. The race window this catches: two
+        // concurrent /confirm calls for two different bids on the same
+        // package, both passing the `conflicting` pre-check above before
+        // either has committed. The database's partial unique index is the
+        // actual guarantee; this just turns its generic error into the same
+        // clean 400 the pre-check produces.
+        if (e?.code === "23505") {
+          throw new ValidationError(
+            "this package already has an active award for a different bid; cancel it before awarding this one",
+          );
+        }
+        throw e;
+      }
+
+      // Mark the bid awarded. bids' RLS update policy only allows the VENDOR
+      // company to update its own bid (see schema-rls.sql) - the developer
+      // confirming an award is not a member of that company, so this write
+      // needs the same escalateToAdmin() pattern pool.ts documents for other
+      // already-authorized cross-company writes. Safe here specifically
+      // because the ownership check above already proved the caller owns
+      // this package/building before any write happens.
+      await escalateToAdmin(tx);
+      const updatedBid = await tx.q1(
+        `update bids set awarded = true, status = 'awarded' where id = $1 returning id`,
+        [bidId],
+      );
+      if (!updatedBid) throw new Error(`failed to mark bid ${bidId} as awarded`);
+
+      const purchaseOrder = await tx.q1<any>(
+        `insert into purchase_orders
+           (bid_id, package_id, building_id, developer_company_id, vendor_company_id,
+            amount_cents, original_amount_cents, award_id, status, created_by)
+         values ($1,$2,$3,$4,$5,$6,$6,$7,'draft',$8)
+         returning *`,
+        [
+          bidId,
+          ctx.package_id,
+          ctx.building_id,
+          ctx.developer_company_id,
+          ctx.vendor_company_id,
+          amountCents,
+          award.id,
+          auth.userId,
+        ],
+      );
+
+      return { purchaseOrder, award, budgetWarning, alreadyExisted: false };
+    });
+
+    // Notify the awarded vendor. Placed AFTER the transaction commits and
+    // gated on `!alreadyExisted`: a retried /confirm for a bid that already
+    // has a PO returns before this ever runs, so this fires exactly once per
+    // real award, not once per request. The in-app row is fast/local and
+    // stays on the request path; the outbound email (a slow, unreliable
+    // third-party HTTP call) is enqueued onto the durable job queue
+    // (lib/jobs.ts) instead of awaited here, so a Resend outage cannot add
+    // latency to - or fail - an already-successful award confirmation. One
+    // job per recipient, keyed by (purchase order, recipient) so a retried
+    // enqueue can never double-send.
+    if (!result.alreadyExisted && result.purchaseOrder?.vendor_company_id) {
+      const poNumber = result.purchaseOrder?.po_number || result.purchaseOrder?.id;
+      const amountCents = result.purchaseOrder?.amount_cents;
       const amountText =
         amountCents != null ? `$${(amountCents / 100).toLocaleString()}` : "an amount to be confirmed";
-      const recipients = await notifyCompanyMembers(ctx.vendor_company_id, {
+      const recipients = await notifyCompanyMembers(result.purchaseOrder.vendor_company_id, {
         title: "You were awarded a package",
         detail: `Your bid was awarded (PO ${poNumber}, ${amountText}). Sign in to Divini Procure to view the purchase order.`,
         kind: "award",
@@ -249,12 +317,82 @@ router.post(
               `Purchase order: ${poNumber}\nAmount: ${amountText}\n\n` +
               `Sign in to Divini Procure to view the purchase order and next steps.\n`,
           },
-          idempotencyKey: `award-email:${purchaseOrder.id}:${r.userId}`,
+          idempotencyKey: `award-email:${result.purchaseOrder.id}:${r.userId}`,
         });
       }
     }
 
-    res.status(201).json({ purchaseOrder, ...(budgetWarning ? { budgetWarning } : {}) });
+    res
+      .status(result.alreadyExisted ? 200 : 201)
+      .json({
+        purchaseOrder: result.purchaseOrder,
+        award: result.award,
+        ...(result.budgetWarning ? { budgetWarning: result.budgetWarning } : {}),
+      });
+  }),
+);
+
+// ---- POST /award/:awardId/cancel -- cancel an active award ------------------
+// {reason?} -> the deliberate "cancel award / re-open package" action (Phase
+// 1 P1-17): frees the package's one-active-award slot so it can be awarded
+// again (to the same or a different vendor), while keeping the cancelled
+// award and its purchase order as a permanent historical record - nothing is
+// deleted. Blocked once the PO has reached 'fulfilled' (the procurement
+// already completed; cancelling the award at that point would misrepresent
+// history, not correct it). The bid itself reverts to 'submitted'/awarded
+// false so it becomes eligible for comparison/re-award again.
+router.post(
+  "/:awardId/cancel",
+  requireUser,
+  h(async (req, res) => {
+    const auth = getAuth(req);
+    const reason = req.body?.reason ? String(req.body.reason).trim() : null;
+
+    const result = await withTransaction(async (tx) => {
+      const award = await tx.q1<any>(`select * from awards where id = $1`, [req.params.awardId]);
+      if (!award) throw new NotFoundError("award not found");
+      if (!auth.isAdmin) {
+        const owns = await isMemberOfCompany(auth.userId!, award.developer_company_id);
+        if (!owns) throw new ForbiddenError("only the developer may cancel this award");
+      }
+      if (award.status !== "active") {
+        throw new ValidationError(`award is already ${award.status}`);
+      }
+
+      const po = await tx.q1<any>(`select * from purchase_orders where award_id = $1`, [award.id]);
+      if (po?.status === "fulfilled") {
+        throw new ValidationError("cannot cancel an award whose purchase order has already been fulfilled");
+      }
+
+      // CAS: only cancel if still active, guarding the same concurrent-
+      // double-cancel race the bid-revisions CAS pattern guards against.
+      const updatedAward = await tx.q1<any>(
+        `update awards
+            set status = 'cancelled', cancelled_at = now(), cancelled_by = $2, cancelled_reason = $3
+          where id = $1 and status = 'active'
+          returning *`,
+        [award.id, auth.email ?? auth.userId, reason],
+      );
+      if (!updatedAward) throw new ValidationError("award was already cancelled by a concurrent request");
+
+      await escalateToAdmin(tx);
+      const revertedBid = await tx.q1<any>(
+        `update bids set awarded = false, status = 'submitted' where id = $1 and awarded = true returning id`,
+        [award.bid_id],
+      );
+
+      let updatedPo = po;
+      if (po && po.status !== "cancelled") {
+        updatedPo = await tx.q1<any>(
+          `update purchase_orders set status = 'cancelled', updated_at = now() where id = $1 returning *`,
+          [po.id],
+        );
+      }
+
+      return { award: updatedAward, purchaseOrder: updatedPo, bidReverted: !!revertedBid };
+    });
+
+    res.json(result);
   }),
 );
 

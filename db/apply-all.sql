@@ -4817,3 +4817,8 @@ COMMIT;
 -- historically-honest revision history replacing the dead buildings.budget
 -- field - see the file's own header.
 \i db/schema-financial-ledgers.sql
+
+-- Phase 1 P1-06/P1-07: awards - the canonical commitment event, one active
+-- award per package enforced at the database level - see the file's own
+-- header.
+\i db/schema-awards.sql
