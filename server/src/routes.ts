@@ -395,7 +395,7 @@ router.get(
     const cats = req.query.categories
       ? String(req.query.categories).split(",").filter(Boolean)
       : undefined;
-    res.json(await db.getOpenPackages(auth.userId!, cats));
+    res.json(await db.getOpenPackages(auth.userId!, cats, auth.isAdmin));
   }),
 );
 
@@ -404,7 +404,7 @@ router.get(
   requireUser,
   h(async (req, res) => {
     const auth = getAuth(req);
-    res.json((await db.getPackage(auth.userId!, req.params.id)) ?? null);
+    res.json((await db.getPackage(auth.userId!, req.params.id, auth.isAdmin)) ?? null);
   }),
 );
 

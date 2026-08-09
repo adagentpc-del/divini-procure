@@ -36,6 +36,7 @@ import { q, q1, pool, setRlsContext } from "./pool.js";
 import { getAdminAllowedEmails } from "./config.js";
 import { PlanLimitError, enforceLimit } from "./lib/entitlement-guard.js";
 import { ForbiddenError, NotFoundError } from "./lib/errors.js";
+import { allowedBrowseVisibilities, canViewPackage } from "./lib/marketplace-visibility.js";
 
 /**
  * Single-purpose tokens (email verification, password reset, ownership-
@@ -812,7 +813,7 @@ export async function getPackages(_userId: string, buildingId: string) {
   return q(`select * from packages where building_id = $1 order by created_at`, [buildingId]);
 }
 
-export async function getOpenPackages(_userId: string, categories?: string[]) {
+export async function getOpenPackages(userId: string, categories?: string[], isAdmin = false) {
   const params: any[] = [];
   // Status is the master gate on whether a package is listed at all.
   // visibility (see db/schema-marketplace-publication.sql) further narrows
@@ -821,13 +822,22 @@ export async function getOpenPackages(_userId: string, categories?: string[]) {
   // preferred-vendor, and private-group listings are distributed through
   // their own explicit channel (bid_invites / "My Invites"), never surfaced
   // here regardless of status.
+  //
+  // Phase 0 fix: which of the three browsable tiers the CALLER actually
+  // sees is no longer hardcoded - allowedBrowseVisibilities() checks the
+  // caller's own vendor verification status, so 'qualified_vendors' and
+  // 'divini_verified' listings are no longer shown to every signed-in
+  // user regardless of whether they actually qualify (see
+  // lib/marketplace-visibility.ts).
+  const allowed = await allowedBrowseVisibilities({ userId, isAdmin });
+  params.push(allowed);
   let sql = `select p.*, to_jsonb(b) - 'id' as _b, b.name as _bname, b.location as _bloc, b.developer as _bdev
              from packages p join buildings b on b.id = p.building_id
              where p.status in ('open','shortlisting')
-               and p.visibility in ('public_marketplace', 'qualified_vendors', 'divini_verified')`;
+               and p.visibility = any($1::text[])`;
   if (categories && categories.length) {
     params.push(categories);
-    sql += ` and p.category = any($1)`;
+    sql += ` and p.category = any($${params.length})`;
   }
   sql += ` order by p.deadline`;
   const rows = await q<any>(sql, params);
@@ -837,7 +847,7 @@ export async function getOpenPackages(_userId: string, categories?: string[]) {
   });
 }
 
-export async function getPackage(_userId: string, id: string) {
+export async function getPackage(userId: string, id: string, isAdmin = false) {
   const r = await q1<any>(
     `select p.*, b.id as _bid, b.name as _bname, b.location as _bloc, b.developer as _bdev, b.company_id as _bcompany
        from packages p join buildings b on b.id = p.building_id
@@ -845,6 +855,16 @@ export async function getPackage(_userId: string, id: string) {
     [id],
   );
   if (!r) return null;
+  // Phase 0 fix: this previously had NO visibility/ownership check at all -
+  // any authenticated user could read any package by id regardless of its
+  // visibility, including 'private_draft'. Mirrors the same not-found
+  // response as a missing row (no existence oracle for a package you are
+  // not entitled to see) rather than a 403.
+  const canView = await canViewPackage(
+    { userId, isAdmin },
+    { visibility: r.visibility, buildingCompanyId: r._bcompany, id: r.id },
+  );
+  if (!canView) return null;
   const { _bid, _bname, _bloc, _bdev, _bcompany, ...pkg } = r;
   return {
     ...pkg,
