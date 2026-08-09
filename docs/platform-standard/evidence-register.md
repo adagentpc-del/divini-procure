@@ -157,3 +157,14 @@ Evidence references for PASS/PARTIAL controls, by section.
 | S10-04 | Code | `server/src/routes/campaigns.ts` (`UPDATE email_campaigns ... WHERE status = 'test_sent' RETURNING *`) |
 | S10-05 | Command output | `grep -rln "twilio\|SMS\|sendSms\|push notification\|VAPID" server/src` → 0 matches |
 | S10-06 | Code | `docs/platform-standard/applicability-register.md` line 63; `server/src/routes/campaigns.ts`'s `resolveSegment` (no EU/UK-specific branching either way) |
+
+## Section 11
+
+| Control ID | Evidence type | Reference |
+|---|---|---|
+| S11-01 | Code | `src/App.tsx` `SkipToContent` (`tabindex="-1"` + `.focus()` on the real `<main>`) |
+| S11-02 | Code | `src/theme.css` lines 107-108 (`:focus-visible`), line 124 (`prefers-reduced-motion`) |
+| S11-03 | Code | `src/pages/Register.tsx` (label/id pairs, `role="alert" aria-live="assertive"`, `aria-hidden` honeypot) |
+| S11-04 | Code | `src/pages/Accessibility.tsx` cross-referenced against S11-01/S11-02/S11-03's actual implementations |
+| S11-05 | Calculation | Hand-computed WCAG relative-luminance contrast from `src/theme.css`'s hex values: `--muted` (#6b655c) on white ≈ 6.16:1; on `--ivory` (#f7f4ee) ≈ 5.61:1 - both clear the 4.5:1 AA threshold |
+| S11-06 | Command output | `grep -rn "axe\|lighthouse\|pa11y" package.json .github/workflows/*.yml` → 0 matches; `grep -n "playwright" package.json` → 0 matches |
