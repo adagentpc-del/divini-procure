@@ -871,11 +871,18 @@ router.post(
         q<{ user_id: string }>(`select user_id from company_members where company_id = $1`, [vendorCompanyId]),
       );
       for (const m of members) {
-        await q(`insert into notifications (user_id, title, detail, kind) values ($1,$2,$3,'addendum')`, [
-          m.user_id,
-          `Addendum: ${addendum.title}`,
-          `${building?.name ?? "A project"} you are bidding on has a new addendum. Review the updated documents before your bid deadline.`,
-        ]);
+        // Phase 0's RLS pass on the notifications table (own row only, or
+        // admin) means this insert - for a DIFFERENT user than the caller,
+        // in an UNRELATED company - needs the same runAsAdmin() escalation
+        // the company_members lookup above already uses, for the same
+        // already-established reason.
+        await runAsAdmin(() =>
+          q(`insert into notifications (user_id, title, detail, kind) values ($1,$2,$3,'addendum')`, [
+            m.user_id,
+            `Addendum: ${addendum.title}`,
+            `${building?.name ?? "A project"} you are bidding on has a new addendum. Review the updated documents before your bid deadline.`,
+          ]),
+        );
         const u = await q1<{ email: string }>(`select email from users where id = $1`, [m.user_id]);
         if (u?.email) {
           await sendEmail({

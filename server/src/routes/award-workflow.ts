@@ -33,6 +33,8 @@ import { q, q1 } from "../pool.js";
 import { ForbiddenError, NotFoundError } from "../db.js";
 import { resolveAndRecordFee, maybeRecordReferralCommission } from "../lib/monetization.js";
 import { runAsAdmin } from "../lib/requestContext.js";
+import { notifyCompanyMembers } from "../lib/notify.js";
+import { sendEmail } from "../lib/email.js";
 
 // Async handler wrapper that funnels errors to the error middleware.
 const h =
@@ -214,6 +216,40 @@ router.post(
         auth.userId,
       ],
     );
+
+    // Notify the awarded vendor. Placed AFTER the purchase order insert and
+    // gated by the same `if (existing)` early-return above: a retried
+    // /confirm for a bid that already has a PO returns 200 before ever
+    // reaching this line, so this fires exactly once per real award, not
+    // once per request. Best-effort - notifyCompanyMembers never throws,
+    // and sendEmail never throws (see lib/email.ts) - so a notification
+    // failure can never turn an already-successful award into a 500.
+    if (ctx.vendor_company_id) {
+      const poNumber = purchaseOrder?.po_number || purchaseOrder?.id;
+      const amountText =
+        amountCents != null ? `$${(amountCents / 100).toLocaleString()}` : "an amount to be confirmed";
+      const recipients = await notifyCompanyMembers(ctx.vendor_company_id, {
+        title: "You were awarded a package",
+        detail: `Your bid was awarded (PO ${poNumber}, ${amountText}). Sign in to Divini Procure to view the purchase order.`,
+        kind: "award",
+      });
+      for (const r of recipients) {
+        if (!r.email) continue;
+        try {
+          await sendEmail({
+            to: r.email,
+            subject: "You were awarded a package on Divini Procure",
+            text:
+              `Congratulations - your bid was awarded.\n\n` +
+              `Purchase order: ${poNumber}\nAmount: ${amountText}\n\n` +
+              `Sign in to Divini Procure to view the purchase order and next steps.\n`,
+          });
+        } catch {
+          /* email is best-effort */
+        }
+      }
+    }
+
     res.status(201).json({ purchaseOrder, ...(budgetWarning ? { budgetWarning } : {}) });
   }),
 );

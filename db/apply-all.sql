@@ -4796,3 +4796,7 @@ COMMIT;
 -- and the remaining bid/package satellite tables) - see the file's own
 -- header for exactly which route each policy mirrors.
 \i db/schema-rls-high-risk.sql
+
+-- Phase 0: RLS on notifications, added alongside routes/notifications.ts
+-- (the first real reader of this previously write-only table).
+\i db/schema-notifications-rls.sql

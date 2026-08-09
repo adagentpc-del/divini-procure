@@ -23,6 +23,7 @@ import { getAuth, requireUser } from "../auth.js";
 import { q, q1 } from "../pool.js";
 import { llmEnabled, llmText } from "../lib/llm.js";
 import { sendEmail } from "../lib/email.js";
+import { notifyCompanyMembers } from "../lib/notify.js";
 import { PROCURE_MONETIZATION_V2 } from "../config.js";
 import { llmRateLimit } from "../lib/rateLimit.js";
 
@@ -694,7 +695,13 @@ router.post(
         : Math.max(0, Math.min(100, Math.round(Number(body.matchScore))));
     const message = body.message ? String(body.message).slice(0, 2000) : null;
 
-    const row = await q1<{ id: string; status: string; match_score: number | null; created_at: string }>(
+    const row = await q1<{
+      id: string;
+      status: string;
+      match_score: number | null;
+      created_at: string;
+      was_inserted: boolean;
+    }>(
       `insert into bid_invites
          (package_id, vendor_company_id, developer_company_id, status, match_score, message, invited_by)
        values ($1, $2, $3, 'invited', $4, $5, $6)
@@ -703,32 +710,52 @@ router.post(
                        message = coalesce(excluded.message, bid_invites.message),
                        invited_by = excluded.invited_by,
                        updated_at = now()
-       returning id, status, match_score, created_at`,
+       returning id, status, match_score, created_at, (xmax = 0) as was_inserted`,
       [packageId, vendorCompanyId, pkg.developer_company_id, matchScore, message, auth.email ?? auth.userId],
     );
 
-    // Best-effort email to the vendor company (never blocks the invite).
+    // Notify the invited vendor - but only on a genuinely NEW invite
+    // (xmax = 0 is the standard Postgres idiom for "this row version was
+    // created by this statement's INSERT, not its ON CONFLICT UPDATE
+    // branch"). This upsert is also reachable as a deliberate "nudge the
+    // vendor again" re-invite, so re-sending on every call would not be a
+    // bug exactly, but it would mean a developer bulk-re-running this
+    // endpoint (e.g. a retried request) silently re-spams every already-
+    // invited vendor. Gating on was_inserted keeps a genuine retry
+    // idempotent while still allowing an intentional future "resend"
+    // feature to be added explicitly later, rather than happening by
+    // accident on every retry today.
     let emailed = false;
-    try {
+    if (row?.was_inserted) {
       const vendor = await q1<{ email: string | null; billing_email: string | null; name: string }>(
         `select email, billing_email, name from companies where id = $1`,
         [vendorCompanyId],
       );
-      const to = vendor?.email || vendor?.billing_email || null;
-      if (to) {
-        const r = await sendEmail({
-          to,
-          subject: "You have been invited to bid",
-          text:
-            `Hello ${vendor?.name ?? "there"},\n\n` +
-            `You have been invited to submit a bid for a ${pkg.category} package on Divini Procure.\n` +
-            (message ? `\nMessage from the developer:\n${message}\n` : "") +
-            `\nSign in to Divini Procure to view the opportunity and respond.\n`,
-        });
-        emailed = !!r.ok;
+
+      await notifyCompanyMembers(vendorCompanyId, {
+        title: "You have been invited to bid",
+        detail: `You have been invited to submit a bid for a ${pkg.category} package on Divini Procure.${message ? ` Message from the developer: ${message}` : ""}`,
+        kind: "bid_invite",
+      });
+
+      // Best-effort email to the vendor company (never blocks the invite).
+      try {
+        const to = vendor?.email || vendor?.billing_email || null;
+        if (to) {
+          const r = await sendEmail({
+            to,
+            subject: "You have been invited to bid",
+            text:
+              `Hello ${vendor?.name ?? "there"},\n\n` +
+              `You have been invited to submit a bid for a ${pkg.category} package on Divini Procure.\n` +
+              (message ? `\nMessage from the developer:\n${message}\n` : "") +
+              `\nSign in to Divini Procure to view the opportunity and respond.\n`,
+          });
+          emailed = !!r.ok;
+        }
+      } catch {
+        /* email is best-effort */
       }
-    } catch {
-      /* email is best-effort */
     }
 
     res.json({ ok: true, invite: row, emailed });

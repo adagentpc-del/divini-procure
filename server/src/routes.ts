@@ -111,6 +111,7 @@ import watchlistRouter from "./routes/watchlist.js";
 import projectHealthRouter from "./routes/project-health.js";
 import progressPhotosRouter from "./routes/progress-photos.js";
 import paymentEtaRouter from "./routes/payment-eta.js";
+import notificationsRouter from "./routes/notifications.js";
 // ---- Monetization V2 (flag-gated): bid credits + verification gate -----------
 import { PROCURE_MONETIZATION_V2 } from "./config.js";
 import { getBidCredits, consumeBidCredit } from "./lib/bidCredits.js";
@@ -222,6 +223,7 @@ router.use(watchlistRouter);
 router.use(projectHealthRouter);
 router.use(progressPhotosRouter);
 router.use(paymentEtaRouter);
+router.use(notificationsRouter);
 
 // ---- health ----------------------------------------------------------------
 router.get("/healthz", async (_req, res) => {
