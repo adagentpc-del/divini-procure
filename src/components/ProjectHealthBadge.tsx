@@ -123,7 +123,7 @@ export default function ProjectHealthBadge({ buildingId, showDetails = false }: 
           {/* This column reflects the share of packages that have received a
               bid, not a financial budget calculation - there is no project
               budget engine yet. Labeled honestly rather than as "Budget". */}
-          <ScoreBar label="Bid Participation" value={snapshot.budget_score} />
+          <ScoreBar label="Budget Health" value={snapshot.budget_score} />
           <ScoreBar label="Schedule" value={snapshot.schedule_score} />
           <ScoreBar label="Vendors" value={snapshot.vendor_score} />
           <ScoreBar label="Docs" value={snapshot.documentation_score} />

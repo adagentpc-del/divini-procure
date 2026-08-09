@@ -55,9 +55,13 @@ test("project health compute: returns a real result for a building with an award
   const compute = await buyer.client.post(`/api/project-health/${buildingId}/compute`, {});
   assert.equal(compute.status, 200, JSON.stringify(compute.body));
   assert.equal(typeof compute.body.snapshot.score, "number");
-  assert.equal(typeof compute.body.snapshot.bidParticipationScore, "number");
-  // One package, one bid -> full bid-participation credit.
-  assert.equal(compute.body.snapshot.bidParticipationScore, 25);
+  assert.equal(typeof compute.body.snapshot.budgetScore, "number");
+  // Phase 1 P1-16: budget_score is now real budget health (lib/financial-
+  // summary.ts), not a bid-participation proxy. This building never set a
+  // project budget, so budgetHealth is "unbudgeted" (neutral, neither
+  // healthy nor over) - a real, honest signal, not a fabricated score.
+  assert.equal(compute.body.snapshot.budgetHealth, "unbudgeted");
+  assert.equal(compute.body.snapshot.budgetScore, 10);
 
   const get = await buyer.client.get(`/api/project-health/${buildingId}`);
   assert.equal(get.status, 200, JSON.stringify(get.body));

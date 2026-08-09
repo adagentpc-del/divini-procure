@@ -5,6 +5,8 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { getAuth, requireUser } from "../auth.js";
 import { q, q1 } from "../pool.js";
+import { computeProjectFinancialSummary } from "../lib/financial-summary.js";
+import type { BudgetHealth } from "../lib/financial-model.js";
 
 const h =
   (fn: (req: Request, res: Response) => Promise<unknown>) =>
@@ -67,28 +69,29 @@ router.post(
   h(async (req, res) => {
     const { buildingId } = req.params;
 
-    // NOTE (Phase 0 honesty fix): this is a bid-PARTICIPATION-rate proxy
-    // (share of packages that have received at least one bid), not a real
-    // financial budget calculation - there is no project/package budget
-    // rollup anywhere in this codebase yet (see the master audit's finance
-    // findings; that engine is real future work, not built here). It is
-    // still stored in the pre-existing `budget_score` column/field (a
-    // schema/API rename is a separate, larger change deferred to that
-    // future work) but is now labeled honestly wherever a person reads it -
-    // see ProjectHealthBadge.tsx's "Bid Participation" label.
+    // Phase 1 P1-16: `budget_score` now finally represents actual budget
+    // health, using the real project financial rollup (lib/financial-
+    // summary.ts) - deterministic, transparent rules over real numbers
+    // (forecast vs. current budget, contingency remaining, package
+    // overages), never a predictive model. Before Phase 1 this column held
+    // a bid-PARTICIPATION-rate proxy (Phase 0 honesty pass: correctly
+    // relabeled on the frontend, but never a real financial calculation,
+    // because no project/package budget rollup existed yet). That proxy is
+    // superseded now that one does.
+    const financialSummary = await computeProjectFinancialSummary(buildingId);
+    const budgetHealth: BudgetHealth = financialSummary?.budgetHealth ?? "unbudgeted";
+    const BUDGET_HEALTH_SCORE: Record<BudgetHealth, number> = {
+      healthy: 25,
+      at_risk: 15,
+      over_budget: 5,
+      unbudgeted: 10,
+    };
+    const budgetScore = BUDGET_HEALTH_SCORE[budgetHealth];
+
     const pkgCount = await q1<{ cnt: string }>(
       `SELECT COUNT(*) AS cnt FROM packages WHERE building_id = $1`,
       [buildingId],
     );
-    const bidCount = await q1<{ cnt: string }>(
-      `SELECT COUNT(DISTINCT package_id) AS cnt FROM bids WHERE package_id IN (SELECT id FROM packages WHERE building_id = $1)`,
-      [buildingId],
-    );
-    const bidParticipationScore =
-      Number(pkgCount?.cnt) > 0
-        ? Math.min(25, Math.round((Number(bidCount?.cnt) / Math.max(Number(pkgCount?.cnt), 1)) * 25))
-        : 10;
-
     const awardedCount = await q1<{ cnt: string }>(
       `SELECT COUNT(*) AS cnt FROM packages WHERE building_id = $1 AND status = $2`,
       [buildingId, "awarded"],
@@ -129,11 +132,9 @@ router.post(
     );
     const documentationScore = Math.min(25, Math.round((Math.min(Number(docCount?.cnt), 5) / 5) * 25));
 
-    const score = bidParticipationScore + scheduleScore + vendorScore + documentationScore;
+    const score = budgetScore + scheduleScore + vendorScore + documentationScore;
     const color = score >= 80 ? "green" : score >= 60 ? "amber" : "red";
 
-    // Persisted column is still named budget_score (see note above) - the
-    // value in it is bidParticipationScore, not a financial calculation.
     const snapshot = await q1<any>(
       `INSERT INTO project_health_snapshots
          (building_id, score, budget_score, schedule_score, vendor_score, documentation_score, score_details)
@@ -142,18 +143,25 @@ router.post(
       [
         buildingId,
         score,
-        bidParticipationScore,
+        budgetScore,
         scheduleScore,
         vendorScore,
         documentationScore,
-        JSON.stringify({ color }),
+        JSON.stringify({
+          color,
+          budgetHealth,
+          forecastAtCompletionCents: financialSummary?.forecastAtCompletionCents ?? null,
+          budgetCurrentCents: financialSummary?.budgetCurrentCents ?? null,
+          varianceCents: financialSummary?.varianceCents ?? null,
+        }),
       ],
     );
 
     res.json({
       snapshot: {
         score,
-        bidParticipationScore,
+        budgetScore,
+        budgetHealth,
         scheduleScore,
         vendorScore,
         documentationScore,
