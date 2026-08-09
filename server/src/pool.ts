@@ -86,3 +86,44 @@ export async function q1<T = any>(text: string, params: any[] = []): Promise<T |
   const res = await queryWithContext(text, params);
   return (res.rows[0] as T) ?? null;
 }
+
+/**
+ * A tiny query surface bound to one already-open transaction, handed to the
+ * callback of withTransaction(). Same shape as q()/q1() so callers can write
+ * identical SQL, but every call runs on the SAME connection/transaction
+ * instead of opening a new one - required whenever a multi-step financial
+ * write (award + PO + commitment check, change-order approval + recompute,
+ * invoice approval + payment) must succeed or fail as one unit.
+ */
+export interface TxQuery {
+  q<T = any>(text: string, params?: any[]): Promise<T[]>;
+  q1<T = any>(text: string, params?: any[]): Promise<T | null>;
+}
+
+/**
+ * Run `fn` inside a single Postgres transaction (RLS context set once, up
+ * front, on the same connection used for every statement `fn` issues via the
+ * TxQuery it receives). Commits on success, rolls back on any thrown error
+ * (including an explicit application-level abort) and rethrows. Use this for
+ * any financial event that touches more than one table and must never be
+ * left partially applied - see server/src/lib/*.ts financial write paths.
+ */
+export async function withTransaction<T>(fn: (tx: TxQuery) => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    await setRlsContext(client);
+    const tx: TxQuery = {
+      q: async (text, params = []) => (await client.query(text, params)).rows,
+      q1: async (text, params = []) => (await client.query(text, params)).rows[0] ?? null,
+    };
+    const result = await fn(tx);
+    await client.query("commit");
+    return result;
+  } catch (e) {
+    await client.query("rollback").catch(() => {});
+    throw e;
+  } finally {
+    client.release();
+  }
+}
