@@ -4837,3 +4837,7 @@ COMMIT;
 -- Phase 1 P1-11: payment lifecycle (platform release + external record) -
 -- see the file's own header.
 \i db/schema-payments.sql
+
+-- Phase 1 P1-13/P1-18: package financial closeout markers - see the file's
+-- own header.
+\i db/schema-package-closeout.sql
