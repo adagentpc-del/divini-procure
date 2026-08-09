@@ -7,7 +7,8 @@
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
-    "test": "node --experimental-strip-types --test \"tests/**/*.test.ts\"",
+    "test": "node --experimental-strip-types --test \"tests/*.test.ts\"",
+    "test:integration": "pnpm --dir server run build && DATABASE_URL=\"${DATABASE_URL:-postgres://divini:devpass@localhost:5432/divini_test}\" SESSION_SECRET=\"${SESSION_SECRET:-dev-only-session-secret-change-me}\" node --experimental-strip-types --test \"tests/integration/**/*.test.ts\"",
     "build": "tsc && vite build",
     "build:server": "pnpm --dir server install --no-frozen-lockfile && pnpm --dir server run build",
     "build:all": "pnpm run build && pnpm run build:server && rm -rf server/dist/public && cp -r dist server/dist/public",

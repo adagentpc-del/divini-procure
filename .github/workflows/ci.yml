@@ -90,3 +90,51 @@ jobs:
             echo "Expected 100+ tables after a full apply-all.sql bootstrap, got $COUNT - schema likely did not apply cleanly." >&2
             exit 1
           fi
+
+  integration-tests:
+    name: Route/integration tests against a real database
+    runs-on: ubuntu-latest
+    # Phase 0 (ALFY2-adjacent stabilization pass): unlike the pure-function
+    # suite in `test`, these exercise the actual route -> authorization ->
+    # database boundary (see tests/integration/), starting with the
+    # agreement-signing P0 authorization fix. Requires a real Postgres, the
+    # real compiled server build, and the schema bootstrapped exactly like
+    # db-schema above.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: divini
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: divini_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U divini -d divini_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Apply schema (two passes, same as db-schema job)
+        env:
+          PGPASSWORD: ci-only-password
+        run: |
+          psql -h localhost -U divini -d divini_test -v ON_ERROR_STOP=1 -f db/apply-all.sql
+          psql -h localhost -U divini -d divini_test -v ON_ERROR_STOP=1 -f db/apply-all.sql
+
+      - name: Run integration tests
+        env:
+          DATABASE_URL: postgres://divini:ci-only-password@localhost:5432/divini_test
+          SESSION_SECRET: ci-only-session-secret-not-for-prod
+        run: npm run test:integration

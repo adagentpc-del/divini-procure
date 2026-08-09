@@ -7,6 +7,7 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { getAuth, requireUser } from "../auth.js";
 import { q, q1 } from "../pool.js";
+import { ForbiddenError, NotFoundError } from "../db.js";
 
 const h =
   (fn: (req: Request, res: Response) => Promise<unknown>) =>
@@ -22,6 +23,49 @@ async function getCompanyId(userId: string | null | undefined): Promise<string |
     [userId],
   );
   return row?.company_id ?? null;
+}
+
+/**
+ * Verify the caller is authorized to create a retainage record or lien waiver
+ * against `buildingId` as its `developerCompanyId`: the building's true
+ * owning company (resolved from the database, not trusted from the request
+ * body) must both be a company the caller is a member of AND match the
+ * `developerCompanyId` supplied - so a caller cannot fabricate a record
+ * against someone else's building by simply passing their own company id as
+ * developerCompanyId, and cannot claim someone else's company id either.
+ * Also confirms vendorCompanyId names a real company, rejecting malformed or
+ * fabricated ids outright rather than letting them insert. Admins bypass.
+ */
+async function assertCanCreateAgainstBuilding(
+  req: Request,
+  buildingId: string,
+  developerCompanyId: string,
+  vendorCompanyId: string,
+): Promise<void> {
+  const { userId, isAdmin } = getAuth(req);
+  const building = await q1<{ company_id: string }>(
+    `select company_id from buildings where id = $1`,
+    [buildingId],
+  );
+  if (!building) throw new NotFoundError("building not found");
+
+  const vendor = await q1<{ id: string }>(`select id from companies where id = $1`, [
+    vendorCompanyId,
+  ]);
+  if (!vendor) throw new NotFoundError("vendor company not found");
+
+  if (isAdmin) return;
+
+  if (building.company_id !== developerCompanyId) {
+    throw new ForbiddenError("developerCompanyId does not match this building's owning company");
+  }
+  const isDeveloperMember = await q1(
+    `select 1 from company_members where user_id = $1 and company_id = $2`,
+    [userId, developerCompanyId],
+  );
+  if (!isDeveloperMember) {
+    throw new ForbiddenError("not a member of this building's developer company");
+  }
 }
 
 function num(v: number | string | null | undefined, fallback = 0): number {
@@ -106,6 +150,7 @@ router.post(
     if (!buildingId || !vendorCompanyId || !developerCompanyId || contractAmountCents == null || retainagePct == null) {
       return res.status(400).json({ error: "buildingId, vendorCompanyId, developerCompanyId, contractAmountCents, retainagePct are required" });
     }
+    await assertCanCreateAgainstBuilding(req, buildingId, developerCompanyId, vendorCompanyId);
 
     const retainageHeldCents = Math.round(Number(contractAmountCents) * Number(retainagePct) / 100);
 
@@ -265,6 +310,7 @@ router.post(
     if (!buildingId || !vendorCompanyId || !developerCompanyId || !waiverType) {
       return res.status(400).json({ error: "buildingId, vendorCompanyId, developerCompanyId, waiverType are required" });
     }
+    await assertCanCreateAgainstBuilding(req, buildingId, developerCompanyId, vendorCompanyId);
 
     const waiver = await q1<any>(
       `INSERT INTO lien_waivers
@@ -296,11 +342,22 @@ router.patch(
   "/lien-waivers/:id",
   requireUser,
   h(async (req, res) => {
-    const { email } = getAuth(req);
+    const { userId, email, isAdmin } = getAuth(req);
+    const companyId = await getCompanyId(userId);
     const { status, storagePath, notes } = req.body ?? {};
 
-    const existing = await q1<any>(`SELECT id FROM lien_waivers WHERE id = $1`, [req.params.id]);
+    const existing = await q1<any>(
+      `SELECT id, vendor_company_id, developer_company_id FROM lien_waivers WHERE id = $1`,
+      [req.params.id],
+    );
     if (!existing) return res.status(404).json({ error: "lien waiver not found" });
+    if (
+      !isAdmin &&
+      companyId !== existing.vendor_company_id &&
+      companyId !== existing.developer_company_id
+    ) {
+      return res.status(403).json({ error: "forbidden" });
+    }
 
     const sets: string[] = [];
     const params: unknown[] = [];
@@ -310,6 +367,13 @@ router.patch(
     };
 
     if (status !== undefined) {
+      // Accepting a waiver is the paying party's (developer's) decision -
+      // mirrors retainage's approve_release restriction below.
+      if (status === "accepted" && !isAdmin && companyId !== existing.developer_company_id) {
+        return res
+          .status(403)
+          .json({ error: "only the developer company or admin can accept a lien waiver" });
+      }
       add("status", String(status));
       if (status === "submitted") add("submitted_by", email);
       if (status === "accepted") add("accepted_by", email);

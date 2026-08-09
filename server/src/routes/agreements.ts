@@ -66,6 +66,25 @@ async function assertMember(userId: string, companyId: string): Promise<void> {
   if (!ok) throw new ForbiddenError("not a member of this company");
 }
 
+/**
+ * True if the signed-in user is the intended counterparty on this agreement,
+ * matched by verified session email against the agreement's counterparty_email.
+ * The counterparty is often not (yet) a member of party_company_id - they may
+ * be an external signer with no account, or a brand new registrant - so this
+ * is a distinct authorization path from company membership, not a replacement
+ * for it. Never derived from anything client-supplied.
+ */
+function isCounterparty(authEmail: string | null, ag: Record<string, any>): boolean {
+  return (
+    !!authEmail &&
+    !!ag.counterparty_email &&
+    String(ag.counterparty_email).toLowerCase() === authEmail.toLowerCase()
+  );
+}
+
+/** States from which an agreement may still be signed. */
+const SIGNABLE_STATUSES = new Set(["sent", "viewed"]);
+
 /** Look up a company name (best effort). */
 async function companyName(companyId: string | null): Promise<string | null> {
   if (!companyId) return null;
@@ -294,7 +313,9 @@ router.get(
     } else {
       const ids = await userCompanyIds(auth.userId!);
       isParty = !!ag.party_company_id && ids.includes(ag.party_company_id);
-      if (!isParty) throw new ForbiddenError("not a party to this agreement");
+      const isCp = isCounterparty(auth.email, ag);
+      if (!isParty && !isCp) throw new ForbiddenError("not a party to this agreement");
+      isParty = isParty || isCp;
     }
 
     if (isParty && ag.status === "sent") {
@@ -361,8 +382,13 @@ router.post(
 );
 
 // ---------------------------------------------------------------------------
-// Sign: any signed-in user (the counterparty). Captures the typed signature,
-// signer identity, IP and user-agent, then marks the agreement signed.
+// Sign: only a party-company member, the matched counterparty (by verified
+// session email), or an admin may sign - never an arbitrary authenticated
+// user. Signer identity (email, company) is derived server-side from the
+// session and verified membership, never trusted from the request body. The
+// agreement must be in a signable state (sent/viewed) - a draft that was
+// never sent, or an agreement that is already signed/cancelled/expired,
+// cannot be (re-)signed, which also closes the signature-replay path.
 // ---------------------------------------------------------------------------
 router.post(
   "/agreements/:id/sign",
@@ -374,20 +400,43 @@ router.post(
     ]);
     if (!ag) throw new NotFoundError("agreement not found");
 
+    let signerCompanyId: string | null = null;
+    if (!auth.isAdmin) {
+      const ids = await userCompanyIds(auth.userId!);
+      const isParty = !!ag.party_company_id && ids.includes(ag.party_company_id);
+      const isCp = isCounterparty(auth.email, ag);
+      if (!isParty && !isCp) {
+        throw new ForbiddenError("not authorized to sign this agreement");
+      }
+      // Only attribute a company to the signature if the caller is actually a
+      // verified member of party_company_id - never trust a client-supplied
+      // signerCompanyId, and never attribute a company the caller merely
+      // claims via the request body.
+      if (isParty) signerCompanyId = ag.party_company_id;
+    } else {
+      // Admin signing on the record still only attributes a company that the
+      // admin can independently verify is the party company (not client-input).
+      signerCompanyId = ag.party_company_id ?? null;
+    }
+
+    if (!SIGNABLE_STATUSES.has(ag.status)) {
+      return res
+        .status(409)
+        .json({ error: `agreement is not signable from status '${ag.status}'` });
+    }
+
     const b = (req.body ?? {}) as Record<string, unknown>;
     const signerName = typeof b.signerName === "string" ? b.signerName.trim() : "";
     const signatureText = typeof b.signatureText === "string" ? b.signatureText.trim() : "";
-    const signerEmail =
-      (typeof b.signerEmail === "string" && b.signerEmail.trim()) || auth.email || null;
     const affirm = b.affirm === true || b.affirm === "true";
     if (!signerName) return res.status(400).json({ error: "signerName required" });
     if (!signatureText) return res.status(400).json({ error: "signatureText required" });
     if (!affirm) return res.status(400).json({ error: "affirmation required" });
 
-    const signerCompanyId =
-      typeof b.signerCompanyId === "string" && b.signerCompanyId.trim()
-        ? b.signerCompanyId.trim()
-        : null;
+    // Signer email is always the verified session identity, never a
+    // client-supplied value - this is the field that makes the signature
+    // attributable and prevents signing on another user's behalf.
+    const signerEmail = auth.email ?? null;
     const ip = clientIp(req);
     const userAgent = (req.headers["user-agent"] as string | undefined) ?? null;
 
@@ -395,9 +444,24 @@ router.post(
       user_id: auth.userId,
       affirmed: true,
       agreement_title: ag.title,
+      agreement_status_at_signing: ag.status,
       signed_via: "native",
       at: new Date().toISOString(),
     };
+
+    // Re-check status atomically at write time (status='signed' only fires
+    // once) so two near-simultaneous sign requests cannot both succeed.
+    const rows = await q(
+      `update agreements set status='signed', signed_at=now(), updated_at=now()
+         where id=$1 and status = any($2::text[])
+         returning *`,
+      [req.params.id, Array.from(SIGNABLE_STATUSES)],
+    );
+    if (rows.length === 0) {
+      return res
+        .status(409)
+        .json({ error: "agreement was already signed or is no longer signable" });
+    }
 
     const sig = await q(
       `insert into agreement_signatures
@@ -415,12 +479,6 @@ router.post(
         userAgent,
         JSON.stringify(audit),
       ],
-    );
-
-    const rows = await q(
-      `update agreements set status='signed', signed_at=now(), updated_at=now()
-         where id=$1 returning *`,
-      [req.params.id],
     );
 
     res.json({ agreement: rows[0], signature: sig[0] });
