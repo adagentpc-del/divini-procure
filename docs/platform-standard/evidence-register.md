@@ -229,3 +229,12 @@ Evidence references for PASS/PARTIAL controls, by section.
 |---|---|---|
 | S17-01 through S17-03 | Cross-reference | Every code change made in this session (Sections 05-16, `git log`) cross-checked against `applicability-register.md`'s CONDITIONAL rows for any fact that would change the applicability conclusion - none found |
 | S17-04 | Code | `server/src/routes/verification.ts` (independently re-derived the FCRA-N/A reasoning: first-party documents-on-file review, never a third-party consumer report) |
+
+## Section 18
+
+| Control ID | Evidence type | Reference |
+|---|---|---|
+| S18-01 | Command output (live, 2026-08-09) | `cd server && npx tsc --noEmit` → clean exit; `npm test` → `1..173`/`pass 173`/`fail 0`; two-pass `db/apply-all.sql` against fresh `divini_s18_test` → both `exit 0`, `select count(*) from pg_tables where schemaname='public'` → 161, `select count(*) from pg_constraint where contype='f' and confdeltype='a'` → 0, `select to_regclass('public.stripe_webhook_events')` → present; `cd server && npm run build` → clean; `npm run build` (frontend) → clean, `✓ built in 4.58s`; live restart + `curl -i http://localhost:8080/api/healthz` → `200 {"ok":true,"db":"ok"}` with `X-Request-Id` header present |
+| S18-02 | Cross-reference | `docs/platform-standard/risk-register.md` (all rows) against `docs/platform-standard/operator-actions.md` (OA-01 through OA-16) - every non-CLOSED risk maps to a named operator action or an explicitly-scoped future increment |
+| S18-03 | Document (new) | `docs/platform-standard/release-readiness.md` "Final certification" section |
+| S18-04 | Cross-reference | Every `**CLOSED**` row in `risk-register.md` traced to its corresponding detailed row in this file's per-section tables - no unsupported CLOSED claim found |

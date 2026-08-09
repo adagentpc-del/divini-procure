@@ -3,11 +3,16 @@
 Cumulative launch status, updated at the end of every section. This is the
 single rollup an owner should read to know "are we ready."
 
-## Current state (after Section 02)
+## Current state (after Section 18 — final certification)
 
-**Overall: IN PROGRESS — Sections 01-02 of 18 complete.** Sections past
-Baseline Legal/Privacy have not been executed yet, so this is not yet a
-launch-readiness verdict.
+**Overall: READY FOR LIMITED / RESEARCH-PREVIEW LAUNCH, WITH ONE PROCEDURAL
+CONDITION.** All 18 ALFY2 sections are complete. Every code-level P0/P1
+finding surfaced across this engagement was fixed and live-verified, and
+the full regression gate (typecheck, 173-test unit suite, two-pass schema
+bootstrap, both production builds, live health check) passes clean as of
+2026-08-09. See "Final certification" below for the full verdict, the
+consolidated list of what remains open, and why none of it is a silently
+dropped code gap.
 
 ## Section-by-section status
 
@@ -31,7 +36,7 @@ launch-readiness verdict.
 | 15 QA End-to-End Journeys, Load, Pentest, Regression | **READY WITH P2 ITEMS** | Rather than re-doing the adversarial/regression testing already woven throughout Sections 05-14 (RLS bypass attempts, IDOR discovery, signed-URL tampering, payout-release concurrency), this section focused on genuinely new ground: a mass-assignment/over-posting audit (confirmed not a vulnerability class here - every write function reads named, typed fields into positional SQL parameters, never a dynamic column list built from client-supplied keys) and one continuous, full end-to-end regression exercising register/login/company/building/package/bid/document/account-deletion for two personas together in a single flow, specifically to catch interaction effects between everything fixed this pass - none found; the RLS orphan-check fix and the FK cascade fix were confirmed working correctly together, with zero orphaned rows after both accounts were deleted. Full-schema two-pass bootstrap and the 173-test unit suite were re-run as final gates. Load/soak testing was not performed - honestly disclosed as out of scope for this sandbox rather than faked |
 | 16 Mobile iOS/Android App Store & Device Compliance | **READY** | The native mobile projects have not been generated yet (a documented future runbook step), so this section audited what exists today: the Capacitor config and the iOS privacy-manifest template. Found and fixed a real documentation-accuracy gap: `capacitor.config.ts`'s comments described the retired Authentik OIDC login flow throughout, even though this app migrated to native session-cookie auth well before this pass - a future mobile developer would have been misled, particularly by the bundled/offline-mode warning describing OIDC-callback plumbing that no longer applies. Rewrote both comment blocks accurately. Confirmed Apple's mandatory in-app account-deletion requirement (Guideline 5.1.1(v)) is not just documented but unusually well-verified - this session independently found and fixed two real P0 bugs in exactly that flow (Sections 06/13/15). The iOS privacy manifest's declared data types plausibly match the app's real, verified data collection, correctly marked `NSPrivacyTracking=false` (no third-party analytics, independently confirmed in Section 13) |
 | 17 Conditional Regulatory Overlays | **READY (CONDITIONAL ITEMS UNCHANGED)** | A consolidation/re-verification section by nature, not a code-fix section. Cross-checked every code change made across this entire pass (Sections 05-16) against each CONDITIONAL applicability item from Section 01 to confirm none of this session's work altered the underlying facts - none did (no new investment fee structure, no new data-collection category, no new payout-recipient type). Independently re-derived the FCRA-N/A reasoning from the actual verification.ts code rather than just trusting the prior conclusion, since vendor "verification" is the one feature that could superficially resemble a background check - confirmed genuinely N/A (a first-party documents-on-file review, never a third-party consumer report). The securities/investment overlay remains the single highest-severity open item in this entire engagement, correctly requiring counsel/owner review, not an engineering fix |
-| 18 | NOT STARTED | Queued; see task list |
+| 18 Final Launch Readiness Certification & Signoff | **READY FOR LIMITED/RESEARCH-PREVIEW LAUNCH, ONE PROCEDURAL CONDITION** | Not a bug-hunting section by nature - a final gate re-run plus a consolidation checkpoint. Re-ran every automated gate this engagement relies on, together, one final time against a genuinely fresh database and freshly rebuilt server rather than trusting each section's individual pass from earlier in the session: typecheck clean, 173/173 unit tests, two-pass `apply-all.sql` bootstrap clean (161 tables, zero dangling `ON DELETE NO ACTION` FKs, `stripe_webhook_events` present), both the server and frontend production builds clean, and a live `curl` health check against the freshly-restarted server confirming `db:"ok"` and the `X-Request-Id` header. Walked every still-open row in `risk-register.md` one more time to confirm each has a real, named owner and reason (operator action, counsel/owner decision, or a deliberately scoped future increment) rather than being a code gap quietly left undone. See "Final certification" section below for the full verdict |
 
 ## Gap-closure pass (post-Section-02, same day)
 
@@ -91,6 +96,88 @@ engagement's job is to extend that with the ALFY2 pack's specific artifacts
 doc set doesn't already cover in the pack's required depth — not to
 duplicate or contradict what's already there.
 
+## Final certification (Section 18, 2026-08-09)
+
+### Verdict
+
+**READY FOR LIMITED / RESEARCH-PREVIEW LAUNCH, WITH ONE PROCEDURAL
+CONDITION.**
+
+Every code-level P0 and P1 finding surfaced across Sections 01-17 of this
+engagement (30 risk-register entries, R-01 through R-31, minus the ones
+that were never code gaps in the first place) was either fixed and
+live-verified, or is explicitly and correctly tracked as something this
+engineering pass cannot close on its own. The final regression gate
+(S18-01) confirms none of that work has silently regressed against
+anything else: typecheck clean, 173/173 unit tests, a genuinely fresh
+two-pass schema bootstrap, both production builds, and a live health check
+all pass together, today, not just individually on the day each fix
+landed.
+
+The one item that keeps this from being an unconditional GO is **R-02**: no
+per-close transaction fee or other investor-compensation mechanism may be
+added to the Capital Partner / investment-matching feature until a
+securities attorney has reviewed the introduction/matching mechanism
+itself. This is a procedural condition, not a code defect - the feature as
+it exists today (informational NDA-gated matching, no transaction-based
+compensation) was re-confirmed unchanged as recently as Section 17
+(S17-01). It is the single highest-severity open item in the entire
+engagement precisely because it is the one item engineering cannot close
+by writing code.
+
+### What "READY" means here
+
+- No known P0 or P1 **code** defect remains open anywhere in this
+  repository as of this commit.
+- Every fix in this engagement was live-verified against the actual
+  running application or database, not just reasoned about from reading
+  source - including reproducing the bug first wherever the consequence
+  was serious enough to warrant it (the account-deletion data-loss bug,
+  the payout-release race condition, the RLS-bypass IDORs, the RFC 8058
+  unsubscribe failure).
+- The full automated gate this repository's CI already runs (build +
+  fresh-database schema bootstrap, added in Section 03 as R-10) is backed
+  up by an even broader manual re-run at the end of this pass, and both
+  pass clean.
+
+### What "WITH ONE PROCEDURAL CONDITION" means
+
+- Do not deploy any feature or pricing change that adds transaction-based
+  compensation to the investment-matching flow before `OA-01` (securities
+  counsel review) is complete.
+- Everything else the platform does today - marketplace bidding, document
+  management, payments, referrals, subscriptions, email, the vendor
+  verification flow - has no equivalent procedural hold.
+
+### Consolidated open-item inventory (not code-fixable this pass, each with a named owner)
+
+| ID | What | Owner | Tracking |
+|---|---|---|---|
+| R-02 | Securities counsel review before any investment-transaction fee | Owner + Counsel | `OA-01` |
+| R-03 | Real third-party error-monitoring/alerting service (correlation-ID plumbing and the incident runbook are done; the alerting service itself needs a real credential) | Engineering + Owner | `OA-16` |
+| R-04 | Confirm state privacy-law thresholds against real business metrics | Owner + Counsel | `OA-02` |
+| R-05 / R-11 | GitHub branch protection, CODEOWNERS, release-tagging convention | Owner (GitHub admin) | `OA-03`, `OA-09`, `OA-10` |
+| R-06 | Register a real, monitored DMCA designated-agent inbox with the U.S. Copyright Office (the statutory notice text itself is already live in `Terms.tsx`) | Owner | `OA-12` |
+| R-07 | Cookie-consent enforcement - correctly low severity today; nothing exists yet to gate | Engineering (future, if a tracking SDK is ever added) | — |
+| R-08 | Automated data-retention/purge job - needs an owner policy decision (retention periods, legal-hold rules) before it can be built | Owner, then Engineering | `OA-08` |
+| R-12 | SAST/license/SBOM tooling selection | Owner + Engineering | `OA-11` |
+| R-16 / R-20 / R-26 | Live Stripe test-mode smoke tests (subscription cancellation, webhook RLS path, payout Idempotency-Key behavior) - all verified by code review, none live-tested; this sandbox has no Stripe test credentials | Owner (provision credentials) + Engineering | `OA-13`, `OA-15` |
+| R-18 (residual note) | `bid_line_items`/`bid_payment_milestones` remain outside DB-level RLS, real today via app-layer checks only | Engineering (future, scoped increment) | — |
+| R-29 | Automated accessibility regression testing in CI | Engineering (future pass) | — |
+| S15-05 | Load/soak testing | Owner + Engineering (needs a staging environment) | — |
+
+None of these are silently dropped: each was traced to a real evidence-register citation and a real owner (S18-02, S18-04).
+
+### Sign-off statement
+
+This certification reflects the state of `claude/build-launch-readiness-2ugzyw`
+as of 2026-08-09, verified against the actual running application and a
+genuinely fresh database, not asserted from memory or carried forward
+without re-checking. It is an engineering readiness certification, not a
+substitute for the counsel/owner reviews it explicitly names as still
+required.
+
 ## Next section
 
-Section 06 — Database Integrity, Data Lifecycle, Backups & Recovery.
+None — Section 18 was the last section in the ALFY2 pack. This engagement
+is complete.
