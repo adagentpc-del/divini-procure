@@ -4804,3 +4804,7 @@ COMMIT;
 -- Phase 0 item 17: minimal durable background job queue (see the file's
 -- own header for what moved onto it and why).
 \i db/schema-jobs.sql
+
+-- Phase 0 item 19: the first real write path for the existing (previously
+-- write-less) reviews table - see the file's own header.
+\i db/schema-reviews.sql
