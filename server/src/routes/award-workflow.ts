@@ -35,6 +35,7 @@ import { resolveAndRecordFee, maybeRecordReferralCommission } from "../lib/monet
 import { notifyCompanyMembers } from "../lib/notify.js";
 import { enqueueJob } from "../lib/jobs.js";
 import { contractDiscrepancyCents as contractDiscrepancyCentsFn } from "../lib/financial-model.js";
+import { recomputeInvoicePaidStatus } from "../lib/invoice-status.js";
 
 // Async handler wrapper that funnels errors to the error middleware.
 const h =
@@ -560,16 +561,29 @@ router.post(
     const payerType: string | null = req.body?.payerType ? String(req.body.payerType) : null;
     const notes: string | null = req.body?.notes ? String(req.body.notes) : null;
 
+    // Phase 1 P1-11: an authorization may optionally link to the invoice it
+    // pays (validated against the SAME PO - never let a caller attach an
+    // unrelated invoice), so its release can drive that invoice's
+    // paid/partially_paid status (see below).
+    let invoiceId: string | null = req.body?.invoiceId ? String(req.body.invoiceId) : null;
+    if (invoiceId) {
+      const invoice = await q1<any>(`select purchase_order_id from invoices where id = $1`, [invoiceId]);
+      if (!invoice) return res.status(404).json({ error: "invoice not found" });
+      if (invoice.purchase_order_id !== po.id) {
+        return res.status(400).json({ error: "this invoice does not belong to this purchase order" });
+      }
+    }
+
     // Insert the base authorization row first (placeholder fee columns), so
     // every fee resolution below can be tied to a real payment_authorization_id
     // from the start - this keeps the ledger accrual idempotent per fee type
     // and avoids ever writing an orphaned accrual row.
     let row = await q1<any>(
       `insert into payment_authorizations
-         (purchase_order_id, amount_cents, fee_percentage, fee_cents, payer_type, status, notes)
-       values ($1,$2,$3,$4,$5,'pending',$6)
+         (purchase_order_id, amount_cents, fee_percentage, fee_cents, payer_type, status, notes, invoice_id)
+       values ($1,$2,$3,$4,$5,'pending',$6,$7)
        returning *`,
-      [po.id, amountCents, manualFeePercentage, manualFeeCents, payerType, notes],
+      [po.id, amountCents, manualFeePercentage, manualFeeCents, payerType, notes, invoiceId],
     );
 
     let revenueId: string | null = null;
@@ -723,6 +737,25 @@ router.patch(
       return res.status(400).json({ error: "no updatable fields supplied" });
     }
     vals.push(pay.id);
+
+    // Phase 1 P1-11: 'released' is the one payment_authorizations status
+    // that means actually PAID (see lib/financial-model.ts paidCents()) - if
+    // this authorization is linked to an invoice, recompute that invoice's
+    // paid/partially_paid status atomically with the release, inside the
+    // same transaction, so the two can never disagree.
+    const releasing = status !== undefined && String(status) === "released" && !!pay.invoice_id;
+    if (releasing) {
+      const result = await withTransaction(async (tx) => {
+        const row = await tx.q1<any>(
+          `update payment_authorizations set ${sets.join(", ")} where id = $${i} returning *`,
+          vals,
+        );
+        await recomputeInvoicePaidStatus(tx, pay.invoice_id);
+        return row;
+      });
+      return res.json({ paymentAuthorization: result });
+    }
+
     const row = await q1<any>(
       `update payment_authorizations set ${sets.join(", ")} where id = $${i} returning *`,
       vals,

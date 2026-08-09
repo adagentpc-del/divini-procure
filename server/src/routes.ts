@@ -119,6 +119,7 @@ import marketplaceSearchRouter from "./routes/marketplace-search.js";
 import budgetRouter from "./routes/budget.js";
 import bidRevisionsRouter from "./routes/bid-revisions.js";
 import invoicesRouter from "./routes/invoices.js";
+import paymentsRouter from "./routes/payments.js";
 // ---- Monetization V2 (flag-gated): bid credits + verification gate -----------
 import { PROCURE_MONETIZATION_V2 } from "./config.js";
 import { getBidCredits, consumeBidCredit } from "./lib/bidCredits.js";
@@ -238,6 +239,7 @@ router.use(marketplaceSearchRouter);
 router.use(budgetRouter);
 router.use(bidRevisionsRouter);
 router.use(invoicesRouter);
+router.use(paymentsRouter);
 
 // ---- health ----------------------------------------------------------------
 router.get("/healthz", async (_req, res) => {

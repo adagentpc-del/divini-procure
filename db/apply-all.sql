@@ -4833,3 +4833,7 @@ COMMIT;
 
 -- Phase 1 P1-10: invoices / payment applications - see the file's own header.
 \i db/schema-invoices.sql
+
+-- Phase 1 P1-11: payment lifecycle (platform release + external record) -
+-- see the file's own header.
+\i db/schema-payments.sql
