@@ -168,3 +168,13 @@ Evidence references for PASS/PARTIAL controls, by section.
 | S11-04 | Code | `src/pages/Accessibility.tsx` cross-referenced against S11-01/S11-02/S11-03's actual implementations |
 | S11-05 | Calculation | Hand-computed WCAG relative-luminance contrast from `src/theme.css`'s hex values: `--muted` (#6b655c) on white ≈ 6.16:1; on `--ivory` (#f7f4ee) ≈ 5.61:1 - both clear the 4.5:1 AA threshold |
 | S11-06 | Command output | `grep -rn "axe\|lighthouse\|pa11y" package.json .github/workflows/*.yml` → 0 matches; `grep -n "playwright" package.json` → 0 matches |
+
+## Section 12
+
+| Control ID | Evidence type | Reference |
+|---|---|---|
+| S12-01 | Command output | `grep -n "role.*owner\|role.*admin" server/src/db.ts` → 3 matches, all inside `transferCompanyOwnerEmail`; `grep -rn "isOwner" src --include=*.tsx` → every match traced to the buyer/vendor building-ownership meaning, never within-company role |
+| S12-02 | Code | `server/src/routes/verification.ts`, `investment.ts`, `payouts.ts`, `change-orders.ts` (`async function audit(...)`) |
+| S12-03 | Code | `server/src/routes/products.ts` (`shapeForViewer` applied via `.map()` in the list endpoint at line ~203, and directly in the detail endpoint at line ~432) |
+| S12-04 | Command output | `grep -rn "logo_url" server/src --include=*.ts` → 0 matches (never read or written server-side); `grep -rn "logo_url" src --include=*.tsx` → 1 match, a type declaration only, never rendered |
+| S12-05 | Command output | `find server/src/routes -iname "*calendar*" -o -iname "*video*"` → 0 matches |
