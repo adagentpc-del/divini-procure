@@ -5,9 +5,11 @@ import { useFeatures } from '../lib/features';
 import {
   getPackage, getLineItems, addLineItem, deleteLineItem,
   getBidsForPackage, submitPricedBid, getQuestions, askQuestion, answerQuestion,
+  getPackageFinancialSummary,
 } from '../lib/db';
 import DocumentPanel from '../components/DocumentPanel';
 import FeeBadge from '../components/FeeBadge';
+import { PackageFinancialSummaryPanel } from '../components/FinancialSummaryPanel';
 import ExistingRelationshipCheckbox from '../components/ExistingRelationshipCheckbox';
 import { apiGet, apiSend } from '../lib/api';
 import {
@@ -23,6 +25,7 @@ export default function PackageDetail() {
   const { company } = useAuth();
   const { isOn } = useFeatures();
   const [p, setP] = useState<any>(null);
+  const [financials, setFinancials] = useState<any>(null);
   const [items, setItems] = useState<any[]>([]);
   const [bids, setBids] = useState<any[]>([]);
   const [questions, setQuestions] = useState<any[]>([]);
@@ -86,6 +89,14 @@ export default function PackageDetail() {
     }
   }
   useEffect(() => { load(); }, [id]);
+
+  // Financial summary is developer-only (matches the API's own
+  // authorization) and re-fetched whenever the package or ownership
+  // resolves - the backend is the source of truth, never computed here.
+  useEffect(() => {
+    if (!id || !isOwner) { setFinancials(null); return; }
+    getPackageFinancialSummary(id).then(setFinancials).catch(() => setFinancials(null));
+  }, [id, isOwner]);
 
   async function loadPublicationExtras(packageId: string, ownerCompanyId: string) {
     try {
@@ -199,6 +210,8 @@ export default function PackageDetail() {
           </div>
         )}
       </div>
+
+      {isOwner && financials && <PackageFinancialSummaryPanel summary={financials} />}
 
       {/* Marketplace publication (owner only) */}
       {isOwner && (

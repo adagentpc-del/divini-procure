@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import { useFeatures } from '../lib/features';
-import { getBuilding, getPackages, createPackage } from '../lib/db';
+import { getBuilding, getPackages, createPackage, getBuildingFinancialSummary } from '../lib/db';
 import DocumentPanel from '../components/DocumentPanel';
+import { ProjectFinancialSummaryPanel } from '../components/FinancialSummaryPanel';
 
 const CATEGORIES = ['Concrete', 'Steel', 'Electrical', 'Plumbing', 'HVAC', 'Millwork', 'Cabinetry', 'Doors', 'Drapery', 'Flooring', 'Windows', 'Glazing', 'Lighting', 'Furniture', 'Signage', 'Security', 'Landscaping', 'Roofing', 'Elevators', 'Fire Protection'];
 
@@ -14,6 +15,7 @@ export default function BuildingDetail() {
   const { isOn } = useFeatures();
   const [b, setB] = useState<any>(null);
   const [pkgs, setPkgs] = useState<any[]>([]);
+  const [financials, setFinancials] = useState<any>(null);
   const [adding, setAdding] = useState(false);
   const [cat, setCat] = useState(CATEGORIES[0]);
   const [deadline, setDeadline] = useState('');
@@ -27,6 +29,14 @@ export default function BuildingDetail() {
     setPkgs(await getPackages(id));
   }
   useEffect(() => { load(); }, [id]);
+
+  // Financial summary is developer-only (matches the API's own
+  // authorization) and re-fetched after any action on this page that could
+  // change it - the backend is the source of truth, never computed here.
+  useEffect(() => {
+    if (!id || !isOwner) { setFinancials(null); return; }
+    getBuildingFinancialSummary(id).then(setFinancials).catch(() => setFinancials(null));
+  }, [id, isOwner]);
 
   async function add(e: React.FormEvent) {
     e.preventDefault();
@@ -51,6 +61,8 @@ export default function BuildingDetail() {
         </div>
         {isOwner && <button className="btn primary" onClick={() => setAdding(a => !a)}>{adding ? 'Cancel' : '+ New bid package'}</button>}
       </div>
+
+      {isOwner && financials && <ProjectFinancialSummaryPanel summary={financials} />}
 
       {adding && (
         <div className="card" style={{ marginBottom: 14 }}>

@@ -96,6 +96,12 @@ export async function getPackages(buildingId: string) {
 export async function createPackage(buildingId: string, p: { category: string; status?: string; deadline?: string; budget_min?: number; budget_max?: number; }) {
   return apiSend('POST', `/buildings/${encodeURIComponent(buildingId)}/packages`, p);
 }
+export async function getBuildingFinancialSummary(buildingId: string) {
+  return apiGet<any>(`/buildings/${encodeURIComponent(buildingId)}/financial-summary`);
+}
+export async function getPackageFinancialSummary(packageId: string) {
+  return apiGet<any>(`/packages/${encodeURIComponent(packageId)}/financial-summary`);
+}
 export async function getPackage(id: string) {
   return apiGet<any>(`/packages/${encodeURIComponent(id)}`);
 }
