@@ -4780,3 +4780,7 @@ COMMIT;
 -- commission rails so the same commission cannot be paid twice (see the
 -- file's own header for the full writeup).
 \i db/schema-referral-commission-dedup.sql
+
+-- Phase 0 financial source-of-truth fix: link retainage records to their
+-- canonical Purchase Order where one exists (see the file's own header).
+\i db/schema-retainage-po-link.sql

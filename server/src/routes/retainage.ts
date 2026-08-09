@@ -154,12 +154,37 @@ router.post(
 
     const retainageHeldCents = Math.round(Number(contractAmountCents) * Number(retainagePct) / 100);
 
+    // Financial source-of-truth fix (Phase 0): where a real, awarded
+    // Purchase Order exists for this package + vendor, link this retainage
+    // record to it rather than leaving contract_amount_cents as an
+    // unverifiable freehand number. Never blocks creation on a mismatch
+    // (a retainage record can legitimately cover a different, e.g. partial,
+    // amount) - only surfaces it so the caller can see the two numbers
+    // disagree, rather than silently trusting whichever was typed in.
+    let purchaseOrderId: string | null = null;
+    let contractAmountMismatch: { poAmountCents: number } | null = null;
+    if (packageId) {
+      const po = await q1<{ id: string; amount_cents: number | string | null }>(
+        `select id, amount_cents from purchase_orders
+          where package_id = $1 and vendor_company_id = $2
+          order by created_at desc limit 1`,
+        [packageId, vendorCompanyId],
+      );
+      if (po) {
+        purchaseOrderId = po.id;
+        const poCents = po.amount_cents == null ? null : Number(po.amount_cents);
+        if (poCents != null && poCents !== Number(contractAmountCents)) {
+          contractAmountMismatch = { poAmountCents: poCents };
+        }
+      }
+    }
+
     const record = await q1<any>(
       `INSERT INTO retainage_records
          (building_id, package_id, vendor_company_id, developer_company_id,
           contract_amount_cents, retainage_pct, retainage_held_cents,
-          release_trigger, milestone_required, notes, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'holding')
+          release_trigger, milestone_required, notes, status, purchase_order_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'holding',$11)
        RETURNING *`,
       [
         buildingId,
@@ -172,10 +197,11 @@ router.post(
         releaseTrigger ?? null,
         milestoneRequired ?? null,
         notes ?? null,
+        purchaseOrderId,
       ],
     );
 
-    res.status(201).json({ record });
+    res.status(201).json({ record, ...(contractAmountMismatch ? { contractAmountMismatch } : {}) });
   }),
 );
 
