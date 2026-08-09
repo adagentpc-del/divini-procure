@@ -84,7 +84,16 @@ router.get(
   "/stages",
   requireUser,
   h(async (req, res) => {
-    const companyId = req.query.companyId ? String(req.query.companyId) : null;
+    const auth = getAuth(req);
+    const rawCompanyId = req.query.companyId ? String(req.query.companyId) : null;
+    // IDOR fix: only include this company's own custom stage definitions if
+    // the caller is actually a member (or admin) - otherwise silently fall
+    // back to the global default set below, same as if no companyId were
+    // supplied, rather than leaking another company's custom labels.
+    const companyId =
+      rawCompanyId && (auth.isAdmin || (await isMemberOfCompany(auth.userId!, rawCompanyId)))
+        ? rawCompanyId
+        : null;
     const profileType = String(req.query.profileType || "vendor");
     if (!PROFILE_TYPES.has(profileType)) {
       return res.status(400).json({ error: "profileType must be vendor or developer" });
@@ -115,7 +124,14 @@ router.get(
   "/loss-reasons",
   requireUser,
   h(async (req, res) => {
-    const companyId = req.query.companyId ? String(req.query.companyId) : null;
+    const auth = getAuth(req);
+    const rawCompanyId = req.query.companyId ? String(req.query.companyId) : null;
+    // IDOR fix: same as /stages above - only include this company's own
+    // custom loss-reason labels if the caller is a member (or admin).
+    const companyId =
+      rawCompanyId && (auth.isAdmin || (await isMemberOfCompany(auth.userId!, rawCompanyId)))
+        ? rawCompanyId
+        : null;
     const rows = await q(
       `select * from pipeline_loss_reasons
         where active = true and (organization_id is null or organization_id = $1)
@@ -131,7 +147,14 @@ router.get(
   "/sources",
   requireUser,
   h(async (req, res) => {
-    const companyId = req.query.companyId ? String(req.query.companyId) : null;
+    const auth = getAuth(req);
+    const rawCompanyId = req.query.companyId ? String(req.query.companyId) : null;
+    // IDOR fix: same as /stages above - only include this company's own
+    // custom lead-source labels if the caller is a member (or admin).
+    const companyId =
+      rawCompanyId && (auth.isAdmin || (await isMemberOfCompany(auth.userId!, rawCompanyId)))
+        ? rawCompanyId
+        : null;
     const rows = await q(
       `select * from pipeline_sources
         where active = true and (organization_id is null or organization_id = $1)
