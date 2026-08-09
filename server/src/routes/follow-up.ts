@@ -137,7 +137,16 @@ router.get(
   "/workflows",
   requireUser,
   h(async (req, res) => {
-    const companyId = req.query.companyId ? String(req.query.companyId) : null;
+    const auth = getAuth(req);
+    const rawCompanyId = req.query.companyId ? String(req.query.companyId) : null;
+    // IDOR fix: only include this company's own custom workflow definitions
+    // (and their step-by-step automation rules) if the caller is a member
+    // (or admin) - otherwise fall back to global-only, same as omitting
+    // companyId, rather than leaking another company's private workflows.
+    const companyId =
+      rawCompanyId && (auth.isAdmin || (await isMemberOfCompany(auth.userId!, rawCompanyId)))
+        ? rawCompanyId
+        : null;
     const workflows = await q<any>(
       `select * from follow_up_workflows
         where active = true and (organization_id is null or organization_id = $1)

@@ -123,7 +123,18 @@ router.get(
   "/templates",
   requireUser,
   h(async (req, res) => {
-    const companyId = req.query.companyId ? String(req.query.companyId) : null;
+    const auth = getAuth(req);
+    const rawCompanyId = req.query.companyId ? String(req.query.companyId) : null;
+    // IDOR fix: only include this company's own custom scope templates if
+    // the caller is a member (or admin) - otherwise fall back to
+    // global-only, same as omitting companyId, rather than leaking another
+    // company's private templates. The very next route (GET /templates/:id)
+    // and every other route in this file already had this check; this list
+    // route was the one outlier.
+    const companyId =
+      rawCompanyId && (auth.isAdmin || (await isMemberOfCompany(auth.userId!, rawCompanyId)))
+        ? rawCompanyId
+        : null;
     const category = req.query.category ? String(req.query.category) : null;
     const conditions = ["(t.organization_id is null or t.organization_id = $1)", "t.active = true"];
     const params: unknown[] = [companyId];

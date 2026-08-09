@@ -178,3 +178,15 @@ Evidence references for PASS/PARTIAL controls, by section.
 | S12-03 | Code | `server/src/routes/products.ts` (`shapeForViewer` applied via `.map()` in the list endpoint at line ~203, and directly in the detail endpoint at line ~432) |
 | S12-04 | Command output | `grep -rn "logo_url" server/src --include=*.ts` → 0 matches (never read or written server-side); `grep -rn "logo_url" src --include=*.tsx` → 1 match, a type declaration only, never rendered |
 | S12-05 | Command output | `find server/src/routes -iname "*calendar*" -o -iname "*video*"` → 0 matches |
+
+## Section 13
+
+| Control ID | Evidence type | Reference |
+|---|---|---|
+| S13-01 | Command output | `grep -rln "google-analytics\|gtag\|mixpanel\|segment\.io\|amplitude\|posthog" src` → 0 matches |
+| S13-02 | Code | `server/src/routes/analytics.ts` (admin-only data route vs. the two stateless `requireUser` policy-evaluation routes) |
+| S13-03 | Code (new) | `server/src/routes/pipeline.ts` (`/stages`, `/loss-reasons`, `/sources` - membership check added) |
+| S13-03 | Command output (live) | Seeded `pipeline_loss_reasons`/`pipeline_sources` rows for a victim company with `CONFIDENTIAL: ...` labels; an unrelated authenticated user's `GET .../loss-reasons?companyId=<victim>` and `.../sources?companyId=<victim>` both returned the confidential rows pre-fix, and correctly returned only global defaults post-fix |
+| S13-04 | Code (new) | `server/src/routes/follow-up.ts` (`/workflows`), `server/src/routes/scope-builder.ts` (`/templates`) - membership checks added, matching every sibling route in each file |
+| S13-04 | Command output (live) | Seeded a victim company's `follow_up_workflows` row ("CONFIDENTIAL: internal escalation workflow") and `scope_templates` row ("CONFIDENTIAL: proprietary RFP template"); an unrelated authenticated user's requests to both endpoints with `companyId=<victim>` returned only global defaults post-fix, confirming the leak is closed |
+| S13-04 | Command output | Full 173-test suite re-verified clean after all 5 fixes |
