@@ -74,6 +74,7 @@ const BUYER_SECTIONS: Section[] = [
     ['/payout-settings',  'Payout Settings', '＄'],
     ['/my-payouts',       'My Payouts',      '◫'],
     ['/messaging-policy', 'Messaging Policy','✉'],
+    ['/api-keys',         'API Keys',        '⚿'],
     ['/profile',          'Company',         '⚙'],
   ]},
 ];
@@ -119,6 +120,7 @@ const VENDOR_SECTIONS: Section[] = [
     ['/payout-settings', 'Payout Settings', '＄'],
     ['/my-payouts',      'My Payouts',      '◫'],
     ['/messaging-policy','Messaging Policy','✉'],
+    ['/api-keys',        'API Keys',        '⚿'],
     ['/profile',         'Profile',         '☺'],
   ]},
 ];
@@ -154,6 +156,7 @@ const INVESTOR_SECTIONS: Section[] = [
     ['/payout-settings', 'Payout Settings', '＄'],
     ['/my-payouts',      'My Payouts',      '◫'],
     ['/messaging-policy','Messaging Policy','✉'],
+    ['/api-keys',        'API Keys',        '⚿'],
     ['/profile',         'Profile',         '⚙'],
   ]},
 ];

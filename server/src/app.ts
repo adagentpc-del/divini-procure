@@ -10,10 +10,10 @@ import morgan from "morgan";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { authMiddleware } from "./auth.js";
+import { authMiddleware, requireApiKeyWriteScope } from "./auth.js";
 import router, { errorHandler } from "./routes.js";
 import { getAllowedOrigins, IS_PROD, PUBLIC_APP_URL } from "./config.js";
-import { authRateLimit, apiRateLimit } from "./lib/rateLimit.js";
+import { authRateLimit, apiRateLimit, apiKeyRateLimit } from "./lib/rateLimit.js";
 
 const app: Express = express();
 app.set("trust proxy", 1);
@@ -127,8 +127,16 @@ app.use(
 app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 
-// Native session verification - stashes verified claims on req.
+// Native session verification - stashes verified claims on req. Also
+// authenticates developer-platform API keys (Authorization: Bearer
+// dvp_live_...) as their creating user - see auth.ts's authMiddleware().
 app.use(authMiddleware());
+
+// Developer API platform: a read-only API key may only make safe
+// (GET/HEAD/OPTIONS) requests platform-wide - see auth.ts's
+// requireApiKeyWriteScope() doc comment. No-op for session-cookie
+// requests (apiKey is only ever set when a key authenticated the call).
+app.use(requireApiKeyWriteScope);
 
 // Tight per-IP rate limit on the auth surface (login/register/forgot/resend/
 // verify) to blunt credential-stuffing and email-bomb abuse. Mounted before the
@@ -139,6 +147,10 @@ app.use("/api/auth", authRateLimit);
 // apiRateLimit's own doc comment. Mounted after the tighter auth-specific
 // limiter above so /api/auth/* is still governed by its own stricter rule.
 app.use("/api", apiRateLimit);
+
+// Developer API platform: additional per-key limit, on top of the
+// general backstop above - see apiKeyRateLimit's own doc comment.
+app.use("/api", apiKeyRateLimit());
 
 // API
 app.use("/api", router);

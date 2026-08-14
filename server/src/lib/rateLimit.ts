@@ -7,6 +7,7 @@
  * production, front it with an edge/WAF limiter or a shared store. Zero em dashes.
  */
 import type { Request, Response, NextFunction } from "express";
+import { getAuth } from "../auth.js";
 
 type Bucket = { count: number; resetAt: number };
 
@@ -154,6 +155,45 @@ export function llmRateLimit(opts: { max?: number; windowMs?: number } = {}) {
       const retrySec = Math.max(1, Math.ceil((b.resetAt - now) / 1000));
       res.setHeader("Retry-After", String(retrySec));
       return res.status(429).json({ error: "LLM rate limit exceeded. Please try again later." });
+    }
+    next();
+  };
+}
+
+/**
+ * Developer API platform limiter: per-API-key (not per-IP), since many
+ * different real integrations can legitimately share one server's egress
+ * IP. Deliberately a no-op for ordinary session-cookie requests (apiKey
+ * is only set by an API-key-authenticated call) - those stay governed
+ * solely by the general apiRateLimit backstop above, so this never
+ * double-throttles normal browser traffic. 120 requests/key/minute is
+ * generous for a real integration poll loop while still capping runaway
+ * scripted misuse of a leaked key.
+ */
+export function apiKeyRateLimit(opts: { max?: number; windowMs?: number } = {}) {
+  const { max = 120, windowMs = 60_000 } = opts;
+  const buckets = new Map<string, Bucket>();
+
+  function sweep(now: number) {
+    if (buckets.size < 5000) return;
+    for (const [k, b] of buckets) if (b.resetAt <= now) buckets.delete(k);
+  }
+
+  return function apiKeyRateLimitMw(req: Request, res: Response, next: NextFunction) {
+    const apiKeyId = getAuth(req).apiKey?.id;
+    if (!apiKeyId) return next();
+    const now = Date.now();
+    sweep(now);
+    let b = buckets.get(apiKeyId);
+    if (!b || b.resetAt <= now) {
+      b = { count: 0, resetAt: now + windowMs };
+      buckets.set(apiKeyId, b);
+    }
+    b.count += 1;
+    if (b.count > max) {
+      const retrySec = Math.max(1, Math.ceil((b.resetAt - now) / 1000));
+      res.setHeader("Retry-After", String(retrySec));
+      return res.status(429).json({ error: "API key rate limit exceeded. Please slow down." });
     }
     next();
   };

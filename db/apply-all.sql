@@ -4861,3 +4861,9 @@ COMMIT;
 -- Plan room activity tracking: who viewed/downloaded, developer-facing
 -- only (competitive gap closure) - see the file's own header.
 \i db/schema-package-activity.sql
+
+-- Developer API platform: personal-access-token-style API keys, scoped
+-- read/write access (competitive gap closure) - see the file's own
+-- header for why this is safe (a key never exceeds its creator's own
+-- permissions).
+\i db/schema-api-keys.sql

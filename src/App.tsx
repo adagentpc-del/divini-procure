@@ -91,6 +91,7 @@ const AdminAudit = lazy(() => import('./pages/AdminAudit'));
 const Reports = lazy(() => import('./pages/Reports'));
 const AdminAnalytics = lazy(() => import('./pages/AdminAnalytics'));
 const MessagingPolicy = lazy(() => import('./pages/MessagingPolicy'));
+const ApiKeys = lazy(() => import('./pages/ApiKeys'));
 const AdminCsvImport = lazy(() => import('./pages/AdminCsvImport'));
 const MyInvites = lazy(() => import('./pages/MyInvites'));
 const PayoutSettings = lazy(() => import('./pages/PayoutSettings'));
@@ -212,6 +213,7 @@ function Routed() {
         <Route path="/event-spaces" element={<Gate><EventSpaces /></Gate>} />
         <Route path="/reports" element={<Gate><Reports /></Gate>} />
         <Route path="/messaging-policy" element={<Gate><MessagingPolicy /></Gate>} />
+        <Route path="/api-keys" element={<Gate><ApiKeys /></Gate>} />
         <Route path="/admin/features" element={<SuperAdminGate><AdminFeatures /></SuperAdminGate>} />
         <Route path="/admin/invites" element={<SuperAdminGate><AdminInvites /></SuperAdminGate>} />
         <Route path="/admin/discount-codes" element={<SuperAdminGate><AdminDiscountCodes /></SuperAdminGate>} />

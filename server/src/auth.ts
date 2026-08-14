@@ -19,15 +19,23 @@ import { getAdminAllowedEmails, SESSION_COOKIE } from "./config.js";
 import { verifySession, type SessionClaims } from "./lib/native-auth.js";
 import { isSessionActive } from "./db.js";
 import { runWithRequestContext } from "./lib/requestContext.js";
+import { looksLikeApiKey, verifyApiKey, touchApiKeyLastUsed, type ApiKeyScope } from "./lib/api-keys.js";
 
 export interface AuthResult {
   userId: string | null;
   email: string | null;
   isAdmin: boolean;
   claims: SessionClaims | null;
+  /** Set only when this request authenticated via an API key (developer
+   * platform, competitive gap closure) rather than a session cookie/JWT.
+   * Every route continues to see the SAME userId/email/isAdmin either
+   * way - a key authenticates as its creating user, nothing more - this
+   * is only present so requireScope() below can enforce the key's own
+   * optional read/write narrowing. */
+  apiKey: { id: string; scopes: ApiKeyScope[] } | null;
 }
 
-const EMPTY_AUTH: AuthResult = { userId: null, email: null, isAdmin: false, claims: null };
+const EMPTY_AUTH: AuthResult = { userId: null, email: null, isAdmin: false, claims: null, apiKey: null };
 const AUTH_KEY = Symbol.for("divini.procure.session.auth");
 
 interface AuthedRequest extends Request {
@@ -76,6 +84,28 @@ async function verify(token: string | null): Promise<AuthResult> {
     email: claims.email,
     isAdmin: computeIsAdmin(claims.email),
     claims,
+    apiKey: null,
+  };
+}
+
+/**
+ * Developer API platform: an Authorization: Bearer token in our key
+ * format (dvp_live_...) authenticates via api_keys instead of a session
+ * JWT. Returns EMPTY_AUTH for a token that looks like a key but doesn't
+ * verify (revoked/unknown) - same "just unauthenticated" shape verify()
+ * already uses for a bad session token, never a distinct error path an
+ * attacker could use to distinguish "wrong key" from "no key".
+ */
+async function verifyApiKeyBearer(rawKey: string): Promise<AuthResult> {
+  const result = await verifyApiKey(rawKey);
+  if (!result) return EMPTY_AUTH;
+  touchApiKeyLastUsed(result.apiKeyId);
+  return {
+    userId: result.userId,
+    email: result.email,
+    isAdmin: computeIsAdmin(result.email),
+    claims: null,
+    apiKey: { id: result.apiKeyId, scopes: result.scopes },
   };
 }
 
@@ -90,7 +120,12 @@ export function authMiddleware(): RequestHandler {
   return async function sessionAuthMw(req: AuthedRequest, _res: Response, next: NextFunction) {
     let auth: AuthResult;
     try {
-      auth = await verify(sessionToken(req));
+      const bearerToken = bearer(req);
+      if (bearerToken && looksLikeApiKey(bearerToken)) {
+        auth = await verifyApiKeyBearer(bearerToken);
+      } else {
+        auth = await verify(sessionToken(req));
+      }
     } catch (e) {
       // verify() itself already treats an invalid/expired/malformed token as
       // a normal, silent "not logged in" (returns EMPTY_AUTH, never throws)
@@ -132,6 +167,25 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction) {
   }
   if (!auth.isAdmin) {
     res.status(403).json({ error: "forbidden" });
+    return;
+  }
+  next();
+}
+
+/**
+ * Global write-scope gate for the developer API platform: a request
+ * authenticated via an API key whose scopes don't include 'write' may
+ * only make safe (GET/HEAD/OPTIONS) requests. A session-cookie/JWT
+ * request (apiKey === null) is entirely unaffected - this only narrows
+ * what a KEY can do, never what a logged-in browser session can do.
+ * Applied globally in app.ts so a read-only key is enforced platform-
+ * wide without every route needing to remember to check it.
+ */
+export function requireApiKeyWriteScope(req: Request, res: Response, next: NextFunction) {
+  const auth = getAuth(req);
+  const safeMethod = req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS";
+  if (auth.apiKey && !safeMethod && !auth.apiKey.scopes.includes("write")) {
+    res.status(403).json({ error: "this API key does not have write scope" });
     return;
   }
   next();
