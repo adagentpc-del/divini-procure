@@ -19,7 +19,7 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { getAuth, requireUser } from "../auth.js";
 import { q, q1 } from "../pool.js";
 import { ForbiddenError, NotFoundError } from "../db.js";
-import { getBidLineItems } from "../lib/bid-line-items.js";
+import { getBidLineItemsByIds } from "../lib/bid-line-items.js";
 
 // Async handler wrapper that funnels errors to the error middleware.
 const h =
@@ -131,9 +131,13 @@ router.get(
     // Per-bid priced line items. Resolved via the single consolidated
     // prefer-bid_items-fallback-to-bid_line_items rule (Phase 1 P1-05,
     // lib/bid-line-items.ts) - this used to be duplicated inline here.
+    // Batched across every active bid on the package in 2 queries total
+    // (was previously up to 2 queries per bid - a genuine N+1 found during
+    // a platform-hardening pass, scaling with vendor participation).
+    const lineItemsByBid = await getBidLineItemsByIds(bidRows.map((r) => r.id));
     const bids: CompareBid[] = [];
     for (const r of bidRows) {
-      const resolved = await getBidLineItems(r.id);
+      const resolved = lineItemsByBid.get(r.id) ?? [];
       const line_items = resolved.map((li) => ({
         id: li.id,
         name: li.name,

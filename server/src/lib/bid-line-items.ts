@@ -80,3 +80,83 @@ export async function sumBidLineItemsCents(bidId: string): Promise<number> {
   const items = await getBidLineItems(bidId);
   return items.reduce((sum, li) => sum + li.amountCents, 0);
 }
+
+/**
+ * Batched variant of getBidLineItems() for a list of bids - 2 queries total
+ * instead of up to 2 per bid. Found as a genuine N+1 during a
+ * platform-hardening pass (quote-comparison.ts calling getBidLineItems()
+ * once per active bid on a package, in a loop). Preserves the exact
+ * per-bid prefer-structured-fallback-to-freeform rule and per-bid ordering
+ * above - grouping client-side after one query per table, ordered by
+ * bid_id then the same tie-breakers as the single-bid queries, so each
+ * bid's own sub-array comes out in identical order to calling
+ * getBidLineItems(bidId) directly for that one bid.
+ */
+export async function getBidLineItemsByIds(bidIds: string[]): Promise<Map<string, ResolvedBidLineItem[]>> {
+  const ids = [...new Set(bidIds)];
+  const result = new Map<string, ResolvedBidLineItem[]>();
+  if (ids.length === 0) return result;
+
+  const structuredRows = await q<any>(
+    `select bi.bid_id, bi.id, coalesce(pli.description, 'Line item') as name,
+            coalesce(bi.qty, pli.qty, 1) as qty,
+            coalesce(bi.unit_price, 0) as unit_price,
+            coalesce(bi.amount, coalesce(bi.unit_price,0) * coalesce(bi.qty, pli.qty, 1)) as amount
+       from bid_items bi
+       left join package_line_items pli on pli.id = bi.line_item_id
+      where bi.bid_id = any($1)
+      order by bi.bid_id, pli.sort nulls last, bi.id`,
+    [ids],
+  );
+  const structuredByBid = new Map<string, any[]>();
+  for (const r of structuredRows) {
+    const arr = structuredByBid.get(r.bid_id) ?? [];
+    arr.push(r);
+    structuredByBid.set(r.bid_id, arr);
+  }
+
+  const freeformRows = await q<any>(
+    `select bid_id, id, coalesce(name, 'Line item') as name,
+            coalesce(qty, 1) as qty, coalesce(unit_price, 0) as unit_price,
+            coalesce(unit_price, 0) * coalesce(qty, 1) as amount
+       from bid_line_items where bid_id = any($1) order by bid_id, sort_order nulls last, id`,
+    [ids],
+  );
+  const freeformByBid = new Map<string, any[]>();
+  for (const r of freeformRows) {
+    const arr = freeformByBid.get(r.bid_id) ?? [];
+    arr.push(r);
+    freeformByBid.set(r.bid_id, arr);
+  }
+
+  for (const bidId of ids) {
+    const structured = structuredByBid.get(bidId) ?? [];
+    if (structured.length > 0) {
+      result.set(
+        bidId,
+        structured.map((li) => ({
+          id: String(li.id),
+          name: String(li.name),
+          qty: toNum(li.qty),
+          unitPriceCents: Math.round(toNum(li.unit_price) * 100),
+          amountCents: Math.round(toNum(li.amount) * 100),
+          source: "structured" as const,
+        })),
+      );
+      continue;
+    }
+    const freeform = freeformByBid.get(bidId) ?? [];
+    result.set(
+      bidId,
+      freeform.map((li) => ({
+        id: String(li.id),
+        name: String(li.name),
+        qty: toNum(li.qty),
+        unitPriceCents: Math.round(toNum(li.unit_price) * 100),
+        amountCents: Math.round(toNum(li.amount) * 100),
+        source: "freeform" as const,
+      })),
+    );
+  }
+  return result;
+}

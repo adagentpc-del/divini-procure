@@ -32,7 +32,7 @@ import { q, q1 } from "../pool.js";
 import { sendEmail } from "../lib/email.js";
 import { scoreMatch, canViewProgram } from "../lib/investor-match.js";
 import { spend, earn, EARN } from "../lib/introCredits.js";
-import { getTrustScore } from "../lib/trustScore.js";
+import { getTrustScoresByCompany, computeTrust } from "../lib/trustScore.js";
 
 const h =
   (fn: (req: Request, res: Response) => Promise<unknown>) =>
@@ -117,6 +117,40 @@ async function hasSignedNda(programId: string, investorId: string): Promise<bool
     investorId,
   ]);
   return !!row;
+}
+
+/**
+ * Batched variants for the two list-scoring routes below (GET
+ * /investor/matches, GET /investment/programs/:id/matches), where the
+ * single-row helpers above were being called once per program/investor in
+ * a loop - a genuine N+1 found during a platform-hardening pass (unbounded:
+ * every active program, or every investor_profiles row, platform-wide).
+ * One batched query each instead of N; scoreMatch()/computeTrust() stay
+ * exactly as they were, only the data-fetching shape changed.
+ */
+async function investorPrefsByIds(investorIds: string[]): Promise<Map<string, any>> {
+  const ids = [...new Set(investorIds)];
+  if (ids.length === 0) return new Map();
+  const rows = await q<any>(`select * from investor_preferences where investor_id = any($1)`, [ids]);
+  return new Map(rows.map((r) => [r.investor_id, r]));
+}
+
+async function investorQualByIds(investorIds: string[]): Promise<Map<string, any>> {
+  const ids = [...new Set(investorIds)];
+  if (ids.length === 0) return new Map();
+  const rows = await q<any>(`select * from investor_qualification_records where investor_id = any($1)`, [ids]);
+  return new Map(rows.map((r) => [r.investor_id, r]));
+}
+
+/** For ONE investor, which of the given programIds they have a signed NDA for. */
+async function signedNdaProgramIds(investorId: string, programIds: string[]): Promise<Set<string>> {
+  const ids = [...new Set(programIds)];
+  if (ids.length === 0) return new Set();
+  const rows = await q<{ program_id: string }>(
+    `select distinct program_id from nda_records where investor_id = $1 and program_id = any($2)`,
+    [investorId, ids],
+  );
+  return new Set(rows.map((r) => r.program_id));
 }
 
 /** Strip a program row down to the investor-facing teaser (no internal fields). */
@@ -1157,13 +1191,19 @@ router.get(
     const programs = await q<any>(
       `select * from investment_programs where status in ('approved','active') order by created_at desc`,
     );
+    // Batched (was previously 2 queries per program - a genuine N+1 over
+    // every active program platform-wide): one query for every program
+    // this investor has a signed NDA for, one for every program's
+    // developer's trust score.
+    const signedSet = await signedNdaProgramIds(investor.id, programs.map((p: any) => p.id));
+    const trustByCompany = await getTrustScoresByCompany(programs.map((p: any) => p.company_id));
     const matches = [];
     for (const p of programs) {
-      const signed = await hasSignedNda(p.id, investor.id);
+      const signed = signedSet.has(p.id);
       const canView = canViewProgram(p, investor, { hasSignedNda: signed });
       const { score, label, eligibility } = scoreMatch(p, investor, prefs, qual);
       const reasons = Array.isArray(eligibility) ? eligibility.slice(0, 4) : undefined;
-      const t = await getTrustScore(p.company_id);
+      const t = trustByCompany.get(p.company_id) ?? { ...computeTrust(null), profile: null };
       matches.push({
         program: programTeaser(p), score, label, eligibility, reasons, canView,
         trustScore: t.score, trustBand: t.band,
@@ -1193,10 +1233,15 @@ router.get(
       `select * from investor_profiles
         where status in ('profile_complete','in_progress','approved','starter_profile')`,
     );
+    // Batched (was previously 2 queries per investor - a genuine N+1 over
+    // every investor_profiles row platform-wide, unscoped to this program).
+    const investorIds = investors.map((inv: any) => inv.id);
+    const prefsById = await investorPrefsByIds(investorIds);
+    const qualById = await investorQualByIds(investorIds);
     const out = [];
     for (const inv of investors) {
-      const prefs = await investorPrefs(inv.id);
-      const qual = await investorQual(inv.id);
+      const prefs = prefsById.get(inv.id) ?? null;
+      const qual = qualById.get(inv.id) ?? null;
       const { score, label, eligibility } = scoreMatch(program, inv, prefs, qual);
       if (score < 40) continue; // surface plausible matches only
       const reveal = approvedSet.has(inv.id) || auth.isAdmin;
