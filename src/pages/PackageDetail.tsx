@@ -35,6 +35,16 @@ function ComplianceBadge({ snap }: { snap: { compliant: boolean; coi: { missingT
   );
 }
 
+function ReviewBadge({ stats }: { stats: { averageStars: number | null; count: number; reviews: Array<{ id: string; stars: number; body: string | null }> } | null | undefined }) {
+  if (!stats || stats.count === 0) return <span className="note">No reviews yet</span>;
+  const snippets = stats.reviews.filter(r => r.body).slice(0, 3).map(r => `${r.stars}★ "${r.body}"`).join(' | ');
+  return (
+    <span className="badge b-neutral" title={snippets || undefined}>
+      {'★'} {stats.averageStars?.toFixed(1)} ({stats.count})
+    </span>
+  );
+}
+
 export default function PackageDetail() {
   const { id } = useParams();
   const nav = useNavigate();
@@ -56,6 +66,7 @@ export default function PackageDetail() {
   // grandfathered existing-relationship fee state (keyed by vendor_company_id)
   const [rels, setRels] = useState<Record<string, any>>({});
   const [relOpen, setRelOpen] = useState<string | null>(null);
+  const [reviewOpen, setReviewOpen] = useState<string | null>(null);
   // vendor prequalification (competitive gap closure): per-vendor compliance
   // snapshot against this building's COI/license requirements, owner view only
   const [compliance, setCompliance] = useState<Record<string, { compliant: boolean; coi: { missingTypes: string[]; expiredRequiredTypes: string[] }; licenses: { missingTypes: string[]; expiredRequiredTypes: string[] } } | null>>({});
@@ -66,6 +77,15 @@ export default function PackageDetail() {
   // plan room activity tracking (competitive gap closure): developer-only
   // "who's engaging with this package" - see lib/package-activity.ts
   const [activity, setActivity] = useState<{ totalViews: number; distinctViewerCompanies: number; totalDownloads: number; perVendor: Array<{ viewerCompanyId: string; viewerCompanyName: string | null; viewCount: number; downloadCount: number; lastActivityAt: string }> } | null>(null);
+  // vendor review history (P0-19's reviews system had no frontend at all
+  // until now) - per-vendor average+count, public, shown to the developer
+  // evaluating bids. reviewForm/reviewBusy/reviewMsg drive the owner-only
+  // "rate this vendor" flow on an awarded bid.
+  const [reviewStats, setReviewStats] = useState<Record<string, { averageStars: number | null; count: number; reviews: Array<{ id: string; stars: number; body: string | null }> } | null>>({});
+  const [myReviews, setMyReviews] = useState<Record<string, { id: string; stars: number; body: string | null }>>({});
+  const [reviewForm, setReviewForm] = useState<Record<string, { stars: string; body: string } | null>>({});
+  const [reviewBusy, setReviewBusy] = useState<Record<string, boolean>>({});
+  const [reviewMsg, setReviewMsg] = useState<Record<string, string>>({});
   // monetization V2: bid credits + verification gating (null = gate off)
   const [credits, setCredits] = useState<BidCredits | null>(null);
   const [verif, setVerif] = useState<Verification | null>(null);
@@ -118,6 +138,28 @@ export default function PackageDetail() {
             }
           }));
           setCompliance(Object.fromEntries(entries));
+
+          // Vendor review history (P0-19's reviews system, no frontend
+          // until now): public average+count per bidding vendor, plus
+          // this developer's own review (if any) so the rate form can
+          // switch into edit mode instead of duplicating a POST.
+          const reviewEntries = await Promise.all(vendorIds.map(async (vendorCompanyId) => {
+            try {
+              const stats = await apiGet<{ reviews: Array<{ id: string; stars: number; body: string | null; rater_company_id: string; package_id: string }>; averageStars: number | null; count: number }>(
+                `/reviews?vendorCompanyId=${vendorCompanyId}`,
+              );
+              return [vendorCompanyId, stats] as const;
+            } catch {
+              return [vendorCompanyId, null] as const;
+            }
+          }));
+          setReviewStats(Object.fromEntries(reviewEntries.map(([id, s]) => [id, s ? { averageStars: s.averageStars, count: s.count, reviews: s.reviews } : null])));
+          const mine: Record<string, { id: string; stars: number; body: string | null }> = {};
+          for (const [vendorCompanyId, stats] of reviewEntries) {
+            const own = stats?.reviews.find((r) => r.rater_company_id === devCompanyId && r.package_id === pk.id);
+            if (own) mine[vendorCompanyId] = { id: own.id, stars: own.stars, body: own.body };
+          }
+          setMyReviews(mine);
         }
         try {
           setActivity(await apiGet(`/packages/${pk.id}/activity`));
@@ -250,6 +292,37 @@ export default function PackageDetail() {
   async function ask() { if (id && company && q) { await askQuestion(id, company.id, q); setQ(''); setQuestions(await getQuestions(id)); } }
   async function answer(qid: string) {
     const a = window.prompt('Your answer:'); if (a) { await answerQuestion(qid, a); setQuestions(await getQuestions(id!)); }
+  }
+
+  async function submitReview(vendorCompanyId: string) {
+    const form = reviewForm[vendorCompanyId];
+    const starsNum = form ? Number(form.stars) : NaN;
+    if (!form || !Number.isInteger(starsNum) || starsNum < 1 || starsNum > 5) {
+      setReviewMsg(prev => ({ ...prev, [vendorCompanyId]: 'Pick a star rating from 1 to 5.' }));
+      return;
+    }
+    setReviewBusy(prev => ({ ...prev, [vendorCompanyId]: true }));
+    setReviewMsg(prev => ({ ...prev, [vendorCompanyId]: '' }));
+    try {
+      const existing = myReviews[vendorCompanyId];
+      const payload = { packageId: id, vendorCompanyId, stars: starsNum, body: form.body || undefined };
+      const res = existing
+        ? await apiSend('PATCH', `/reviews/${existing.id}`, { stars: starsNum, body: form.body || undefined })
+        : await apiSend('POST', '/reviews', payload);
+      const review = (res as any).review;
+      setMyReviews(prev => ({ ...prev, [vendorCompanyId]: { id: review.id, stars: review.stars, body: review.body } }));
+      setReviewForm(prev => ({ ...prev, [vendorCompanyId]: null }));
+      setReviewMsg(prev => ({ ...prev, [vendorCompanyId]: existing ? 'Review updated.' : 'Review submitted.' }));
+      // Refresh this vendor's public average so it's correct without a full reload.
+      try {
+        const stats = await apiGet<{ reviews: any[]; averageStars: number | null; count: number }>(`/reviews?vendorCompanyId=${vendorCompanyId}`);
+        setReviewStats(prev => ({ ...prev, [vendorCompanyId]: stats }));
+      } catch { /* non-fatal */ }
+    } catch (e: any) {
+      setReviewMsg(prev => ({ ...prev, [vendorCompanyId]: e?.message ?? 'Could not submit review - the purchase order for this vendor may not be fulfilled yet.' }));
+    } finally {
+      setReviewBusy(prev => ({ ...prev, [vendorCompanyId]: false }));
+    }
   }
 
   if (!p) return <div className="note">Loading…</div>;
@@ -518,11 +591,12 @@ export default function PackageDetail() {
           <div className="sectitle">Bids received ({bids.length})</div>
           <div className="card" style={{ padding: 0 }}>
             <table>
-              <thead><tr><th>Vendor</th><th>Price</th><th>Timeline</th><th>Status</th><th>Compliance</th><th>Fee rule</th><th></th></tr></thead>
+              <thead><tr><th>Vendor</th><th>Price</th><th>Timeline</th><th>Status</th><th>Compliance</th><th>Reviews</th><th>Fee rule</th><th></th></tr></thead>
               <tbody>
-                {bids.length === 0 ? <tr><td colSpan={7} className="note" style={{ padding: 14 }}>No bids yet.</td></tr>
+                {bids.length === 0 ? <tr><td colSpan={8} className="note" style={{ padding: 14 }}>No bids yet.</td></tr>
                   : bids.map(b => {
                     const rel = rels[b.vendor_company_id];
+                    const myReview = myReviews[b.vendor_company_id];
                     return (
                       <>
                         <tr key={b.id}>
@@ -531,19 +605,31 @@ export default function PackageDetail() {
                           <td>{b.days} days</td>
                           <td><span className="badge b-neutral">{b.status}</span></td>
                           <td><ComplianceBadge snap={compliance[b.vendor_company_id]} /></td>
+                          <td><ReviewBadge stats={reviewStats[b.vendor_company_id]} /></td>
                           <td><FeeBadge fee={rel?.fee} relationship={rel} audience="developer" /></td>
-                          <td>
+                          <td style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                             {!rel && (
                               <a className="note" style={{ cursor: 'pointer', color: 'var(--emerald)' }}
                                  onClick={() => setRelOpen(relOpen === b.vendor_company_id ? null : b.vendor_company_id)}>
                                 {relOpen === b.vendor_company_id ? 'Cancel' : 'Mark existing relationship'}
                               </a>
                             )}
+                            {b.awarded && (
+                              <a className="note" style={{ cursor: 'pointer', color: 'var(--emerald)' }}
+                                 onClick={() => {
+                                   setReviewOpen(reviewOpen === b.vendor_company_id ? null : b.vendor_company_id);
+                                   if (!reviewForm[b.vendor_company_id]) {
+                                     setReviewForm(prev => ({ ...prev, [b.vendor_company_id]: { stars: String(myReview?.stars ?? 5), body: myReview?.body ?? '' } }));
+                                   }
+                                 }}>
+                                {reviewOpen === b.vendor_company_id ? 'Cancel' : myReview ? 'Edit review' : 'Rate vendor'}
+                              </a>
+                            )}
                           </td>
                         </tr>
                         {relOpen === b.vendor_company_id && !rel && (
                           <tr key={b.id + '-rel'}>
-                            <td colSpan={7}>
+                            <td colSpan={8}>
                               <ExistingRelationshipCheckbox
                                 developerCompanyId={p.building.company_id}
                                 vendorCompanyId={b.vendor_company_id}
@@ -551,6 +637,39 @@ export default function PackageDetail() {
                                 projectId={p.building.id}
                                 onConfirmed={() => { setRelOpen(null); load(); }}
                               />
+                            </td>
+                          </tr>
+                        )}
+                        {reviewOpen === b.vendor_company_id && b.awarded && (
+                          <tr key={b.id + '-review'}>
+                            <td colSpan={8}>
+                              <div className="card" style={{ background: 'var(--ivory)' }}>
+                                <div className="note" style={{ marginBottom: 8, fontWeight: 600 }}>
+                                  {myReview ? 'Edit your review of' : 'Rate'} {b.vendor?.name ?? 'this vendor'}
+                                </div>
+                                <div className="field" style={{ maxWidth: 160 }}>
+                                  <label>Stars (1-5)</label>
+                                  <select
+                                    value={reviewForm[b.vendor_company_id]?.stars ?? '5'}
+                                    onChange={e => setReviewForm(prev => ({ ...prev, [b.vendor_company_id]: { ...prev[b.vendor_company_id]!, stars: e.target.value } }))}
+                                  >
+                                    {[5, 4, 3, 2, 1].map(n => <option key={n} value={n}>{n} star{n === 1 ? '' : 's'}</option>)}
+                                  </select>
+                                </div>
+                                <div className="field">
+                                  <label>Comments (optional)</label>
+                                  <textarea
+                                    rows={3}
+                                    value={reviewForm[b.vendor_company_id]?.body ?? ''}
+                                    onChange={e => setReviewForm(prev => ({ ...prev, [b.vendor_company_id]: { ...prev[b.vendor_company_id]!, body: e.target.value } }))}
+                                    placeholder="How did this vendor perform on this project?"
+                                  />
+                                </div>
+                                {reviewMsg[b.vendor_company_id] && <div className="note" style={{ marginBottom: 8 }}>{reviewMsg[b.vendor_company_id]}</div>}
+                                <button className="btn primary" disabled={!!reviewBusy[b.vendor_company_id]} onClick={() => submitReview(b.vendor_company_id)}>
+                                  {reviewBusy[b.vendor_company_id] ? 'Saving...' : myReview ? 'Save changes' : 'Submit review'}
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         )}
