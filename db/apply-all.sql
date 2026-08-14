@@ -1185,6 +1185,18 @@ alter table if exists bid_line_items add column if not exists category text;
 alter table if exists bid_line_items add column if not exists optional boolean not null default false;
 alter table if exists bid_line_items add column if not exists selected boolean not null default true;
 alter table if exists bid_line_items add column if not exists sort_order int not null default 0;
+-- Compliance completion pass: unit of measure (e.g. "SF", "EA", "LF"),
+-- consistent with package_line_items.unit and bid_template_line_items.unit
+-- below - missing here was a genuine oversight in this migration. Every
+-- route in server/src/routes/bid-studio.ts (POST/PATCH line-items, the
+-- save-as-template and template-apply copy paths) already reads/writes a
+-- `unit` field and was reproducibly 500ing against this table with the
+-- column undefined - live-reproduced and fixed here, not a hypothetical gap.
+-- (This line exists in db/schema-bid-studio.sql already; apply-all.sql's
+-- copy had drifted out of sync and was missing it - the actual bug this
+-- fix closes, found only because a from-scratch CI bootstrap finally
+-- exercised this path. Keep both files in sync when editing either.)
+alter table if exists bid_line_items add column if not exists unit text;
 
 -- ---------- payment schedule ----------
 create table if not exists bid_payment_milestones (
