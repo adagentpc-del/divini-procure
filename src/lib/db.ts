@@ -15,6 +15,8 @@ export type CompanyPayload = {
   // vendor + investor profile arrays (all optional)
   coverage_areas?: string[]; service_categories?: string[]; capabilities?: string[];
   focus_areas?: string[]; geographies?: string[];
+  // required for kind === 'vendor' - the server rejects vendor creation without it
+  vendorAgreementAccepted?: boolean;
 };
 
 export async function createCompanyForUser(_userId: string, payload: CompanyPayload) {
@@ -58,6 +60,25 @@ export async function getOpenPackages(filter?: { categories?: string[] }) {
   return apiGet<any[]>(`/packages/open${qs}`);
 }
 
+export async function searchMarketplace(filter: {
+  q?: string;
+  categories?: string[];
+  location?: string;
+  limit?: number;
+  offset?: number;
+}) {
+  const params = new URLSearchParams();
+  if (filter.q) params.set('q', filter.q);
+  if (filter.categories?.length) params.set('categories', filter.categories.join(','));
+  if (filter.location) params.set('location', filter.location);
+  if (filter.limit) params.set('limit', String(filter.limit));
+  if (filter.offset) params.set('offset', String(filter.offset));
+  const qs = params.toString();
+  return apiGet<{ results: any[]; total: number; limit: number; offset: number }>(
+    `/marketplace/search${qs ? `?${qs}` : ''}`,
+  );
+}
+
 export async function getMyBids(companyId: string) {
   return apiGet<any[]>(`/bids/mine?companyId=${encodeURIComponent(companyId)}`);
 }
@@ -74,6 +95,17 @@ export async function getPackages(buildingId: string) {
 }
 export async function createPackage(buildingId: string, p: { category: string; status?: string; deadline?: string; budget_min?: number; budget_max?: number; }) {
   return apiSend('POST', `/buildings/${encodeURIComponent(buildingId)}/packages`, p);
+}
+export async function getBuildingFinancialSummary(buildingId: string) {
+  return apiGet<any>(`/buildings/${encodeURIComponent(buildingId)}/financial-summary`);
+}
+export async function getPackageFinancialSummary(packageId: string) {
+  return apiGet<any>(`/packages/${encodeURIComponent(packageId)}/financial-summary`);
+}
+export async function askDiviniAboutProject(buildingId: string, question: string) {
+  return apiSend<{ ok: boolean; answer: string | null; reason?: string; disclosure: string }>(
+    'POST', `/ask-divini/project/${encodeURIComponent(buildingId)}`, { question },
+  );
 }
 export async function getPackage(id: string) {
   return apiGet<any>(`/packages/${encodeURIComponent(id)}`);
@@ -167,6 +199,10 @@ export async function updateCompany(id: string, patch: { name?: string; contact_
 }
 export async function deleteMyAccount() {
   await apiSend('POST', '/account/delete');
+}
+/** Revokes every session for this account, including the one calling this - the current tab will be logged out too. */
+export async function signOutAllDevices() {
+  await apiSend('POST', '/account/sessions/revoke-all');
 }
 export async function exportMyData() {
   const blob = await apiBlob('/account/export');

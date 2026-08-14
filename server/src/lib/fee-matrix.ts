@@ -1,32 +1,46 @@
 /**
  * Divini Procure - FEE MATRIX resolution (read-only).
  *
- * Resolves "which fee applies to THIS context" by layering the configurable
- * fee_rules matrix UNDER the protected grandfathered existing-relationship fee.
+ * The SINGLE resolution path for every platform fee percentage, cap, and fee
+ * type. Nothing in the app hard-codes a fee amount outside this module (and
+ * the config.ts fallbacks it reads when the database has no matching row).
  *
- * Precedence:
+ * Precedence (for the standard_platform rule type only):
  *   1) Grandfathered pair ALWAYS wins. If the developer-vendor pair has a
  *      developer_vendor_relationships row that resolveFee() reports as
- *      grandfathered, we return that 2% rate and stop. Nothing in the matrix can
- *      override it. (Reuses getByPair + resolveFee, never duplicates them.)
+ *      grandfathered, we return that 2% rate capped at $10,000 and stop.
+ *      Nothing in the matrix can override it. (Reuses getByPair + resolveFee,
+ *      never duplicates them.) Every OTHER rule type (including
+ *      platform_infrastructure_fee) skips this step entirely.
  *   2) Otherwise the most specific active fee_rules row for the requested
  *      rule_type, by scope precedence pair > program > developer > vendor >
- *      global.
- *   3) Otherwise the standard platform default (STANDARD_FEE_PERCENTAGE).
+ *      global. A developer- or vendor-scoped row here IS an enterprise custom
+ *      fee schedule.
+ *   3) Otherwise a config-driven fallback (5% capped $25,000 for
+ *      standard_platform; 0.1% capped $1,500 for platform_infrastructure_fee;
+ *      zero for anything else with no seeded row).
  *
  * Pure/read-only: this module never writes. Zero em dashes by convention.
  */
 import { q1 } from "../pool.js";
-import { resolveFee, STANDARD_FEE_PERCENTAGE } from "./fee-rules.js";
+import { resolveFee } from "./fee-rules.js";
 import { getByPair } from "./relationships.js";
+import {
+  PROCURE_SUCCESS_FEE_PCT,
+  PROCURE_SUCCESS_FEE_CAP_CENTS,
+  PROCURE_GRANDFATHERED_PCT,
+  PROCURE_GRANDFATHERED_CAP_CENTS,
+  PROCURE_SERVICE_BUFFER_PCT,
+  PROCURE_SERVICE_BUFFER_CAP_CENTS,
+} from "../config.js";
 
 export const FEE_RULE_TYPES = [
   "grandfathered_2pct",
   "standard_platform",
+  "platform_infrastructure_fee",
   "preferred_vendor_placement",
   "white_glove",
   "referral_partner",
-  "capital_introduction",
 ] as const;
 export type FeeRuleType = (typeof FEE_RULE_TYPES)[number];
 
@@ -52,6 +66,7 @@ export interface FeeRuleRow {
   program_id: string | null;
   percentage: number | string | null;
   flat_cents: number | string | null;
+  cap_cents: number | string | null;
   payer_type: string;
   billing_cycle: string | null;
   active: boolean;
@@ -73,6 +88,8 @@ export interface ResolvedContextFee {
   ruleType: string;
   percentage: number | null;
   flatCents: number | null;
+  /** Cap on the percentage fee, in cents. Null/0 = uncapped. */
+  capCents: number | null;
   payer_type: PayerType;
   scope: FeeScope | null;
   ruleId: string | null;
@@ -92,12 +109,19 @@ function asRuleType(v: string | null | undefined): FeeRuleType {
 }
 
 /**
- * Resolve the effective fee for a context. Read-only.
+ * Resolve the effective fee for a context. Read-only. This is the SINGLE
+ * resolution path for every platform fee: nothing computes a fee percentage
+ * or cap outside this function (or the config.ts fallbacks it reads when the
+ * database has no matching row yet).
  *
- * The grandfathered 2% pair is resolved FIRST and unconditionally wins, exactly
- * as in the relationship data layer (getByPair + resolveFee). Only if no pair is
- * grandfathered do we consult the configurable matrix, then fall back to the
- * platform standard.
+ * For the standard_platform rule type ONLY, a grandfathered pair is resolved
+ * FIRST and unconditionally wins, exactly as in the relationship data layer
+ * (getByPair + resolveFee) - this is the existing-relationship discount and it
+ * must never apply to any other fee type (e.g. the platform infrastructure
+ * fee is flat regardless of relationship status). Otherwise: the most
+ * specific active fee_rules row for the requested rule_type (an
+ * enterprise/custom fee schedule is just a developer- or vendor-scoped row
+ * here), else a config-driven fallback for the fee types that have one.
  */
 export async function resolveContextFee(
   input: ResolveContextInput,
@@ -107,8 +131,8 @@ export async function resolveContextFee(
   const programId = input.programId ?? null;
   const ruleType = asRuleType(input.ruleType);
 
-  // 1) Grandfathered pair always wins.
-  if (developerCompanyId && vendorCompanyId) {
+  // 1) Grandfathered pair always wins, but ONLY for the standard platform fee.
+  if (ruleType === "standard_platform" && developerCompanyId && vendorCompanyId) {
     const rel = await getByPair(developerCompanyId, vendorCompanyId);
     const resolved = resolveFee(rel);
     if (resolved.grandfathered) {
@@ -117,6 +141,7 @@ export async function resolveContextFee(
         ruleType: "grandfathered_2pct",
         percentage: resolved.feePercentage,
         flatCents: null,
+        capCents: PROCURE_GRANDFATHERED_CAP_CENTS,
         payer_type: "admin_configured",
         scope: "pair",
         ruleId: null,
@@ -125,7 +150,9 @@ export async function resolveContextFee(
     }
   }
 
-  // 2) Most specific active matrix rule for this rule_type.
+  // 2) Most specific active matrix rule for this rule_type. An enterprise
+  //    custom fee schedule is a developer- or vendor-scoped row here, which
+  //    outranks the global default.
   //    scope precedence: pair > program > developer > vendor > global.
   const row = await q1<FeeRuleRow>(
     `select * from fee_rules
@@ -157,6 +184,7 @@ export async function resolveContextFee(
       ruleType: row.rule_type,
       percentage: num(row.percentage),
       flatCents: num(row.flat_cents),
+      capCents: num(row.cap_cents),
       payer_type: (PAYER_TYPES as readonly string[]).includes(row.payer_type)
         ? (row.payer_type as PayerType)
         : "admin_configured",
@@ -168,15 +196,46 @@ export async function resolveContextFee(
     };
   }
 
-  // 3) Standard platform fallback.
+  // 3) Config-driven fallback, only for the fee types that have one (defends
+  //    against a fresh database that has not run the fee_rules seed yet). The
+  //    legacy uncapped 10% "everything defaults to standard" fallback is
+  //    retired: a rule type with no seed row and no config default resolves
+  //    to zero rather than silently charging an arbitrary percentage.
+  if (ruleType === "standard_platform") {
+    return {
+      source: "standard",
+      ruleType,
+      percentage: PROCURE_SUCCESS_FEE_PCT,
+      flatCents: null,
+      capCents: PROCURE_SUCCESS_FEE_CAP_CENTS,
+      payer_type: "developer_pays",
+      scope: "global",
+      ruleId: null,
+      label: "Standard Divini Procure platform fee applies.",
+    };
+  }
+  if (ruleType === "platform_infrastructure_fee") {
+    return {
+      source: "standard",
+      ruleType,
+      percentage: PROCURE_SERVICE_BUFFER_PCT,
+      flatCents: null,
+      capCents: PROCURE_SERVICE_BUFFER_CAP_CENTS,
+      payer_type: "deducted_from_vendor_payment",
+      scope: "global",
+      ruleId: null,
+      label: "Platform infrastructure fee applies.",
+    };
+  }
   return {
     source: "standard",
-    ruleType: "standard_platform",
-    percentage: STANDARD_FEE_PERCENTAGE,
+    ruleType,
+    percentage: 0,
     flatCents: null,
-    payer_type: "developer_pays",
-    scope: "global",
+    capCents: null,
+    payer_type: "admin_configured",
+    scope: null,
     ruleId: null,
-    label: "Standard Divini Procure platform/referral fee applies.",
+    label: `No ${ruleType} fee rule configured.`,
   };
 }

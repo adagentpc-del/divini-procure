@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import OnboardingChecklist from '../components/OnboardingChecklist';
 import { useToast } from '../lib/toast';
+import { type Entitlement, type LimitCheck, LIMIT_LABELS } from '../lib/tiers';
+import { UsageMeterList } from '../components/UsageMeter';
 import {
   getBuildings, getOpenPackages, getMyBids, getVendorProfile,
   listEngagements, createEngagement, updateEngagement,
@@ -19,9 +21,35 @@ import {
 
 const STATUSES = ['active', 'pending', 'won', 'on hold', 'completed', 'lost'];
 
+// The 2-3 limits most worth a quick glance on the dashboard, per audience -
+// full detail (every metered limit, plus the upgrade ladder) lives on
+// Subscription; this is a summary, not a duplicate of that page.
+const DASHBOARD_LIMIT_ORDER: Record<'buyer' | 'vendor' | 'investor', string[]> = {
+  buyer: ['active_project_limit', 'bid_package_limit', 'vendor_invite_limit'],
+  // bid_package_limit and vendor_invite_limit both gate buyer-only actions
+  // (creating a bid package on a building you own; inviting a vendor to
+  // one) - a vendor account never triggers either, so vendor_free's real
+  // vendor_invite_limit of 0 always rendered as a permanent, unearned
+  // "At limit" badge. A vendor's actual bidding cap is the separate bid-
+  // credits system shown in the "Your account" tiles below, not this list.
+  vendor: ['seat_limit'],
+  // investment_program_limit is a developer-only concept (creating a capital
+  // raise) - an investor's usage against it is always 0/0, which reads as an
+  // alarming "at limit" badge for a feature they were never meant to have.
+  investor: ['investor_match_limit', 'seat_limit'],
+};
+
 function money(cents?: number | null) {
   if (cents === null || cents === undefined) return '-';
   return `$${(Number(cents) / 100).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+}
+
+// Distinct from money() above: a $0 subscription plan reads as "Free", but
+// money()'s existing callers (fees owed/paid) must keep showing "$0" - not
+// the same wording, so not the same function.
+function planPrice(cents: number | null): string {
+  if (cents === null) return 'Custom';
+  return cents ? `${money(cents)}/mo` : 'Free';
 }
 
 function CurrentWork() {
@@ -145,7 +173,7 @@ function CurrentWork() {
 // Success-fee summary for a vendor (owed / paid). Tolerant of a missing endpoint.
 type FeeSummary = { owedCents?: number; paidCents?: number };
 
-function VendorMonetizationTiles() {
+function VendorMonetizationTiles({ companyId }: { companyId: string }) {
   const nav = useNavigate();
   const [credits, setCredits] = useState<BidCredits | null>(null);
   const [verif, setVerif] = useState<Verification | null>(null);
@@ -156,7 +184,7 @@ function VendorMonetizationTiles() {
   const [msg, setMsg] = useState('');
 
   async function load() {
-    const [c, v] = await Promise.all([getBidCredits(), getVerification()]);
+    const [c, v] = await Promise.all([getBidCredits(companyId), getVerification(companyId)]);
     setCredits(c);
     setVerif(v);
     try {
@@ -165,7 +193,7 @@ function VendorMonetizationTiles() {
     } catch { /* non-blocking */ }
     setLoaded(true);
   }
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [companyId]);
 
   async function upgrade() {
     setUpgrading(true); setMsg('');
@@ -344,6 +372,8 @@ export default function Dashboard() {
   const nav = useNavigate();
   const [stats, setStats] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
+  const [entitlement, setEntitlement] = useState<Entitlement | null>(null);
+  const [limits, setLimits] = useState<Record<string, LimitCheck> | null>(null);
 
   useEffect(() => {
     if (!company) return;
@@ -351,6 +381,12 @@ export default function Dashboard() {
       if (company.kind === 'buyer') {
         const b = await getBuildings(company.id);
         setStats({ projects: b.length });
+      } else if (company.kind === 'investor') {
+        const [matches, intros] = await Promise.all([
+          apiGet<{ matches: unknown[] }>('/watchlist/matches').catch(() => ({ matches: [] })),
+          apiGet<{ introductions: unknown[] }>('/investor/introductions').catch(() => ({ introductions: [] })),
+        ]);
+        setStats({ matched: matches.matches?.length ?? 0, bids: intros.introductions?.length ?? 0 });
       } else {
         const prof = await getVendorProfile(company.id);
         const open = await getOpenPackages({ categories: prof?.services ?? [] });
@@ -361,13 +397,21 @@ export default function Dashboard() {
     })();
   }, [company]);
 
+  useEffect(() => {
+    if (!company) return;
+    apiGet<{ entitlement: Entitlement; limits: Record<string, LimitCheck> }>(`/subscriptions/mine?companyId=${company.id}`)
+      .then((d) => { setEntitlement(d.entitlement); setLimits(d.limits); })
+      .catch(() => {});
+  }, [company]);
+
   if (!company) return null;
   const isBuyer = company.kind === 'buyer';
   const isVendor = company.kind === 'vendor';
   const isInvestor = company.kind === 'investor';
+  const audienceKey: 'buyer' | 'vendor' | 'investor' = isVendor ? 'vendor' : isInvestor ? 'investor' : 'buyer';
 
   const subLabel = isInvestor
-    ? 'Your investment dashboard'
+    ? 'Your Capital Partner dashboard'
     : isBuyer
     ? 'Your procurement command center'
     : 'Your vendor workspace';
@@ -391,27 +435,53 @@ export default function Dashboard() {
           <>
             <div className="card metric"><div className="k">Active projects</div><div className="v">{loading ? '-' : stats.projects ?? 0}</div><div className="d">buildings</div></div>
             <div className="card metric"><div className="k">Open packages</div><div className="v">-</div><div className="d">across projects</div></div>
-            <div className="card metric"><div className="k">Plan</div><div className="v" style={{ fontSize: 20 }}>Free</div><div className="d">beta</div></div>
+          </>
+        ) : isInvestor ? (
+          <>
+            <div className="card metric"><div className="k">Deals matched to you</div><div className="v">{loading ? '-' : stats.matched ?? 0}</div><div className="d">on your watchlist</div></div>
+            <div className="card metric"><div className="k">My introductions</div><div className="v">{loading ? '-' : stats.bids ?? 0}</div><div className="d">requested</div></div>
           </>
         ) : (
           <>
             <div className="card metric"><div className="k">Bids matched to you</div><div className="v">{loading ? '-' : stats.matched ?? 0}</div><div className="d">open packages</div></div>
             <div className="card metric"><div className="k">My bids</div><div className="v">{loading ? '-' : stats.bids ?? 0}</div><div className="d">submitted</div></div>
-            <div className="card metric"><div className="k">Plan</div><div className="v" style={{ fontSize: 20 }}>$100/mo</div><div className="d">first 2 mo 50% off</div></div>
           </>
         )}
+        <div className="card metric" style={{ cursor: 'pointer' }} onClick={() => nav('/subscription')}>
+          <div className="k">Plan</div>
+          <div className="v" style={{ fontSize: 20 }}>{entitlement ? entitlement.name : '-'}</div>
+          <div className="d">{entitlement ? planPrice(entitlement.price_cents) : ''}</div>
+        </div>
       </div>
+
+      {limits && (
+        <>
+          <div className="sectitle">Usage this period</div>
+          <div className="card">
+            <UsageMeterList limits={limits} labels={LIMIT_LABELS} order={DASHBOARD_LIMIT_ORDER[audienceKey]} />
+            <div style={{ marginTop: 12 }}>
+              <a className="note" style={{ cursor: 'pointer', color: 'var(--emerald)', fontWeight: 600 }} onClick={() => nav('/subscription')}>
+                See full usage and plans →
+              </a>
+            </div>
+          </div>
+        </>
+      )}
 
       {isBuyer
         ? <DeveloperVendorTiles companyId={company.id} />
-        : <VendorMonetizationTiles />}
+        : isVendor
+          ? <VendorMonetizationTiles companyId={company.id} />
+          : null}
 
       <div className="sectitle">Getting started</div>
       <div className="card">
         <p className="note" style={{ margin: 0, lineHeight: 1.6 }}>
           {isBuyer
             ? 'Post a project to start receiving bids from verified vendors. Compare side by side, award, and pay by ACH or wire.'
-            : 'Join and browse for free. Get verified to unlock bidding and to contact developers. Free vendors get 5 bids per quarter; Vendor Pro is unlimited.'}
+            : isInvestor
+              ? 'Fill in your Capital Partner profile so deal originators know what you look for, then browse active deals or add opportunities to your watchlist for match alerts.'
+              : 'Join and browse for free. Get verified to unlock bidding and to contact developers. Free vendors get 5 bids per quarter; Vendor Pro is unlimited.'}
         </p>
       </div>
 

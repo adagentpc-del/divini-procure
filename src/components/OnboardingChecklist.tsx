@@ -9,7 +9,7 @@
  * Three role paths:
  *   buyer    — post a project, invite a teammate, explore vendors
  *   vendor   — complete profile, upload credentials, browse open RFQs, submit a bid
- *   investor — fill investor profile, browse active deals, add first watchlist item
+ *   investor — fill Capital Partner profile, browse active deals, add first watchlist item
  */
 import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
@@ -55,6 +55,13 @@ const BUYER_STEPS: Step[] = [
     href: '/app/settings/company',
     cta: 'Complete profile',
   },
+  {
+    id: 'explore_plan',
+    label: 'See what your plan unlocks',
+    detail: 'Compare plans and see what higher limits, AI tools, and reporting look like when you need them.',
+    href: '/subscription',
+    cta: 'View plans',
+  },
 ];
 
 const VENDOR_STEPS: Step[] = [
@@ -86,12 +93,19 @@ const VENDOR_STEPS: Step[] = [
     href: '/app/marketplace',
     cta: 'Submit a bid',
   },
+  {
+    id: 'explore_plan',
+    label: 'See what your plan unlocks',
+    detail: 'Compare plans and see what unlimited bidding, AI tools, and priority verification look like when you need them.',
+    href: '/subscription',
+    cta: 'View plans',
+  },
 ];
 
 const INVESTOR_STEPS: Step[] = [
   {
     id: 'investor_profile',
-    label: 'Fill in your investor profile',
+    label: 'Fill in your Capital Partner profile',
     detail: 'Tell deal originators what you look for in an investment.',
     href: '/investor-onboarding',
     cta: 'Fill profile',
@@ -109,6 +123,13 @@ const INVESTOR_STEPS: Step[] = [
     detail: 'Track deals and get email alerts on matching opportunities.',
     href: '/investor-watchlist',
     cta: 'Add to watchlist',
+  },
+  {
+    id: 'explore_plan',
+    label: 'See what your plan unlocks',
+    detail: 'Compare plans and see what higher match limits and reporting look like when you need them.',
+    href: '/subscription',
+    cta: 'View plans',
   },
 ];
 
@@ -195,7 +216,7 @@ export default function OnboardingChecklist() {
 
   const roleLabel =
     company.kind === 'vendor' ? 'vendor'
-    : company.kind === 'investor' ? 'investor'
+    : company.kind === 'investor' ? 'Capital Partner'
     : 'buyer';
 
   return (

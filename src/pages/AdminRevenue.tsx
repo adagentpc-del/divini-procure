@@ -37,8 +37,8 @@ type Totals = { accruedCents: number; collectedCents: number };
 const STATUS_FILTERS = ['', 'accrued', 'invoiced', 'collected', 'waived', 'void'] as const;
 
 const SOURCE_LABEL: Record<string, string> = {
-  procurement_fee: 'Procurement fee',
-  capital_introduction: 'Capital introduction',
+  procurement_fee: 'Platform fee',
+  infrastructure_fee: 'Platform infrastructure fee',
   subscription: 'Subscription',
   manual: 'Manual',
 };

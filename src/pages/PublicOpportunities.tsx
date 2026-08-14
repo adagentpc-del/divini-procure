@@ -104,7 +104,7 @@ export default function PublicOpportunities() {
             <img src="/brand/mark-emerald.png" alt="Divini Procure" style={{ height: 38, width: 'auto' }} />
             <div>
               <div className="po-logo-nm">Divini Procure</div>
-              <div className="po-logo-tg">Investment Marketplace</div>
+              <div className="po-logo-tg">Capital Marketplace</div>
             </div>
           </Link>
           <div className="po-navlinks">
@@ -118,13 +118,13 @@ export default function PublicOpportunities() {
 
       {/* Hero */}
       <div className="po-hero">
-        <h1>Real Estate Investment Opportunities</h1>
+        <h1>Real Estate Capital Opportunities</h1>
         <p>Browse active programs from verified developers. Create a free account to request an introduction.</p>
       </div>
 
       {/* Filters */}
       <div className="po-filters">
-        <select value={assetClass} onChange={e => setAssetClass(e.target.value)}>
+        <select aria-label="Filter by asset class" value={assetClass} onChange={e => setAssetClass(e.target.value)}>
           <option value="">All asset classes</option>
           <option value="multifamily">Multifamily</option>
           <option value="commercial">Commercial</option>
@@ -138,19 +138,21 @@ export default function PublicOpportunities() {
         </select>
         <input
           type="text"
+          aria-label="Filter by location"
           placeholder="Location..."
           value={location}
           onChange={e => setLocation(e.target.value)}
         />
         <input
           type="number"
-          placeholder="Max min. investment ($)"
+          aria-label="Maximum minimum capital"
+          placeholder="Max min. capital ($)"
           value={minInvestment}
           onChange={e => setMinInvestment(e.target.value)}
           min={0}
         />
-        <select value={investorType} onChange={e => setInvestorType(e.target.value)}>
-          <option value="">All investor types</option>
+        <select aria-label="Filter by Capital Partner type" value={investorType} onChange={e => setInvestorType(e.target.value)}>
+          <option value="">All Capital Partner types</option>
           <option value="accredited">Accredited</option>
           <option value="non_accredited">Non-accredited</option>
           <option value="family_office">Family office</option>
@@ -193,7 +195,7 @@ export default function PublicOpportunities() {
                   <span className="value">{fmtMoney(p.target_raise_cents)}</span>
                 </div>
                 <div className="po-card-row">
-                  <span className="label">Min. investment</span>
+                  <span className="label">Min. capital</span>
                   <span className="value">{fmtMoney(p.min_investment_cents)}</span>
                 </div>
                 {returnLabel && (

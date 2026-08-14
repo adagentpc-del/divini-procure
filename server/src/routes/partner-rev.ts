@@ -164,6 +164,32 @@ router.patch(
       add("commission_owed_cents", base + adj);
     }
     if (commission_paid_cents !== undefined) {
+      // Cross-rail double-payout guard, same as the commissions/:id endpoint
+      // above, but at the period-rollup level this table operates at: refuse
+      // to record a bookkeeping payment on this period if ANY underlying
+      // commission for this partner in the period already has a completed
+      // Stripe Connect transfer for the same platform_revenue event.
+      const conflict = await q1<{ id: string }>(
+        `select pc.id
+           from partner_commissions pc
+           join payout_instructions pi
+             on pi.source_revenue_id = pc.platform_revenue_id
+            and pi.recipient_kind = 'referral_partner'
+            and pi.status = 'paid'
+          where pc.partner_id = (select partner_id from partner_payouts where id = $1)
+            and pc.excluded = false
+            and to_char(pc.created_at, 'YYYY-MM-DD') like (select period from partner_payouts where id = $1) || '%'
+          limit 1`,
+        [req.params.id],
+      );
+      if (conflict) {
+        return res.status(409).json({
+          error:
+            "One or more commissions in this payout period were already paid through the " +
+            "Stripe Connect payout rail. Refusing to also record a bookkeeping payment for " +
+            "this period without reviewing the conflict.",
+        });
+      }
       add("commission_paid_cents", Math.trunc(num(commission_paid_cents as number)));
     }
     if (!sets.length) return res.status(400).json({ error: "no fields to update" });
@@ -193,6 +219,32 @@ router.patch(
     if (status !== undefined) {
       if (!COMMISSION_STATUSES.includes(status as (typeof COMMISSION_STATUSES)[number])) {
         return res.status(400).json({ error: "invalid status" });
+      }
+      // Cross-rail double-payout guard (Phase 0 financial-integrity fix):
+      // this commission may already have a real Stripe transfer queued or
+      // completed for the exact same underlying event, via
+      // payout_instructions.source_revenue_id = this row's
+      // platform_revenue_id (see schema-referral-commission-dedup.sql). If
+      // that rail already paid it, refuse to also mark it paid here.
+      if (status === "paid") {
+        const existing = await q1<{ platform_revenue_id: string | null }>(
+          `select platform_revenue_id from partner_commissions where id = $1`,
+          [req.params.id],
+        );
+        if (existing?.platform_revenue_id) {
+          const paidViaStripe = await q1<{ id: string }>(
+            `select id from payout_instructions
+              where source_revenue_id = $1 and recipient_kind = 'referral_partner' and status = 'paid'`,
+            [existing.platform_revenue_id],
+          );
+          if (paidViaStripe) {
+            return res.status(409).json({
+              error:
+                "This commission was already paid through the Stripe Connect payout rail. " +
+                "Refusing to also mark it paid in the bookkeeping ledger.",
+            });
+          }
+        }
       }
       add("status", status);
     }

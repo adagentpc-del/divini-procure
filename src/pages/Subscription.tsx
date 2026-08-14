@@ -7,58 +7,14 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../lib/auth';
 import { apiGet, apiSend } from '../lib/api';
+import { type Tier, type Entitlement, type LimitCheck, LIMIT_LABELS, ADDON_TIER_KEYS, money, limitText } from '../lib/tiers';
+import { UsageMeterList } from '../components/UsageMeter';
 
-type Tier = {
-  key: string;
-  name: string;
-  audience: 'developer' | 'vendor' | 'investor';
-  price_cents: number;
-  ai_features: boolean;
-  reporting_access: boolean;
-  white_glove: boolean;
-  active_project_limit: number | null;
-  bid_package_limit: number | null;
-  vendor_invite_limit: number | null;
-  investment_program_limit: number | null;
-  investor_match_limit: number | null;
-  seat_limit: number | null;
-};
-type Entitlement = Tier & {
-  company_id: string;
-  tier_key: string | null;
-  is_default: boolean;
-  subscription_status: string | null;
-};
-type LimitCheck = {
-  key: string;
-  limit: number | null;
-  used: number;
-  remaining: number | null;
-  allowed: boolean;
-};
 type Mine = {
   entitlement: Entitlement;
   usage: Record<string, number>;
   limits: Record<string, LimitCheck>;
 };
-
-const LIMIT_LABELS: Record<string, string> = {
-  active_project_limit: 'Active projects',
-  bid_package_limit: 'Bid packages',
-  vendor_invite_limit: 'Vendor invites',
-  investment_program_limit: 'Investment programs',
-  investor_match_limit: 'Investor matches',
-  seat_limit: 'Team seats',
-};
-
-function money(cents: number): string {
-  if (!cents) return 'Free';
-  return `$${(cents / 100).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}/mo`;
-}
-
-function limitText(n: number | null): string {
-  return n === null ? 'Unlimited' : String(n);
-}
 
 export default function Subscription() {
   const { company } = useAuth();
@@ -113,6 +69,10 @@ export default function Subscription() {
 
   async function upgrade(t: Tier) {
     if (!company) return;
+    if (t.price_cents === null) {
+      setErr('This plan is custom-priced. Please contact sales to get set up.');
+      return;
+    }
     setErr(''); setMsg(''); setBusyKey(t.key);
     const successUrl = `${window.location.origin}/subscription?session_id={CHECKOUT_SESSION_ID}`;
     const cancelUrl = `${window.location.origin}/subscription`;
@@ -168,13 +128,21 @@ export default function Subscription() {
 
   const ent = mine?.entitlement;
   const audience = ent?.audience ?? (company.kind === 'vendor' ? 'vendor' : 'developer');
+  // Base plans only - verified_plus/vendor_featured are excluded here rather
+  // than mixed into this price-sorted ladder. They're meant to be add-ons
+  // purchased on top of a base vendor plan, but subscription_entitlements
+  // only stores a single tier_key per company today, so actually "buying"
+  // one through this same checkout flow would silently REPLACE (not add to)
+  // a vendor's real plan and its limits - a pre-existing gap in the tier
+  // model, not something safe to expose as a purchase button yet.
   const relevant = tiers
-    .filter((t) => t.audience === audience)
-    .sort((a, b) => a.price_cents - b.price_cents);
+    .filter((t) => t.audience === audience && !ADDON_TIER_KEYS.has(t.key))
+    .sort((a, b) => (a.price_cents ?? Infinity) - (b.price_cents ?? Infinity));
 
-  const limitOrder = Object.keys(LIMIT_LABELS).filter((k) => mine?.limits?.[k]);
+  const limitOrder = Object.keys(LIMIT_LABELS);
 
   const isPastDue = ent?.subscription_status === 'past_due';
+  const isCancelScheduled = ent?.subscription_status === 'cancel_at_period_end';
 
   return (
     <>
@@ -192,6 +160,11 @@ export default function Subscription() {
       {isPastDue && (
         <div className="err" style={{ marginBottom: 12 }}>
           Your last payment failed. Please update your payment method in the Stripe customer portal to avoid losing access.
+        </div>
+      )}
+      {isCancelScheduled && (
+        <div className="note" style={{ marginBottom: 12, background: 'var(--accent-soft, #f4efe0)', padding: '10px 14px', borderRadius: 8 }}>
+          Your subscription is cancelled and will not renew. You'll keep {ent?.name} access until the end of your current billing period, then move to the free plan.
         </div>
       )}
 
@@ -212,54 +185,8 @@ export default function Subscription() {
             </div>
           </div>
 
-          <div style={{ marginTop: 18, display: 'grid', gap: 14 }}>
-            {limitOrder.length === 0 ? (
-              <div className="note">No metered limits on this plan.</div>
-            ) : (
-              limitOrder.map((k) => {
-                const lc = mine!.limits[k];
-                const unlimited = lc.limit === null;
-                const pct = unlimited || lc.limit === 0
-                  ? (lc.used > 0 ? 100 : 0)
-                  : Math.min(100, Math.round((lc.used / (lc.limit || 1)) * 100));
-                const over = !lc.allowed;
-                return (
-                  <div key={k}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-                      <strong>{LIMIT_LABELS[k]}</strong>
-                      <span className="note">
-                        {lc.used} / {limitText(lc.limit)}
-                        {!unlimited && (
-                          <span
-                            className={`badge ${over ? 'b-red' : 'b-green'}`}
-                            style={{ marginLeft: 8 }}
-                          >
-                            {over ? 'At limit' : `${lc.remaining} left`}
-                          </span>
-                        )}
-                      </span>
-                    </div>
-                    <div
-                      style={{
-                        height: 8,
-                        borderRadius: 6,
-                        background: 'rgba(255,255,255,0.08)',
-                        overflow: 'hidden',
-                        marginTop: 4,
-                      }}
-                    >
-                      <div
-                        style={{
-                          width: `${unlimited ? 0 : pct}%`,
-                          height: '100%',
-                          background: over ? '#c0504d' : 'var(--accent, #b8924a)',
-                        }}
-                      />
-                    </div>
-                  </div>
-                );
-              })
-            )}
+          <div style={{ marginTop: 18 }}>
+            {mine && <UsageMeterList limits={mine.limits} labels={LIMIT_LABELS} order={limitOrder} />}
           </div>
         </div>
       )}
@@ -299,10 +226,10 @@ export default function Subscription() {
                   <li>Bid packages: {limitText(t.bid_package_limit)}</li>
                   <li>Vendor invites: {limitText(t.vendor_invite_limit)}</li>
                   {audience === 'developer' && (
-                    <li>Investment programs: {limitText(t.investment_program_limit)}</li>
+                    <li>Capital programs: {limitText(t.investment_program_limit)}</li>
                   )}
                   {audience === 'investor' && (
-                    <li>Investor matches: {limitText(t.investor_match_limit)}</li>
+                    <li>Capital Partner matches: {limitText(t.investor_match_limit)}</li>
                   )}
                   <li>Team seats: {limitText(t.seat_limit)}</li>
                 </ul>
@@ -320,12 +247,14 @@ export default function Subscription() {
                   >
                     {busyKey === t.key
                       ? 'Working...'
+                      : t.price_cents === null
+                      ? 'Contact us'
                       : t.price_cents > 0
                       ? `Upgrade - ${money(t.price_cents)}`
                       : 'Switch to this plan'}
                   </button>
                 )}
-                {current && t.price_cents > 0 && (
+                {current && !!t.price_cents && (
                   <button
                     className="btn"
                     style={{ marginTop: 12, width: '100%' }}

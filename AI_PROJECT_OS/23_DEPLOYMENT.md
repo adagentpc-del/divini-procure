@@ -71,6 +71,40 @@ undone).
 deploy runs no destructive migration. For env-only changes, edit `.env.local` and
 restart.
 
+## Backups & recovery (ALFY2 Section 06)
+
+Production is a single self-hosted Docker Postgres container on one droplet
+(no managed-database provider, so no automatic provider-side snapshots
+exist underneath it). `backup.sh` (repo root) takes a compressed
+`pg_dump --format=custom` snapshot, timestamped, into `/root/backups/divini-procure`
+by default, pruning anything older than 14 days.
+
+**One-time setup on the server:**
+1. Confirm the DB user is exempt from Row-Level Security before relying on
+   this (pg_dump requires it - see the comment at the top of `backup.sh`):
+   ```bash
+   docker exec divini_procure_db psql -U aibos -d divini_procure -c \
+     "select rolsuper or rolbypassrls from pg_roles where rolname = current_user;"
+   ```
+   Must return `t`. If it returns `f`, backups will fail loudly (not
+   silently) until this is corrected - see the script's own error output
+   for the exact remediation.
+2. Add to crontab (`crontab -e` on the server), e.g. nightly at 03:00 UTC:
+   ```
+   0 3 * * * /root/sites/divini-procure/backup.sh >> /var/log/divini-backup.log 2>&1
+   ```
+
+**Restore** (disaster recovery - verified locally this pass via a full
+dump/restore round trip against a real copy of the schema, including RLS
+policies surviving intact):
+```bash
+docker exec -i divini_procure_db pg_restore -U aibos -d divini_procure --clean --if-exists \
+  < /root/backups/divini-procure/divini_procure_<timestamp>.dump
+```
+`--clean --if-exists` drops existing objects before recreating them, so
+this is safe to run against a database that already has (possibly
+corrupted) data in it, not just an empty one.
+
 ## iOS (Mac-only, separate track)
 
 Per `IOS-APP-STORE-RUNBOOK.md`: `npm install` -> provision app.diviniprocure.com

@@ -16,7 +16,7 @@ const router = Router();
 async function getCompanyId(userId: string | null | undefined): Promise<string | null> {
   if (!userId) return null;
   const row = await q1<{ company_id: string }>(
-    `SELECT company_id FROM company_members WHERE user_id = $1 LIMIT 1`,
+    `SELECT company_id FROM company_members WHERE user_id = $1 ORDER BY created_at ASC LIMIT 1`,
     [userId],
   );
   return row?.company_id ?? null;
@@ -48,13 +48,13 @@ router.get(
     if (!companyId) return res.json({ payments: [] });
 
     const rows = await q<any>(
-      `SELECT b.id, b.amount_cents, b.created_at AS awarded_at,
-              p.id AS package_id, p.name AS package_name, p.status AS package_status,
+      `SELECT b.id, round(b.price * 100) AS amount_cents, b.created_at AS awarded_at,
+              p.id AS package_id, p.category AS package_name, p.status AS package_status,
               bld.name AS building_name, bld.id AS building_id
          FROM bids b
          JOIN packages p ON p.id = b.package_id
          JOIN buildings bld ON bld.id = p.building_id
-        WHERE b.company_id = $1 AND b.status = 'awarded'
+        WHERE b.vendor_company_id = $1 AND b.awarded = true
         ORDER BY b.created_at DESC
         LIMIT 50`,
       [companyId],
@@ -92,10 +92,10 @@ router.get(
     }
 
     const rows = await q<any>(
-      `SELECT b.id, b.amount_cents, b.created_at AS awarded_at
+      `SELECT b.id, round(b.price * 100) AS amount_cents, b.created_at AS awarded_at
          FROM bids b
          JOIN packages p ON p.id = b.package_id
-        WHERE b.company_id = $1 AND b.status = 'awarded'
+        WHERE b.vendor_company_id = $1 AND b.awarded = true
         ORDER BY b.created_at DESC
         LIMIT 50`,
       [companyId],

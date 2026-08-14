@@ -24,7 +24,7 @@ const SOURCE_LABEL: Record<string, string> = {
   dvr_audit_log: 'Relationship fee',
   change_order_audit: 'Change order',
   fee_rule_audit: 'Fee rule',
-  investment_audit_log: 'Investment',
+  investment_audit_log: 'Capital',
 };
 
 export default function AdminAudit() {

@@ -30,7 +30,7 @@ Harbor Point Partners,info@harborpoint.com`,
   },
   {
     value: 'investors',
-    label: 'Investors',
+    label: 'Capital Partners',
     columns: 'full_name, email (required), user_id (optional)',
     sample: `full_name,email
 Jane Capital LLC,jane@janecapital.com
@@ -178,7 +178,7 @@ export default function AdminCsvImport() {
         <div>
           <h1>CSV Import</h1>
           <div className="sub">
-            Bulk-import developers, investors, contacts, or products from a CSV. Each row is checked for
+            Bulk-import developers, Capital Partners, contacts, or products from a CSV. Each row is checked for
             duplicates against existing records before anything is written.
           </div>
         </div>

@@ -101,7 +101,7 @@ export default function InvestmentProfile() {
         compliance_notes: p.compliance_notes,
       });
       setP(d.investmentProfile);
-      setOk('Investment profile saved.');
+      setOk('Capital Partner profile saved.');
     } catch (e: any) { setErr(e.message ?? 'Could not save profile.'); }
     finally { setBusy(false); }
   }
@@ -121,8 +121,8 @@ export default function InvestmentProfile() {
     <>
       <div className="page-head">
         <div>
-          <h1>Investment profile</h1>
-          <div className="sub">Declare whether you are open to investors and the terms of your capital raise. Submitted profiles are reviewed before any matching occurs.</div>
+          <h1>Capital Partner profile</h1>
+          <div className="sub">Declare whether you are open to capital partners and the terms of your capital raise. Submitted profiles are reviewed before any matching occurs.</div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           {p.status && <span className="badge b-neutral">Status: {p.status.replace(/_/g, ' ')}</span>}
@@ -135,9 +135,9 @@ export default function InvestmentProfile() {
 
       <div className="card" style={{ marginBottom: 14 }}>
         <div className="two">
-          <div className="field"><label>Investment contact name</label><input value={p.investment_contact_name ?? ''} onChange={(e) => set('investment_contact_name', e.target.value)} /></div>
-          <div className="field"><label>Investment contact email</label><input value={p.investment_contact_email ?? ''} onChange={(e) => set('investment_contact_email', e.target.value)} /></div>
-          <div className="field"><label>Investment contact phone</label><input value={p.investment_contact_phone ?? ''} onChange={(e) => set('investment_contact_phone', e.target.value)} /></div>
+          <div className="field"><label>Capital contact name</label><input value={p.investment_contact_name ?? ''} onChange={(e) => set('investment_contact_name', e.target.value)} /></div>
+          <div className="field"><label>Capital contact email</label><input value={p.investment_contact_email ?? ''} onChange={(e) => set('investment_contact_email', e.target.value)} /></div>
+          <div className="field"><label>Capital contact phone</label><input value={p.investment_contact_phone ?? ''} onChange={(e) => set('investment_contact_phone', e.target.value)} /></div>
           <div className="field"><label>Capital raising status</label>
             <select value={p.capital_raising_status ?? ''} onChange={(e) => set('capital_raising_status', e.target.value)}>
               <option value="">Select…</option>
@@ -149,9 +149,9 @@ export default function InvestmentProfile() {
           </div>
         </div>
         <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', marginTop: 6 }}>
-          <label className="note"><input type="checkbox" checked={!!p.open_to_investors} onChange={(e) => set('open_to_investors', e.target.checked)} /> Open to investors</label>
-          <label className="note"><input type="checkbox" checked={!!p.accredited_accepted} onChange={(e) => set('accredited_accepted', e.target.checked)} /> Accept accredited investors</label>
-          <label className="note"><input type="checkbox" checked={!!p.non_accredited_accepted} onChange={(e) => set('non_accredited_accepted', e.target.checked)} /> Accept non-accredited investors</label>
+          <label className="note"><input type="checkbox" checked={!!p.open_to_investors} onChange={(e) => set('open_to_investors', e.target.checked)} /> Open to capital partners</label>
+          <label className="note"><input type="checkbox" checked={!!p.accredited_accepted} onChange={(e) => set('accredited_accepted', e.target.checked)} /> Accept accredited capital partners</label>
+          <label className="note"><input type="checkbox" checked={!!p.non_accredited_accepted} onChange={(e) => set('non_accredited_accepted', e.target.checked)} /> Accept non-accredited capital partners</label>
         </div>
       </div>
 
@@ -160,10 +160,10 @@ export default function InvestmentProfile() {
         <div className="two">
           <div className="field"><label>Target raise ($)</label><input type="number" value={centsToDollars(p.target_raise_cents)} onChange={(e) => set('target_raise_cents', dollarsToCents(e.target.value))} /></div>
           <div className="field"><label>Offering type</label><input value={p.offering_type ?? ''} onChange={(e) => set('offering_type', e.target.value)} placeholder="506(b), 506(c), Reg A+…" /></div>
-          <div className="field"><label>Minimum investment ($)</label><input type="number" value={centsToDollars(p.min_investment_cents)} onChange={(e) => set('min_investment_cents', dollarsToCents(e.target.value))} /></div>
-          <div className="field"><label>Maximum investment ($)</label><input type="number" value={centsToDollars(p.max_investment_cents)} onChange={(e) => set('max_investment_cents', dollarsToCents(e.target.value))} /></div>
-          <div className="field"><label>Preferred investor type</label><input value={p.preferred_investor_type ?? ''} onChange={(e) => set('preferred_investor_type', e.target.value)} placeholder="individual, family office, institutional…" /></div>
-          <div className="field"><label>Investment structure</label><input value={p.investment_structure ?? ''} onChange={(e) => set('investment_structure', e.target.value)} placeholder="equity, preferred equity, debt…" /></div>
+          <div className="field"><label>Minimum capital ($)</label><input type="number" value={centsToDollars(p.min_investment_cents)} onChange={(e) => set('min_investment_cents', dollarsToCents(e.target.value))} /></div>
+          <div className="field"><label>Maximum capital ($)</label><input type="number" value={centsToDollars(p.max_investment_cents)} onChange={(e) => set('max_investment_cents', dollarsToCents(e.target.value))} /></div>
+          <div className="field"><label>Preferred Capital Partner type</label><input value={p.preferred_investor_type ?? ''} onChange={(e) => set('preferred_investor_type', e.target.value)} placeholder="individual, family office, institutional…" /></div>
+          <div className="field"><label>Capital structure</label><input value={p.investment_structure ?? ''} onChange={(e) => set('investment_structure', e.target.value)} placeholder="equity, preferred equity, debt…" /></div>
           <div className="field"><label>Target returns</label><input value={p.target_returns ?? ''} onChange={(e) => set('target_returns', e.target.value)} placeholder="e.g. 15-18% IRR" /></div>
           <div className="field"><label>Hold period</label><input value={p.hold_period ?? ''} onChange={(e) => set('hold_period', e.target.value)} placeholder="e.g. 5-7 years" /></div>
           <div className="field"><label>Distribution schedule</label><input value={p.distribution_schedule ?? ''} onChange={(e) => set('distribution_schedule', e.target.value)} placeholder="quarterly, annual…" /></div>

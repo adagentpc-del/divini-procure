@@ -158,10 +158,10 @@ export default function AdminVerification() {
         ...body,
         notes: invNotes[id] || undefined,
       });
-      setOk('Investor verification updated.');
+      setOk('Capital Partner verification updated.');
       await loadInvestors();
     } catch (e: any) {
-      setErr(e.message ?? 'Could not update investor.');
+      setErr(e.message ?? 'Could not update Capital Partner.');
     } finally {
       setBusy(false);
     }
@@ -172,7 +172,7 @@ export default function AdminVerification() {
       <div className="page-head">
         <div>
           <h1>Verification</h1>
-          <div className="sub">Admin review of vendor credentials and investor accreditation. Every action is audited.</div>
+          <div className="sub">Admin review of vendor credentials and Capital Partner accreditation. Every action is audited.</div>
         </div>
       </div>
 
@@ -249,8 +249,8 @@ export default function AdminVerification() {
         </table>
       </div>
 
-      {/* ---- investor accreditation ---- */}
-      <div className="sectitle">Investor accreditation</div>
+      {/* ---- capital partner accreditation ---- */}
+      <div className="sectitle">Capital Partner accreditation</div>
       <div className="card" style={{ marginBottom: 10 }}>
         <div className="two">
           <div className="field">
@@ -271,7 +271,7 @@ export default function AdminVerification() {
         <table>
           <thead>
             <tr>
-              <th>Investor</th>
+              <th>Capital Partner</th>
               <th>Self-reported</th>
               <th>Accreditation</th>
               <th>KYC</th>
@@ -281,7 +281,7 @@ export default function AdminVerification() {
           </thead>
           <tbody>
             {investors.length === 0 && (
-              <tr><td colSpan={6} className="note" style={{ padding: 12 }}>No investors.</td></tr>
+              <tr><td colSpan={6} className="note" style={{ padding: 12 }}>No Capital Partners.</td></tr>
             )}
             {investors.map((i) => (
               <tr key={i.id}>

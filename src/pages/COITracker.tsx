@@ -1,5 +1,10 @@
 /**
- * COITracker -- Insurance certificate tracking page for Divini Procure.
+ * COITracker -- insurance certificate and trade/business license tracking
+ * page for Divini Procure. Talks to /api/coi (server/src/routes/coi.ts) and
+ * /api/licenses (server/src/routes/licenses.ts, the vendor prequalification
+ * gap closure - docs/competitive-analysis-2026-08.md gap #3). Styling
+ * matches the rest of Procure (card / table / btn / badge / field / two) -
+ * see theme.css. Zero em dashes by convention.
  */
 import { useEffect, useState } from 'react';
 
@@ -21,25 +26,35 @@ function formatMoney(cents: number | null | undefined): string {
   return '$' + Math.round(cents / 100).toLocaleString('en-US');
 }
 
+function formatDate(d: string | null | undefined): string {
+  return d
+    ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    : '—';
+}
+
+function badgeClass(status: string): string {
+  switch (status) {
+    case 'active':
+      return 'badge b-green';
+    case 'expiring_soon':
+      return 'badge b-amber';
+    case 'expired':
+      return 'badge b-red';
+    default:
+      return 'badge b-neutral';
+  }
+}
+
 function StatusBadge({ status }: { status: string }) {
-  const cls =
-    status === 'active' ? 'bg-green-100 text-green-800' :
-    status === 'expiring_soon' ? 'bg-amber-100 text-amber-800' :
-    status === 'expired' ? 'bg-red-100 text-red-800' :
-    'bg-gray-100 text-gray-600';
   const label =
     status === 'active' ? 'Active' :
     status === 'expiring_soon' ? 'Expiring Soon' :
     status === 'expired' ? 'Expired' :
     'Suspended';
-  return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${cls}`}>
-      {label}
-    </span>
-  );
+  return <span className={badgeClass(status)}>{label}</span>;
 }
 
-const emptyForm = {
+const emptyCertForm = {
   certificateType: 'general_liability',
   carrierName: '',
   policyNumber: '',
@@ -50,13 +65,33 @@ const emptyForm = {
   notes: '',
 };
 
+const emptyLicenseForm = {
+  licenseType: '',
+  licenseNumber: '',
+  issuingAuthority: '',
+  jurisdiction: '',
+  effectiveDate: '',
+  expiryDate: '',
+  notes: '',
+};
+
 export default function COITracker() {
+  const [tab, setTab] = useState<'coi' | 'licenses'>('coi');
+
   const [certs, setCerts] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
+  const [certsLoading, setCertsLoading] = useState(true);
+  const [showCertForm, setShowCertForm] = useState(false);
   const [editCert, setEditCert] = useState<any | null>(null);
-  const [form, setForm] = useState({ ...emptyForm });
-  const [submitting, setSubmitting] = useState(false);
+  const [certForm, setCertForm] = useState({ ...emptyCertForm });
+  const [certSubmitting, setCertSubmitting] = useState(false);
+
+  const [licenses, setLicenses] = useState<any[]>([]);
+  const [licensesLoading, setLicensesLoading] = useState(true);
+  const [showLicenseForm, setShowLicenseForm] = useState(false);
+  const [editLicense, setEditLicense] = useState<any | null>(null);
+  const [licenseForm, setLicenseForm] = useState({ ...emptyLicenseForm });
+  const [licenseSubmitting, setLicenseSubmitting] = useState(false);
+
   const [error, setError] = useState('');
 
   async function fetchCerts() {
@@ -68,21 +103,34 @@ export default function COITracker() {
     } catch (e: any) {
       setError(e.message ?? 'Could not load certificates');
     } finally {
-      setLoading(false);
+      setCertsLoading(false);
     }
   }
 
-  useEffect(() => { fetchCerts(); }, []);
-
-  function openAdd() {
-    setEditCert(null);
-    setForm({ ...emptyForm });
-    setShowForm(true);
+  async function fetchLicenses() {
+    try {
+      const res = await fetch('/api/licenses');
+      if (!res.ok) throw new Error('Failed to load licenses');
+      const data = await res.json();
+      setLicenses(data.licenses ?? []);
+    } catch (e: any) {
+      setError(e.message ?? 'Could not load licenses');
+    } finally {
+      setLicensesLoading(false);
+    }
   }
 
-  function openEdit(cert: any) {
+  useEffect(() => { fetchCerts(); fetchLicenses(); }, []);
+
+  function openAddCert() {
+    setEditCert(null);
+    setCertForm({ ...emptyCertForm });
+    setShowCertForm(true);
+  }
+
+  function openEditCert(cert: any) {
     setEditCert(cert);
-    setForm({
+    setCertForm({
       certificateType: cert.certificate_type ?? 'general_liability',
       carrierName: cert.carrier_name ?? '',
       policyNumber: cert.policy_number ?? '',
@@ -92,200 +140,290 @@ export default function COITracker() {
       expiryDate: cert.expiry_date ? cert.expiry_date.slice(0, 10) : '',
       notes: cert.notes ?? '',
     });
-    setShowForm(true);
+    setShowCertForm(true);
   }
 
-  function cancelForm() {
-    setShowForm(false);
+  function cancelCertForm() {
+    setShowCertForm(false);
     setEditCert(null);
-    setForm({ ...emptyForm });
+    setCertForm({ ...emptyCertForm });
     setError('');
   }
 
-  function field(key: keyof typeof form) {
+  function certField(key: keyof typeof certForm) {
     return (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
-      setForm(f => ({ ...f, [key]: e.target.value }));
+      setCertForm(f => ({ ...f, [key]: e.target.value }));
     };
   }
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleCertSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setSubmitting(true);
+    setCertSubmitting(true);
     setError('');
     try {
       const dollarsToInt = (s: string) => s === '' ? undefined : Math.round(Number(s) * 100);
       const payload: Record<string, unknown> = {
-        certificateType: form.certificateType,
-        carrierName: form.carrierName || undefined,
-        policyNumber: form.policyNumber || undefined,
-        coverageAmountCents: dollarsToInt(form.coverageAmountCents),
-        aggregateAmountCents: dollarsToInt(form.aggregateAmountCents),
-        effectiveDate: form.effectiveDate || undefined,
-        expiryDate: form.expiryDate,
-        notes: form.notes || undefined,
+        certificateType: certForm.certificateType,
+        carrierName: certForm.carrierName || undefined,
+        policyNumber: certForm.policyNumber || undefined,
+        coverageAmountCents: dollarsToInt(certForm.coverageAmountCents),
+        aggregateAmountCents: dollarsToInt(certForm.aggregateAmountCents),
+        effectiveDate: certForm.effectiveDate || undefined,
+        expiryDate: certForm.expiryDate,
+        notes: certForm.notes || undefined,
       };
 
-      let res: Response;
-      if (editCert) {
-        res = await fetch(`/api/coi/${editCert.id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-      } else {
-        res = await fetch('/api/coi', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-      }
+      const res = editCert
+        ? await fetch(`/api/coi/${editCert.id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          })
+        : await fetch('/api/coi', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
 
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
         throw new Error((d as any).error ?? 'Save failed');
       }
 
-      setLoading(true);
+      setCertsLoading(true);
       await fetchCerts();
-      cancelForm();
+      cancelCertForm();
     } catch (e: any) {
       setError(e.message ?? 'Save failed');
     } finally {
-      setSubmitting(false);
+      setCertSubmitting(false);
     }
   }
 
-  const computed = certs.map(c => ({
-    ...c,
-    _status: c.computed_status ?? c.status,
-  }));
+  function openAddLicense() {
+    setEditLicense(null);
+    setLicenseForm({ ...emptyLicenseForm });
+    setShowLicenseForm(true);
+  }
 
-  const activeCount = computed.filter(c => c._status === 'active').length;
-  const expiringSoonCount = computed.filter(c => c._status === 'expiring_soon').length;
-  const expiredCount = computed.filter(c => c._status === 'expired').length;
+  function openEditLicense(license: any) {
+    setEditLicense(license);
+    setLicenseForm({
+      licenseType: license.license_type ?? '',
+      licenseNumber: license.license_number ?? '',
+      issuingAuthority: license.issuing_authority ?? '',
+      jurisdiction: license.jurisdiction ?? '',
+      effectiveDate: license.effective_date ? license.effective_date.slice(0, 10) : '',
+      expiryDate: license.expiry_date ? license.expiry_date.slice(0, 10) : '',
+      notes: license.notes ?? '',
+    });
+    setShowLicenseForm(true);
+  }
+
+  function cancelLicenseForm() {
+    setShowLicenseForm(false);
+    setEditLicense(null);
+    setLicenseForm({ ...emptyLicenseForm });
+    setError('');
+  }
+
+  function licenseField(key: keyof typeof licenseForm) {
+    return (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      setLicenseForm(f => ({ ...f, [key]: e.target.value }));
+    };
+  }
+
+  async function handleLicenseSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setLicenseSubmitting(true);
+    setError('');
+    try {
+      const payload: Record<string, unknown> = {
+        licenseType: licenseForm.licenseType,
+        licenseNumber: licenseForm.licenseNumber || undefined,
+        issuingAuthority: licenseForm.issuingAuthority || undefined,
+        jurisdiction: licenseForm.jurisdiction || undefined,
+        effectiveDate: licenseForm.effectiveDate || undefined,
+        expiryDate: licenseForm.expiryDate,
+        notes: licenseForm.notes || undefined,
+      };
+
+      const res = editLicense
+        ? await fetch(`/api/licenses/${editLicense.id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          })
+        : await fetch('/api/licenses', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error((d as any).error ?? 'Save failed');
+      }
+
+      setLicensesLoading(true);
+      await fetchLicenses();
+      cancelLicenseForm();
+    } catch (e: any) {
+      setError(e.message ?? 'Save failed');
+    } finally {
+      setLicenseSubmitting(false);
+    }
+  }
+
+  async function deleteLicense(id: string) {
+    try {
+      const res = await fetch(`/api/licenses/${id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error((d as any).error ?? 'Delete failed');
+      }
+      await fetchLicenses();
+    } catch (e: any) {
+      setError(e.message ?? 'Delete failed');
+    }
+  }
+
+  const computedCerts = certs.map(c => ({ ...c, _status: c.computed_status ?? c.status }));
+  const certActiveCount = computedCerts.filter(c => c._status === 'active').length;
+  const certExpiringSoonCount = computedCerts.filter(c => c._status === 'expiring_soon').length;
+  const certExpiredCount = computedCerts.filter(c => c._status === 'expired').length;
+
+  const computedLicenses = licenses.map(l => ({ ...l, _status: l.computed_status ?? l.status }));
+  const licenseActiveCount = computedLicenses.filter(l => l._status === 'active').length;
+  const licenseExpiringSoonCount = computedLicenses.filter(l => l._status === 'expiring_soon').length;
+  const licenseExpiredCount = computedLicenses.filter(l => l._status === 'expired').length;
+
+  const loading = tab === 'coi' ? certsLoading : licensesLoading;
 
   return (
-    <div className="max-w-5xl mx-auto px-4 py-8">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+    <div>
+      <div className="page-head">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">
-            <span className="mr-2">🛡️</span>Insurance Tracker
-          </h1>
-          <p className="text-sm text-gray-500 mt-1">
-            Manage and track certificates of insurance
-          </p>
+          <h1>Compliance &amp; Prequalification</h1>
+          <div className="sub">Insurance certificates and trade/business licenses on file - what a developer sees before considering your bid.</div>
         </div>
-        <button
-          onClick={openAdd}
-          className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 transition-colors"
-        >
-          + Add Certificate
+        <button className="btn primary" onClick={tab === 'coi' ? openAddCert : openAddLicense}>
+          {tab === 'coi' ? '+ Add Certificate' : '+ Add License'}
         </button>
       </div>
 
-      {/* Stat cards */}
-      {!loading && (
-        <div className="grid grid-cols-3 gap-4 mb-6">
-          <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-            <p className="text-sm text-green-700 font-medium">Active</p>
-            <p className="text-3xl font-bold text-green-800">{activeCount}</p>
-          </div>
-          <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
-            <p className="text-sm text-amber-700 font-medium">Expiring Soon</p>
-            <p className="text-3xl font-bold text-amber-800">{expiringSoonCount}</p>
-          </div>
-          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-            <p className="text-sm text-red-700 font-medium">Expired</p>
-            <p className="text-3xl font-bold text-red-800">{expiredCount}</p>
-          </div>
+      <div style={{ display: 'flex', gap: 4, marginBottom: 18, borderBottom: '1px solid var(--line)' }}>
+        {(['coi', 'licenses'] as const).map(t => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className="btn"
+            style={{
+              border: 'none',
+              borderBottom: tab === t ? '2px solid var(--emerald)' : '2px solid transparent',
+              borderRadius: 0,
+              background: 'transparent',
+              color: tab === t ? 'var(--emerald-deep)' : 'var(--muted)',
+            }}
+          >
+            {t === 'coi' ? 'Insurance (COI)' : 'Licenses'}
+          </button>
+        ))}
+      </div>
+
+      {!loading && tab === 'coi' && (
+        <div className="grid cards3" style={{ marginBottom: 18 }}>
+          <div className="card metric"><div className="k">Active</div><div className="v">{certActiveCount}</div></div>
+          <div className="card metric"><div className="k">Expiring Soon</div><div className="v">{certExpiringSoonCount}</div></div>
+          <div className="card metric"><div className="k">Expired</div><div className="v">{certExpiredCount}</div></div>
+        </div>
+      )}
+      {!loading && tab === 'licenses' && (
+        <div className="grid cards3" style={{ marginBottom: 18 }}>
+          <div className="card metric"><div className="k">Active</div><div className="v">{licenseActiveCount}</div></div>
+          <div className="card metric"><div className="k">Expiring Soon</div><div className="v">{licenseExpiringSoonCount}</div></div>
+          <div className="card metric"><div className="k">Expired</div><div className="v">{licenseExpiredCount}</div></div>
         </div>
       )}
 
-      {/* Expiry warning banner */}
-      {!loading && expiringSoonCount > 0 && (
-        <div className="mb-6 bg-amber-50 border border-amber-300 rounded-lg px-4 py-3 flex items-center gap-2">
-          <span className="text-amber-500">⚠️</span>
-          <span className="text-sm text-amber-800 font-medium">
-            {expiringSoonCount} certificate{expiringSoonCount !== 1 ? 's' : ''} expiring within 30 days
-          </span>
+      {!loading && tab === 'coi' && certExpiringSoonCount > 0 && (
+        <div className="badge b-amber" style={{ display: 'block', padding: '10px 14px', marginBottom: 16, fontSize: 13 }}>
+          {certExpiringSoonCount} certificate{certExpiringSoonCount !== 1 ? 's' : ''} expiring within 30 days
+        </div>
+      )}
+      {!loading && tab === 'licenses' && licenseExpiringSoonCount > 0 && (
+        <div className="badge b-amber" style={{ display: 'block', padding: '10px 14px', marginBottom: 16, fontSize: 13 }}>
+          {licenseExpiringSoonCount} license{licenseExpiringSoonCount !== 1 ? 's' : ''} expiring within 30 days
         </div>
       )}
 
-      {/* Error */}
-      {error && !showForm && (
-        <div className="mb-4 bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700">
-          {error}
-        </div>
-      )}
+      {error && !showCertForm && !showLicenseForm && <div className="err">{error}</div>}
 
-      {/* Loading skeleton */}
-      {loading && (
-        <div className="space-y-3">
-          {[1, 2, 3].map(i => (
-            <div key={i} className="h-12 bg-gray-100 rounded animate-pulse" />
-          ))}
-        </div>
-      )}
+      {loading && <div className="note">Loading…</div>}
 
-      {/* Empty state */}
-      {!loading && certs.length === 0 && !showForm && (
-        <div className="bg-white border border-gray-200 rounded-lg p-12 text-center">
-          <p className="text-gray-500 mb-4">
+      {tab === 'coi' && !certsLoading && certs.length === 0 && !showCertForm && (
+        <div className="card" style={{ textAlign: 'center', padding: 40 }}>
+          <p className="note" style={{ marginBottom: 14 }}>
             No insurance certificates on file. Add your first certificate to stay compliant.
           </p>
-          <button
-            onClick={openAdd}
-            className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700"
-          >
-            Add Certificate
-          </button>
+          <button className="btn primary" onClick={openAddCert}>Add Certificate</button>
         </div>
       )}
 
-      {/* Table */}
-      {!loading && certs.length > 0 && (
-        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden mb-6">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
+      {tab === 'coi' && !certsLoading && certs.length > 0 && (
+        <div className="card" style={{ padding: 0, marginBottom: 18 }}>
+          <table>
+            <thead>
               <tr>
-                {['Type', 'Carrier', 'Policy #', 'Coverage', 'Expiry Date', 'Status', 'Actions'].map(h => (
-                  <th key={h} className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    {h}
-                  </th>
-                ))}
+                <th>Type</th><th>Carrier</th><th>Policy #</th><th>Coverage</th><th>Expiry Date</th><th>Status</th><th></th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-200">
-              {computed.map(cert => (
-                <tr key={cert.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3 text-sm text-gray-900">
-                    {formatType(cert.certificate_type)}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-gray-600">
-                    {cert.carrier_name ?? <span className="text-gray-400">&mdash;</span>}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-gray-600 font-mono">
-                    {cert.policy_number ?? <span className="text-gray-400">&mdash;</span>}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-gray-600">
-                    {formatMoney(cert.coverage_amount_cents)}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-gray-600">
-                    {cert.expiry_date
-                      ? new Date(cert.expiry_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-                      : <span className="text-gray-400">&mdash;</span>}
-                  </td>
-                  <td className="px-4 py-3">
-                    <StatusBadge status={cert._status} />
-                  </td>
-                  <td className="px-4 py-3">
-                    <button
-                      onClick={() => openEdit(cert)}
-                      className="text-sm text-blue-600 hover:text-blue-800 font-medium"
-                    >
-                      Edit
-                    </button>
+            <tbody>
+              {computedCerts.map(cert => (
+                <tr key={cert.id}>
+                  <td>{formatType(cert.certificate_type)}</td>
+                  <td>{cert.carrier_name ?? <span className="note">—</span>}</td>
+                  <td>{cert.policy_number ?? <span className="note">—</span>}</td>
+                  <td>{formatMoney(cert.coverage_amount_cents)}</td>
+                  <td>{formatDate(cert.expiry_date)}</td>
+                  <td><StatusBadge status={cert._status} /></td>
+                  <td><button className="btn" onClick={() => openEditCert(cert)}>Edit</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {tab === 'licenses' && !licensesLoading && licenses.length === 0 && !showLicenseForm && (
+        <div className="card" style={{ textAlign: 'center', padding: 40 }}>
+          <p className="note" style={{ marginBottom: 14 }}>
+            No trade or business licenses on file. Add your first license so developers can prequalify you.
+          </p>
+          <button className="btn primary" onClick={openAddLicense}>Add License</button>
+        </div>
+      )}
+
+      {tab === 'licenses' && !licensesLoading && licenses.length > 0 && (
+        <div className="card" style={{ padding: 0, marginBottom: 18 }}>
+          <table>
+            <thead>
+              <tr>
+                <th>Type</th><th>License #</th><th>Issuing Authority</th><th>Jurisdiction</th><th>Expiry Date</th><th>Status</th><th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {computedLicenses.map(license => (
+                <tr key={license.id}>
+                  <td>{license.license_type}</td>
+                  <td>{license.license_number ?? <span className="note">—</span>}</td>
+                  <td>{license.issuing_authority ?? <span className="note">—</span>}</td>
+                  <td>{license.jurisdiction ?? <span className="note">—</span>}</td>
+                  <td>{formatDate(license.expiry_date)}</td>
+                  <td><StatusBadge status={license._status} /></td>
+                  <td style={{ display: 'flex', gap: 6 }}>
+                    <button className="btn" onClick={() => openEditLicense(license)}>Edit</button>
+                    <button className="btn" onClick={() => deleteLicense(license.id)}>Remove</button>
                   </td>
                 </tr>
               ))}
@@ -294,138 +432,109 @@ export default function COITracker() {
         </div>
       )}
 
-      {/* Add / Edit form */}
-      {showForm && (
-        <div className="bg-white border border-gray-200 rounded-lg p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">
-            {editCert ? 'Edit Certificate' : 'Add Certificate'}
-          </h2>
-
-          {error && (
-            <div className="mb-4 bg-red-50 border border-red-200 rounded px-4 py-3 text-sm text-red-700">
-              {error}
-            </div>
-          )}
-
-          <form onSubmit={handleSubmit} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {/* Type */}
-            <div className="sm:col-span-2">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Type *</label>
-              <select
-                value={form.certificateType}
-                onChange={field('certificateType')}
-                required
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                {CERT_TYPES.map(t => (
-                  <option key={t.value} value={t.value}>{t.label}</option>
-                ))}
+      {showCertForm && (
+        <div className="card">
+          <h2 style={{ fontSize: 18, marginBottom: 14 }}>{editCert ? 'Edit Certificate' : 'Add Certificate'}</h2>
+          {error && <div className="err">{error}</div>}
+          <form onSubmit={handleCertSubmit}>
+            <div className="field">
+              <label>Type *</label>
+              <select value={certForm.certificateType} onChange={certField('certificateType')} required>
+                {CERT_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
               </select>
             </div>
+            <div className="two">
+              <div className="field">
+                <label>Carrier Name</label>
+                <input type="text" value={certForm.carrierName} onChange={certField('carrierName')} placeholder="e.g. Travelers" />
+              </div>
+              <div className="field">
+                <label>Policy Number</label>
+                <input type="text" value={certForm.policyNumber} onChange={certField('policyNumber')} placeholder="e.g. GL-123456" />
+              </div>
+            </div>
+            <div className="two">
+              <div className="field">
+                <label>Coverage Amount ($)</label>
+                <input type="number" min="0" step="1" value={certForm.coverageAmountCents} onChange={certField('coverageAmountCents')} placeholder="e.g. 1000000" />
+              </div>
+              <div className="field">
+                <label>Aggregate Amount ($)</label>
+                <input type="number" min="0" step="1" value={certForm.aggregateAmountCents} onChange={certField('aggregateAmountCents')} placeholder="e.g. 2000000" />
+              </div>
+            </div>
+            <div className="two">
+              <div className="field">
+                <label>Effective Date</label>
+                <input type="date" value={certForm.effectiveDate} onChange={certField('effectiveDate')} />
+              </div>
+              <div className="field">
+                <label>Expiry Date *</label>
+                <input type="date" value={certForm.expiryDate} onChange={certField('expiryDate')} required />
+              </div>
+            </div>
+            <div className="field">
+              <label>Notes</label>
+              <textarea value={certForm.notes} onChange={certField('notes')} rows={3} placeholder="Additional notes..." />
+            </div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button type="submit" className="btn primary" disabled={certSubmitting}>
+                {certSubmitting ? 'Saving...' : editCert ? 'Save Changes' : 'Add Certificate'}
+              </button>
+              <button type="button" className="btn" onClick={cancelCertForm}>Cancel</button>
+            </div>
+          </form>
+        </div>
+      )}
 
-            {/* Carrier */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Carrier Name</label>
+      {showLicenseForm && (
+        <div className="card">
+          <h2 style={{ fontSize: 18, marginBottom: 14 }}>{editLicense ? 'Edit License' : 'Add License'}</h2>
+          {error && <div className="err">{error}</div>}
+          <form onSubmit={handleLicenseSubmit}>
+            <div className="field">
+              <label>License Type *</label>
               <input
                 type="text"
-                value={form.carrierName}
-                onChange={field('carrierName')}
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="e.g. Travelers"
-              />
-            </div>
-
-            {/* Policy # */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Policy Number</label>
-              <input
-                type="text"
-                value={form.policyNumber}
-                onChange={field('policyNumber')}
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="e.g. GL-123456"
-              />
-            </div>
-
-            {/* Coverage */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Coverage Amount ($)</label>
-              <input
-                type="number"
-                min="0"
-                step="1"
-                value={form.coverageAmountCents}
-                onChange={field('coverageAmountCents')}
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="e.g. 1000000"
-              />
-            </div>
-
-            {/* Aggregate */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Aggregate Amount ($)</label>
-              <input
-                type="number"
-                min="0"
-                step="1"
-                value={form.aggregateAmountCents}
-                onChange={field('aggregateAmountCents')}
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="e.g. 2000000"
-              />
-            </div>
-
-            {/* Effective Date */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Effective Date</label>
-              <input
-                type="date"
-                value={form.effectiveDate}
-                onChange={field('effectiveDate')}
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-
-            {/* Expiry Date */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Expiry Date *</label>
-              <input
-                type="date"
-                value={form.expiryDate}
-                onChange={field('expiryDate')}
+                value={licenseForm.licenseType}
+                onChange={licenseField('licenseType')}
+                placeholder="e.g. General Contractor License"
                 required
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
-
-            {/* Notes */}
-            <div className="sm:col-span-2">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
-              <textarea
-                value={form.notes}
-                onChange={field('notes')}
-                rows={3}
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="Additional notes..."
-              />
+            <div className="two">
+              <div className="field">
+                <label>License Number</label>
+                <input type="text" value={licenseForm.licenseNumber} onChange={licenseField('licenseNumber')} placeholder="e.g. GC-123456" />
+              </div>
+              <div className="field">
+                <label>Issuing Authority</label>
+                <input type="text" value={licenseForm.issuingAuthority} onChange={licenseField('issuingAuthority')} placeholder="e.g. California CSLB" />
+              </div>
             </div>
-
-            {/* Actions */}
-            <div className="sm:col-span-2 flex gap-3 pt-2">
-              <button
-                type="submit"
-                disabled={submitting}
-                className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 disabled:opacity-50 transition-colors"
-              >
-                {submitting ? 'Saving...' : editCert ? 'Save Changes' : 'Add Certificate'}
+            <div className="two">
+              <div className="field">
+                <label>Jurisdiction</label>
+                <input type="text" value={licenseForm.jurisdiction} onChange={licenseField('jurisdiction')} placeholder="e.g. CA" />
+              </div>
+              <div className="field">
+                <label>Expiry Date *</label>
+                <input type="date" value={licenseForm.expiryDate} onChange={licenseField('expiryDate')} required />
+              </div>
+            </div>
+            <div className="field">
+              <label>Effective Date</label>
+              <input type="date" value={licenseForm.effectiveDate} onChange={licenseField('effectiveDate')} />
+            </div>
+            <div className="field">
+              <label>Notes</label>
+              <textarea value={licenseForm.notes} onChange={licenseField('notes')} rows={3} placeholder="Additional notes..." />
+            </div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button type="submit" className="btn primary" disabled={licenseSubmitting}>
+                {licenseSubmitting ? 'Saving...' : editLicense ? 'Save Changes' : 'Add License'}
               </button>
-              <button
-                type="button"
-                onClick={cancelForm}
-                className="px-4 py-2 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-md hover:bg-gray-50 transition-colors"
-              >
-                Cancel
-              </button>
+              <button type="button" className="btn" onClick={cancelLicenseForm}>Cancel</button>
             </div>
           </form>
         </div>

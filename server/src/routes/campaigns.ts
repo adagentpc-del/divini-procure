@@ -392,9 +392,33 @@ router.post(
   }),
 );
 
-// GET /unsubscribe?token= : public one-click unsubscribe. No auth required.
-// Reads the token from campaign_recipients, inserts the address into
-// email_suppressions, and returns a plain confirmation page.
+// Shared unsubscribe logic for both entry points below. Idempotent: an
+// already-used or unknown token is treated as "already unsubscribed"
+// rather than an error, since a replayed/stale link should never surface
+// a confusing failure to a recipient.
+async function unsubscribeByToken(token: string): Promise<void> {
+  const row = await q1<{ email: string }>(
+    `select email from campaign_recipients where unsubscribe_token = $1`,
+    [token],
+  );
+  if (!row) return;
+  // Upsert into suppressions (idempotent).
+  await q(
+    `insert into email_suppressions (email, source) values ($1, 'campaign_link')
+     on conflict (email) do nothing`,
+    [row.email.toLowerCase()],
+  );
+  // Invalidate the token so the same link cannot be replayed to probe emails.
+  await q(
+    `update campaign_recipients set unsubscribe_token = null where unsubscribe_token = $1`,
+    [token],
+  );
+}
+
+// GET /unsubscribe?token= : a recipient opening the link in a browser (or a
+// mail client with no RFC 8058 one-click support). Returns a confirmation
+// page. No auth required - the unguessable per-recipient token IS the
+// capability, same pattern as the signed document-download URLs.
 router.get(
   "/unsubscribe",
   h(async (req, res) => {
@@ -403,27 +427,35 @@ router.get(
       res.status(400).send("Missing unsubscribe token.");
       return;
     }
-    const row = await q1<{ email: string }>(
-      `select email from campaign_recipients where unsubscribe_token = $1`,
-      [token],
-    );
-    if (!row) {
-      // Token not found or already used — show a neutral message either way.
-      res.status(200).send(unsubPage("You have been unsubscribed.", "If you did not expect this, no action is needed."));
+    await unsubscribeByToken(token);
+    res.status(200).send(unsubPage("You have been unsubscribed.", "You will no longer receive marketing emails from Divini Procure."));
+  }),
+);
+
+// POST /unsubscribe?token= : RFC 8058 one-click unsubscribe. The email's
+// List-Unsubscribe-Post header (set when this campaign mail was sent, see
+// approve-and-send below) tells compliant mail providers (Gmail, Outlook,
+// Yahoo) to POST here with body "List-Unsubscribe=One-Click" instead of
+// following the link as a GET - specifically because a GET can be
+// triggered unintentionally by a link-scanning security/antivirus proxy
+// that crawls every URL in an email, silently unsubscribing someone who
+// never clicked anything. Without this handler, a provider that actually
+// honors the header correctly gets a 404 on the POST it sends, and the
+// user's click on "Unsubscribe" in their mail client silently does
+// nothing - a real CAN-SPAM risk (failing to honor a genuine unsubscribe
+// request), not just a UX gap. No HTML response body per the RFC - the
+// mail client does not render it to the user.
+router.post(
+  "/unsubscribe",
+  h(async (req, res) => {
+    const token =
+      typeof req.query.token === "string" ? req.query.token.trim() : "";
+    if (!token) {
+      res.status(400).end();
       return;
     }
-    // Upsert into suppressions (idempotent).
-    await q(
-      `insert into email_suppressions (email, source) values ($1, 'campaign_link')
-       on conflict (email) do nothing`,
-      [row.email.toLowerCase()],
-    );
-    // Invalidate the token so the same link cannot be replayed to probe emails.
-    await q(
-      `update campaign_recipients set unsubscribe_token = null where unsubscribe_token = $1`,
-      [token],
-    );
-    res.status(200).send(unsubPage("You have been unsubscribed.", "You will no longer receive marketing emails from Divini Procure."));
+    await unsubscribeByToken(token);
+    res.status(200).end();
   }),
 );
 

@@ -11,11 +11,11 @@ import ComplianceDisclaimer from '../components/ComplianceDisclaimer';
 import { InvestorMatchCard, type InvestorMatch } from '../components/MatchCard';
 
 const PROGRAM_TYPES = [
-  'Single Project Investment', 'Development Fund', 'Hotel / Hospitality Investment',
-  'Multifamily Investment', 'Mixed-Use Development', 'Ground-Up Development',
-  'Value-Add Opportunity', 'Preferred Equity', 'Common Equity', 'Debt Investment',
-  'JV / Strategic Partnership', 'Family Office Opportunity', 'Accredited Investor Offering',
-  'Non-Accredited Investor Program', 'Real Estate Education / Entry Program',
+  'Single Project Capital Raise', 'Development Fund', 'Hotel / Hospitality Capital Raise',
+  'Multifamily Capital Raise', 'Mixed-Use Development', 'Ground-Up Development',
+  'Value-Add Opportunity', 'Preferred Equity', 'Common Equity', 'Debt Capital Raise',
+  'JV / Strategic Partnership', 'Family Office Opportunity', 'Accredited Capital Partner Offering',
+  'Non-Accredited Capital Partner Program', 'Real Estate Education / Entry Program',
   'Sponsorship / Capital Partner Opportunity',
 ];
 
@@ -24,6 +24,20 @@ const VISIBILITY = [
   'non_accredited_program', 'family_office_only', 'admin_approved_only',
   'private_invite_only', 'closed',
 ];
+
+// Display-only labels for the VISIBILITY wire values above (the underlying
+// database values are unchanged; only what an admin/developer reads differs).
+const VISIBILITY_LABEL: Record<string, string> = {
+  public_teaser: 'public teaser',
+  approved_investor_preview: 'approved capital partner preview',
+  nda_required: 'nda required',
+  accredited_only: 'accredited only',
+  non_accredited_program: 'non accredited program',
+  family_office_only: 'family office only',
+  admin_approved_only: 'admin approved only',
+  private_invite_only: 'private invite only',
+  closed: 'closed',
+};
 
 type Program = Record<string, any> & { id: string; name?: string; status?: string; admin_review_status?: string };
 type Doc = { id: string; doc_type?: string; docType?: string; title?: string; url?: string };
@@ -94,8 +108,8 @@ export default function InvestmentPrograms() {
     <>
       <div className="page-head">
         <div>
-          <h1>Investment programs</h1>
-          <div className="sub">Create capital-raise programs, submit them for review, share offering materials, and review matched investors.</div>
+          <h1>Capital programs</h1>
+          <div className="sub">Create capital-raise programs, submit them for review, share offering materials, and review matched capital partners.</div>
         </div>
       </div>
 
@@ -117,15 +131,15 @@ export default function InvestmentPrograms() {
           <div className="field"><label>Project stage</label><input value={form.project_stage} onChange={(e) => setF('project_stage', e.target.value)} /></div>
           <div className="field"><label>Visibility</label>
             <select value={form.visibility} onChange={(e) => setF('visibility', e.target.value)}>
-              {VISIBILITY.map((v) => <option key={v} value={v}>{v.replace(/_/g, ' ')}</option>)}
+              {VISIBILITY.map((v) => <option key={v} value={v}>{VISIBILITY_LABEL[v] ?? v.replace(/_/g, ' ')}</option>)}
             </select>
           </div>
           <div className="field"><label>Target raise ($)</label><input type="number" value={targetRaise} onChange={(e) => setTargetRaise(e.target.value)} /></div>
-          <div className="field"><label>Investor type accepted</label><input value={form.investor_type_accepted} onChange={(e) => setF('investor_type_accepted', e.target.value)} /></div>
-          <div className="field"><label>Minimum investment ($)</label><input type="number" value={minInv} onChange={(e) => setMinInv(e.target.value)} /></div>
-          <div className="field"><label>Maximum investment ($)</label><input type="number" value={maxInv} onChange={(e) => setMaxInv(e.target.value)} /></div>
+          <div className="field"><label>Capital Partner type accepted</label><input value={form.investor_type_accepted} onChange={(e) => setF('investor_type_accepted', e.target.value)} /></div>
+          <div className="field"><label>Minimum capital ($)</label><input type="number" value={minInv} onChange={(e) => setMinInv(e.target.value)} /></div>
+          <div className="field"><label>Maximum capital ($)</label><input type="number" value={maxInv} onChange={(e) => setMaxInv(e.target.value)} /></div>
           <div className="field"><label>Offering type</label><input value={form.offering_type} onChange={(e) => setF('offering_type', e.target.value)} /></div>
-          <div className="field"><label>Investment vehicle</label><input value={form.investment_vehicle} onChange={(e) => setF('investment_vehicle', e.target.value)} /></div>
+          <div className="field"><label>Capital vehicle</label><input value={form.investment_vehicle} onChange={(e) => setF('investment_vehicle', e.target.value)} /></div>
           <div className="field"><label>Projected return</label><input value={form.projected_return} onChange={(e) => setF('projected_return', e.target.value)} /></div>
           <div className="field"><label>Preferred return</label><input value={form.preferred_return} onChange={(e) => setF('preferred_return', e.target.value)} /></div>
           <div className="field"><label>Equity multiple</label><input value={form.equity_multiple} onChange={(e) => setF('equity_multiple', e.target.value)} /></div>
@@ -282,7 +296,7 @@ function ProgramDetail({ programId, onChanged }: { programId: string; onChanged:
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
         {(['edit', 'documents', 'matches', 'pipeline'] as const).map((t) => (
           <button key={t} className={'btn' + (tab === t ? ' primary' : '')} onClick={() => setTab(t)}>
-            {t === 'edit' ? 'Edit' : t === 'documents' ? 'Offering documents' : t === 'matches' ? 'Investor matches' : 'Capital pipeline'}
+            {t === 'edit' ? 'Edit' : t === 'documents' ? 'Offering documents' : t === 'matches' ? 'Capital Partner matches' : 'Capital pipeline'}
           </button>
         ))}
       </div>
@@ -291,18 +305,18 @@ function ProgramDetail({ programId, onChanged }: { programId: string; onChanged:
         <div className="card" style={{ marginBottom: 14, background: 'var(--ivory)' }}>
           <div className="note" style={{ fontWeight: 700, marginBottom: 4 }}>Who viewed this raise</div>
           <div style={{ display: 'flex', gap: 24, alignItems: 'baseline', flexWrap: 'wrap' }}>
-            <div><span style={{ fontSize: 26, fontWeight: 800, color: 'var(--emerald)' }}>{views.uniqueViewers}</span> <span className="note">investors viewed</span></div>
+            <div><span style={{ fontSize: 26, fontWeight: 800, color: 'var(--emerald)' }}>{views.uniqueViewers}</span> <span className="note">capital partners viewed</span></div>
             <div><span style={{ fontSize: 18, fontWeight: 700 }}>{views.views}</span> <span className="note">total views</span></div>
           </div>
           {views.unlocked ? (
             <div className="note" style={{ marginTop: 6 }}>
               {(views.recent?.length ?? 0) > 0
                 ? `Most recent view: ${new Date(views.recent![0].viewed_at).toLocaleString()}.`
-                : 'No views yet.'} Investor identities stay private — you see interest, not names, and reach them through an approved introduction.
+                : 'No views yet.'} Capital Partner identities stay private — you see interest, not names, and reach them through an approved introduction.
             </div>
           ) : (
             <div className="note" style={{ marginTop: 6 }}>
-              Upgrade to <strong>Developer Pro</strong> to see the view trend and recent activity. Investor identities always stay private.
+              Upgrade to <strong>Developer Pro</strong> to see the view trend and recent activity. Capital Partner identities always stay private.
             </div>
           )}
         </div>
@@ -319,13 +333,13 @@ function ProgramDetail({ programId, onChanged }: { programId: string; onChanged:
             <div className="field"><label>Location / market</label><input value={program.location ?? ''} onChange={(e) => setP('location', e.target.value)} /></div>
             <div className="field"><label>Project stage</label><input value={program.project_stage ?? ''} onChange={(e) => setP('project_stage', e.target.value)} /></div>
             <div className="field"><label>Target raise ($)</label><input type="number" value={c2d(program.target_raise_cents)} onChange={(e) => setP('target_raise_cents', d2c(e.target.value))} /></div>
-            <div className="field"><label>Minimum investment ($)</label><input type="number" value={c2d(program.min_investment_cents)} onChange={(e) => setP('min_investment_cents', d2c(e.target.value))} /></div>
-            <div className="field"><label>Maximum investment ($)</label><input type="number" value={c2d(program.max_investment_cents)} onChange={(e) => setP('max_investment_cents', d2c(e.target.value))} /></div>
+            <div className="field"><label>Minimum capital ($)</label><input type="number" value={c2d(program.min_investment_cents)} onChange={(e) => setP('min_investment_cents', d2c(e.target.value))} /></div>
+            <div className="field"><label>Maximum capital ($)</label><input type="number" value={c2d(program.max_investment_cents)} onChange={(e) => setP('max_investment_cents', d2c(e.target.value))} /></div>
             <div className="field"><label>Projected return</label><input value={program.projected_return ?? ''} onChange={(e) => setP('projected_return', e.target.value)} /></div>
             <div className="field"><label>Hold period</label><input value={program.hold_period ?? ''} onChange={(e) => setP('hold_period', e.target.value)} /></div>
             <div className="field"><label>Visibility</label>
               <select value={program.visibility ?? 'public_teaser'} onChange={(e) => setP('visibility', e.target.value)}>
-                {VISIBILITY.map((v) => <option key={v} value={v}>{v.replace(/_/g, ' ')}</option>)}
+                {VISIBILITY.map((v) => <option key={v} value={v}>{VISIBILITY_LABEL[v] ?? v.replace(/_/g, ' ')}</option>)}
               </select>
             </div>
           </div>
@@ -376,7 +390,7 @@ function ProgramDetail({ programId, onChanged }: { programId: string; onChanged:
 
       {tab === 'matches' && (
         <>
-          {matches.length === 0 ? <div className="note">No investor matches yet.</div> :
+          {matches.length === 0 ? <div className="note">No Capital Partner matches yet.</div> :
             matches.map((m, i) => (
               <InvestorMatchCard
                 key={m.introductionRequestId ?? m.investor?.id ?? i}
@@ -412,7 +426,7 @@ function ProgramDetail({ programId, onChanged }: { programId: string; onChanged:
           {(pipeline.investors ?? []).length > 0 && (
             <div className="card" style={{ padding: 0 }}>
               <table>
-                <thead><tr><th>Investor</th><th>Status</th><th>Committed</th></tr></thead>
+                <thead><tr><th>Capital Partner</th><th>Status</th><th>Committed</th></tr></thead>
                 <tbody>
                   {(pipeline.investors ?? []).map((iv: any, i: number) => (
                     <tr key={iv.id ?? i}>

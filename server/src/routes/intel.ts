@@ -22,13 +22,27 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { getAuth, requireUser } from "../auth.js";
 import { q, q1 } from "../pool.js";
 import { llmEnabled, llmText } from "../lib/llm.js";
-import { sendEmail } from "../lib/email.js";
+import { notifyCompanyMembers } from "../lib/notify.js";
+import { enqueueJob } from "../lib/jobs.js";
 import { PROCURE_MONETIZATION_V2 } from "../config.js";
 import { llmRateLimit } from "../lib/rateLimit.js";
+import { TtlCache, hashInput } from "../lib/cache.js";
 
 // 30 LLM-powered requests per user per hour. Applied to the quote-analysis
 // endpoint which is the only one that conditionally calls llmText().
 const intelLlmLimit = llmRateLimit({ max: 30, windowMs: 60 * 60_000 });
+
+// Quote-comparison narratives are a pure function of the priced bid set for
+// a package (see summaryInput below) - every page view of the same
+// unchanged comparison would otherwise re-call the LLM for an identical
+// prompt. Cached by content hash, not packageId alone, so a genuinely new
+// bid, price revision, or status change naturally invalidates it (the hash
+// changes) without any manual invalidation bookkeeping. 30 minute TTL: long
+// enough to absorb repeat views/refreshes, short enough that a stale
+// narrative never survives long even in the (already-impossible, given the
+// hash key) case of a missed invalidation.
+const narrativeCache = new TtlCache<string>();
+const NARRATIVE_TTL_MS = 30 * 60_000;
 
 /**
  * Monetization V2 gate: when the flag is ON, only VERIFIED vendors may be
@@ -552,14 +566,27 @@ router.get(
           : null,
         savings_opportunity: savings,
       };
-      const text = await llmText(
-        "You are a procurement analyst. In 2 to 4 short sentences, summarize this bid comparison " +
-          "for a buyer. Use ONLY the numbers provided. Do not invent figures, do not give legal or " +
-          "financial advice, and do not recommend anything beyond what the data supports. Data:\n" +
-          JSON.stringify(summaryInput),
-        { timeoutMs: 15000 },
-      );
-      narrative = text.trim() ? text.trim().slice(0, 1200) : null;
+      // Only a genuine, non-empty narrative is ever cached - llmText() never
+      // throws and returns "" on any failure (timeout, provider outage,
+      // misconfiguration), and caching that "failure" would silently
+      // suppress the narrative for the full TTL even after the LLM
+      // recovers, for as long as the bid set stays unchanged. A cache miss
+      // (including a prior failure) always retries for real.
+      const cacheKey = `quote-narrative:${packageId}:${hashInput(summaryInput)}`;
+      const cached = narrativeCache.get(cacheKey);
+      if (cached !== undefined) {
+        narrative = cached;
+      } else {
+        const text = await llmText(
+          "You are a procurement analyst. In 2 to 4 short sentences, summarize this bid comparison " +
+            "for a buyer. Use ONLY the numbers provided. Do not invent figures, do not give legal or " +
+            "financial advice, and do not recommend anything beyond what the data supports. Data:\n" +
+            JSON.stringify(summaryInput),
+          { timeoutMs: 15000 },
+        );
+        narrative = text.trim() ? text.trim().slice(0, 1200) : null;
+        if (narrative) narrativeCache.set(cacheKey, narrative, NARRATIVE_TTL_MS);
+      }
     }
 
     res.json({
@@ -694,7 +721,13 @@ router.post(
         : Math.max(0, Math.min(100, Math.round(Number(body.matchScore))));
     const message = body.message ? String(body.message).slice(0, 2000) : null;
 
-    const row = await q1<{ id: string; status: string; match_score: number | null; created_at: string }>(
+    const row = await q1<{
+      id: string;
+      status: string;
+      match_score: number | null;
+      created_at: string;
+      was_inserted: boolean;
+    }>(
       `insert into bid_invites
          (package_id, vendor_company_id, developer_company_id, status, match_score, message, invited_by)
        values ($1, $2, $3, 'invited', $4, $5, $6)
@@ -703,32 +736,59 @@ router.post(
                        message = coalesce(excluded.message, bid_invites.message),
                        invited_by = excluded.invited_by,
                        updated_at = now()
-       returning id, status, match_score, created_at`,
+       returning id, status, match_score, created_at, (xmax = 0) as was_inserted`,
       [packageId, vendorCompanyId, pkg.developer_company_id, matchScore, message, auth.email ?? auth.userId],
     );
 
-    // Best-effort email to the vendor company (never blocks the invite).
+    // Notify the invited vendor - but only on a genuinely NEW invite
+    // (xmax = 0 is the standard Postgres idiom for "this row version was
+    // created by this statement's INSERT, not its ON CONFLICT UPDATE
+    // branch"). This upsert is also reachable as a deliberate "nudge the
+    // vendor again" re-invite, so re-sending on every call would not be a
+    // bug exactly, but it would mean a developer bulk-re-running this
+    // endpoint (e.g. a retried request) silently re-spams every already-
+    // invited vendor. Gating on was_inserted keeps a genuine retry
+    // idempotent while still allowing an intentional future "resend"
+    // feature to be added explicitly later, rather than happening by
+    // accident on every retry today.
+    // emailed reflects "an email was queued for delivery", not "delivered" -
+    // the actual send now happens off the request path (see below).
     let emailed = false;
-    try {
+    if (row?.was_inserted) {
       const vendor = await q1<{ email: string | null; billing_email: string | null; name: string }>(
         `select email, billing_email, name from companies where id = $1`,
         [vendorCompanyId],
       );
+
+      await notifyCompanyMembers(vendorCompanyId, {
+        title: "You have been invited to bid",
+        detail: `You have been invited to submit a bid for a ${pkg.category} package on Divini Procure.${message ? ` Message from the developer: ${message}` : ""}`,
+        kind: "bid_invite",
+      });
+
+      // The company-level invite email (a slow, unreliable third-party HTTP
+      // call) is enqueued onto the durable job queue (lib/jobs.ts) rather
+      // than awaited here, same reasoning as award-workflow.ts's award
+      // notification: a Resend outage must not add latency to, or fail,
+      // an already-successful invite. Keyed by (invite row, resolved
+      // recipient) so a retried enqueue can never double-send.
       const to = vendor?.email || vendor?.billing_email || null;
       if (to) {
-        const r = await sendEmail({
-          to,
-          subject: "You have been invited to bid",
-          text:
-            `Hello ${vendor?.name ?? "there"},\n\n` +
-            `You have been invited to submit a bid for a ${pkg.category} package on Divini Procure.\n` +
-            (message ? `\nMessage from the developer:\n${message}\n` : "") +
-            `\nSign in to Divini Procure to view the opportunity and respond.\n`,
+        await enqueueJob({
+          jobType: "send_email",
+          payload: {
+            to,
+            subject: "You have been invited to bid",
+            text:
+              `Hello ${vendor?.name ?? "there"},\n\n` +
+              `You have been invited to submit a bid for a ${pkg.category} package on Divini Procure.\n` +
+              (message ? `\nMessage from the developer:\n${message}\n` : "") +
+              `\nSign in to Divini Procure to view the opportunity and respond.\n`,
+          },
+          idempotencyKey: `bid-invite-email:${row!.id}:${to}`,
         });
-        emailed = !!r.ok;
+        emailed = true;
       }
-    } catch {
-      /* email is best-effort */
     }
 
     res.json({ ok: true, invite: row, emailed });

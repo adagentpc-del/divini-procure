@@ -171,8 +171,8 @@ export default function AdminInvestmentCompliance() {
   return (
     <>
       <div className="page-head"><div>
-        <h1>Investment Governance</h1>
-        <div className="sub">Per-program compliance review, broker registration review, and investor permission levels.</div>
+        <h1>Capital Governance</h1>
+        <div className="sub">Per-program compliance review, broker registration review, and Capital Partner permission levels.</div>
       </div></div>
 
       {err && <div className="err">{err}</div>}
@@ -238,13 +238,13 @@ export default function AdminInvestmentCompliance() {
         </table>
       </div>
 
-      {/* ---- investor permissions ---- */}
-      <div className="sectitle">Investor permission levels</div>
+      {/* ---- capital partner permissions ---- */}
+      <div className="sectitle">Capital Partner permission levels</div>
       <div className="card" style={{ marginBottom: 18 }}>
         <div className="two">
-          <div className="field"><label>Investor</label>
+          <div className="field"><label>Capital Partner</label>
             <select value={permInvestorId} onChange={(e) => loadPermissions(e.target.value)}>
-              <option value="">Select an investor…</option>
+              <option value="">Select a Capital Partner…</option>
               {investors.map((i) => (
                 <option key={i.id} value={i.id}>{i.entity_name || i.full_name || i.email || i.id}</option>
               ))}

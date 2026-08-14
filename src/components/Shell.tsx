@@ -20,7 +20,10 @@ const BUYER_SECTIONS: Section[] = [
   { label: 'Quick Actions', items: [
     ['/app',      'Dashboard',        '▦'],
     ['/projects', 'Projects',         '▣'],
+    ['/blueprint', 'Divini Blueprint', '⌂'],
     ['/app/marketplace', 'Find Vendors', '⌕'],
+    ['/pipeline', 'Divini Pipeline',  '☰'],
+    ['/follow-up-desk', 'Divini Follow-Up Desk', '⏰'],
     ['/award',    'Award & POs',      '◰'],
     ['/reports',  'Reports',          '▥'],
   ]},
@@ -33,6 +36,7 @@ const BUYER_SECTIONS: Section[] = [
   ]},
   { label: 'Procurement', items: [
     ['/project-templates', 'Templates',         '▤'],
+    ['/scope-builder',     'Divini Scope Builder', '▧'],
     ['/change-orders',     'Change Orders',     '⇄'],
     ['/products',          'Products',          '◳'],
     ['/vendor-pricing',    'Vendor Pricing',    '$'],
@@ -51,11 +55,11 @@ const BUYER_SECTIONS: Section[] = [
     ['/designer', 'Designer', '✑'],
     ['/gc',       'GC',       '⛏'],
   ]},
-  { label: 'Investment', items: [
-    ['/investment-profile',  'Investment Profile', '◇'],
+  { label: 'Capital', items: [
+    ['/investment-profile',  'Capital Partner Profile', '◇'],
     ['/investment-programs', 'Programs',           '◉'],
     ['/trust-profile',       'Trust Profile',      '✦'],
-    ['/investor',            'Investor',           '⬡'],
+    ['/investor',            'Capital Partner',    '⬡'],
     ['/my-introductions',    'Introductions',      '✦'],
     ['/investor-watchlist',  'Watchlist',          '◉'],
     ['/teasers',             'Teasers',            '◷'],
@@ -70,6 +74,7 @@ const BUYER_SECTIONS: Section[] = [
     ['/payout-settings',  'Payout Settings', '＄'],
     ['/my-payouts',       'My Payouts',      '◫'],
     ['/messaging-policy', 'Messaging Policy','✉'],
+    ['/api-keys',         'API Keys',        '⚿'],
     ['/profile',          'Company',         '⚙'],
   ]},
 ];
@@ -79,6 +84,10 @@ const VENDOR_SECTIONS: Section[] = [
   { label: 'Workspace', items: [
     ['/app',     'Dashboard',  '▦'],
     ['/search',  'Search Bids','⌕'],
+    ['/pipeline','Divini Pipeline','☰'],
+    ['/bid-studio','Divini Bid Studio','▧'],
+    ['/follow-up-desk','Divini Follow-Up Desk','⏰'],
+    ['/blueprint','Blueprint Addenda','⌂'],
     ['/bids',    'My Bids',    '◧'],
     ['/my-invites','Invitations','✉'],
   ]},
@@ -100,10 +109,10 @@ const VENDOR_SECTIONS: Section[] = [
     ['/coi-tracker',  'Insurance (COI)','◻'],
     ['/dispute-center','Disputes',   '⚖'],
   ]},
-  { label: 'Investment', items: [
-    ['/investor',        'Investor',     '⬡'],
-    ['/my-introductions','Introductions','✦'],
-    ['/broker',          'Broker',       '⊞'],
+  { label: 'Capital', items: [
+    ['/investor',        'Capital Partner','⬡'],
+    ['/my-introductions','Introductions',  '✦'],
+    ['/broker',          'Broker',         '⊞'],
   ]},
   { label: 'Account', items: [
     ['/agreements',      'Agreements',      '✎'],
@@ -111,23 +120,22 @@ const VENDOR_SECTIONS: Section[] = [
     ['/payout-settings', 'Payout Settings', '＄'],
     ['/my-payouts',      'My Payouts',      '◫'],
     ['/messaging-policy','Messaging Policy','✉'],
+    ['/api-keys',        'API Keys',        '⚿'],
     ['/profile',         'Profile',         '☺'],
   ]},
 ];
 
-// INVESTOR — dedicated nav focused on deals, watchlists, and introductions
+// CAPITAL PARTNER — dedicated nav focused on deals, watchlists, and introductions
 const INVESTOR_SECTIONS: Section[] = [
   { label: 'Workspace', items: [
     ['/app',              'Dashboard',    '▦'],
-    ['/investor',         'Investor Hub', '⬡'],
+    ['/investor',         'Capital Partner Hub', '⬡'],
     ['/investor-watchlist','Watchlist',   '◉'],
     ['/opportunities',    'Browse Deals', '◷'],
   ]},
   { label: 'Sourcing', items: [
     ['/my-introductions',    'Introductions',    '✦'],
-    ['/investment-programs', 'Programs',         '◉'],
     ['/public-profile',      'Public Profile',   '◍'],
-    ['/trust-profile',       'Trust Profile',    '✦'],
     ['/relationship-graph',  'Relationship Map', '⊚'],
   ]},
   { label: 'Intelligence', items: [
@@ -137,7 +145,7 @@ const INVESTOR_SECTIONS: Section[] = [
     ['/war-room',     'War Room',   '⚑'],
   ]},
   { label: 'Profile', items: [
-    ['/investment-profile','Investment Profile','◇'],
+    ['/investment-profile','Capital Partner Profile','◇'],
     ['/collateral',        'Collateral',        '◰'],
     ['/event-spaces',      'Event Spaces',      '◐'],
     ['/broker',            'Broker',            '⊞'],
@@ -148,6 +156,7 @@ const INVESTOR_SECTIONS: Section[] = [
     ['/payout-settings', 'Payout Settings', '＄'],
     ['/my-payouts',      'My Payouts',      '◫'],
     ['/messaging-policy','Messaging Policy','✉'],
+    ['/api-keys',        'API Keys',        '⚿'],
     ['/profile',         'Profile',         '⚙'],
   ]},
 ];

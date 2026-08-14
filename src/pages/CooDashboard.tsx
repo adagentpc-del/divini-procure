@@ -16,6 +16,8 @@ import { useEffect, useState, type CSSProperties } from 'react';
 import { useAuth } from '../lib/auth';
 import { useFeatures } from '../lib/features';
 import { apiGet, apiSend } from '../lib/api';
+import { UpgradeGate } from '../components/UpgradeGate';
+import type { Entitlement } from '../lib/tiers';
 
 type Task = {
   id: string;
@@ -106,6 +108,7 @@ export default function CooDashboard() {
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [err, setErr] = useState('');
   const [asking, setAsking] = useState(false);
+  const [entitlement, setEntitlement] = useState<Entitlement | null>(null);
 
   async function load() {
     if (!company) return;
@@ -135,6 +138,13 @@ export default function CooDashboard() {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [company?.id, isAdmin]);
+
+  useEffect(() => {
+    if (!company) return;
+    apiGet<{ entitlement: Entitlement }>(`/subscriptions/mine?companyId=${company.id}`)
+      .then((d) => setEntitlement(d.entitlement))
+      .catch(() => {});
+  }, [company]);
 
   async function setStatus(id: string, status: string) {
     if (!company) return;
@@ -182,6 +192,13 @@ export default function CooDashboard() {
       </div>
 
       {err && <div className="err">{err}</div>}
+
+      <UpgradeGate
+        locked={!!entitlement && !entitlement.ai_features}
+        featureName="AI COO"
+        requiredTierName="a plan with AI features"
+        reason="The daily briefing, business health score, task feed, and command center are computed from your live procurement data using AI-assisted analysis."
+      >
 
       {/* Daily briefing */}
       {briefing && (
@@ -384,6 +401,7 @@ export default function CooDashboard() {
           </table>
         </div>
       )}
+      </UpgradeGate>
     </>
   );
 }

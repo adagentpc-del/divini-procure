@@ -185,7 +185,7 @@ export default function ProjectTemplates() {
                 {open.risk_flags.map((r) => <li key={r}>{r}</li>)}
               </ul>
 
-              <h3 style={{ marginTop: 14 }}>Investor report sections</h3>
+              <h3 style={{ marginTop: 14 }}>Capital Partner report sections</h3>
               <div>
                 {open.investor_report_sections.map((s) => (
                   <span key={s} className="badge ok" style={{ marginRight: 6, marginBottom: 6, display: 'inline-block' }}>{s}</span>
@@ -360,7 +360,7 @@ function AddTemplate({
           <textarea value={timeline} onChange={(e) => setTimeline(e.target.value)} placeholder="Design & Spec:8&#10;Bid & Award:4&#10;Procurement:12&#10;Install:8" /></div>
         <div className="field"><label>Risk flags</label>
           <textarea value={riskFlags} onChange={(e) => setRiskFlags(e.target.value)} placeholder="Long lead times, Single-source vendors" /></div>
-        <div className="field"><label>Investor report sections</label>
+        <div className="field"><label>Capital Partner report sections</label>
           <textarea value={investorSections} onChange={(e) => setInvestorSections(e.target.value)} /></div>
         <button className="btn primary" disabled={busy || !key || !name}>{busy ? 'Saving...' : 'Save template'}</button>
       </form>

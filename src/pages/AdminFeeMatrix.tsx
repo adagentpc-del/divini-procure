@@ -31,10 +31,10 @@ type FeeRule = {
 
 const RULE_TYPES = [
   'standard_platform',
+  'platform_infrastructure_fee',
   'preferred_vendor_placement',
   'white_glove',
   'referral_partner',
-  'capital_introduction',
   'grandfathered_2pct',
 ] as const;
 
@@ -51,11 +51,11 @@ const PAYER_TYPES = [
 
 const RULE_LABEL: Record<string, string> = {
   standard_platform: 'Standard platform',
+  platform_infrastructure_fee: 'Platform infrastructure fee',
   preferred_vendor_placement: 'Preferred vendor placement',
   white_glove: 'White glove',
   referral_partner: 'Referral partner',
-  capital_introduction: 'Capital introduction',
-  grandfathered_2pct: 'Grandfathered 2%',
+  grandfathered_2pct: 'Existing relationship (grandfathered)',
 };
 
 const PAYER_LABEL: Record<string, string> = {

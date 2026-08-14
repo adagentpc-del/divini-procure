@@ -9,7 +9,7 @@ export default function Privacy() {
       </div>
 
       <h1 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 36, color: '#1f3d31', marginBottom: 6 }}>Privacy Policy</h1>
-      <div style={{ color: '#6b7a72', marginBottom: 28 }}>Effective June 8, 2026 — Updated July 2026</div>
+      <div style={{ color: '#5c6b62', marginBottom: 28 }}>Effective June 8, 2026 — Updated July 2026</div>
 
       <p>
         Divini Procure ("we," "us," "our") operates a procurement marketplace that connects real estate
@@ -22,7 +22,7 @@ export default function Privacy() {
       <ul>
         <li><strong>Account &amp; contact details</strong> – your email, name, phone, company name, role, and city.</li>
         <li><strong>Company &amp; marketplace data</strong> – projects, bid packages, bids, line items, messages, reviews, and subscription/plan status.</li>
-        <li><strong>Uploaded content</strong> – documents and images you upload (e.g. drawings, credentials).</li>
+        <li><strong>Uploaded content</strong> – documents and images you upload (e.g. drawings, credentials, specifications, CAD files, budgets).</li>
         <li><strong>Consent records</strong> – when you agreed to our Terms of Service, the version you agreed to, and the IP address used at registration (Florida E-SIGN Act compliance).</li>
         <li><strong>Technical data</strong> – standard log and device information needed to operate and secure the service.</li>
       </ul>
@@ -31,10 +31,27 @@ export default function Privacy() {
       <ul>
         <li>To create and manage your account and company profile.</li>
         <li>To run core features: posting packages, submitting and comparing bids, messaging, and reviews.</li>
-        <li>To process vendor subscriptions and related billing.</li>
+        <li>To process subscriptions and related billing.</li>
         <li>To secure the service, prevent abuse, and meet legal obligations.</li>
         <li>To send transactional emails (verification, password reset, purchase confirmation). Marketing emails include an unsubscribe link.</li>
       </ul>
+
+      <h2 style={h2}>Automated document processing</h2>
+      <p>
+        Some document types you upload are automatically processed to power specific features you use:
+      </p>
+      <ul>
+        <li>PDF documents may have their text content read to help classify and index them.</li>
+        <li>Scanned documents and images may be processed with optical character recognition (OCR) to extract text.</li>
+        <li>CAD drawing files (DXF) may have their text labels and layer names read to help organize drawings.</li>
+        <li>Where an AI-assisted drafting feature is enabled, classification results and text you explicitly provide may be sent to a language-model provider to draft an editable summary. Raw file content is never sent to a language-model provider.</li>
+      </ul>
+      <p>
+        This processing happens automatically when you use the relevant feature, is used solely to
+        help you organize and review your own documents, and every result is labeled with its
+        confidence and source and requires your review before you rely on it or take further action.
+        We do not use the content of your documents to train any AI model.
+      </p>
 
       <h2 style={h2}>Vendor data imported by developers</h2>
       <p>
@@ -45,16 +62,19 @@ export default function Privacy() {
         data solely to create a starter vendor profile and to facilitate the procurement relationship
         the developer has attested to. Newly created vendor profiles are private within that developer's
         account until the vendor claims and activates their profile. Vendors may contact us at{' '}
-        <a href="mailto:privacy@diviniprocure.com" style={{ color: '#1f6f50' }}>privacy@diviniprocure.com</a>{' '}
+        <a href="mailto:privacy@diviniprocure.com" style={{ color: '#1f6f50', textDecoration: 'underline' }}>privacy@diviniprocure.com</a>{' '}
         to request removal of an imported profile.
       </p>
 
       <h2 style={h2}>How it's stored and who processes it</h2>
       <p>
-        Your data is stored with our infrastructure providers, who process it on our behalf:
-        <strong> Supabase</strong> (database and file storage), <strong>Vercel</strong> (web hosting),
-        and <strong>Stripe</strong> (subscription and platform payments — we do not store full card or bank details).
-        We do not sell your personal information. We do not share it with third parties for their own marketing.
+        Your data is stored in a PostgreSQL database and, for uploaded files, in encrypted object
+        storage, hosted by our infrastructure providers on our behalf. Subscription and platform
+        payments are processed by <strong>Stripe</strong> (we do not store full card or bank
+        details). Where an optional AI-assisted drafting feature is enabled, the limited inputs
+        described above may be processed by a language-model provider we have configured. We do not
+        sell your personal information. We do not share it with third parties for their own
+        marketing.
       </p>
 
       <h2 style={h2}>Visibility within the marketplace</h2>
@@ -92,7 +112,9 @@ export default function Privacy() {
         </li>
         <li>
           <strong>Right to opt out of sale or sharing</strong> – We do not sell personal information and do not
-          share it for cross-context behavioral advertising. You do not need to opt out.
+          share it for cross-context behavioral advertising. You do not need to opt out, and we honor
+          Global Privacy Control signals as an opt-out preference where applicable, though the practical
+          effect today is nil since no sale or sharing occurs.
         </li>
         <li>
           <strong>Right to non-discrimination</strong> – We will not discriminate against you for exercising any
@@ -101,8 +123,8 @@ export default function Privacy() {
       </ul>
       <p>
         To exercise any of these rights, please contact us at{' '}
-        <a href="mailto:privacy@diviniprocure.com" style={{ color: '#1f6f50' }}>privacy@diviniprocure.com</a>{' '}
-        or <a href="mailto:support@diviniprocure.com" style={{ color: '#1f6f50' }}>support@diviniprocure.com</a>.
+        <a href="mailto:privacy@diviniprocure.com" style={{ color: '#1f6f50', textDecoration: 'underline' }}>privacy@diviniprocure.com</a>{' '}
+        or <a href="mailto:support@diviniprocure.com" style={{ color: '#1f6f50', textDecoration: 'underline' }}>support@diviniprocure.com</a>.
         We will respond within 45 days. We may need to verify your identity before fulfilling certain requests.
       </p>
 
@@ -124,7 +146,7 @@ export default function Privacy() {
       </ul>
       <p>
         To report a suspected security issue, please email{' '}
-        <a href="mailto:security@diviniprocure.com" style={{ color: '#1f6f50' }}>security@diviniprocure.com</a>.
+        <a href="mailto:security@diviniprocure.com" style={{ color: '#1f6f50', textDecoration: 'underline' }}>security@diviniprocure.com</a>.
       </p>
 
       {/* ------------------------------------------------------------------ */}
@@ -144,12 +166,12 @@ export default function Privacy() {
 
       <h2 style={h2}>Contact</h2>
       <p>
-        Privacy requests: <a href="mailto:privacy@diviniprocure.com" style={{ color: '#1f6f50' }}>privacy@diviniprocure.com</a><br />
-        General support: <a href="mailto:support@diviniprocure.com" style={{ color: '#1f6f50' }}>support@diviniprocure.com</a>
+        Privacy requests: <a href="mailto:privacy@diviniprocure.com" style={{ color: '#1f6f50', textDecoration: 'underline' }}>privacy@diviniprocure.com</a><br />
+        General support: <a href="mailto:support@diviniprocure.com" style={{ color: '#1f6f50', textDecoration: 'underline' }}>support@diviniprocure.com</a>
       </p>
 
       <div style={{ marginTop: 40 }}>
-        <Link to="/" style={{ color: '#1f6f50' }}>← Back to Divini Procure</Link>
+        <Link to="/" style={{ color: '#1f6f50', textDecoration: 'underline' }}>← Back to Divini Procure</Link>
       </div>
     </div>
   );

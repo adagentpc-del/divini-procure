@@ -1,19 +1,23 @@
 /**
- * Required compliance disclaimers for the Developer Investment + Investor
- * Matching surfaces. Divini Procure is a matching/relationship platform, NOT a
- * broker-dealer, investment adviser, or issuer. These disclaimers must appear on
- * every investment-related page (developer profile/programs, investor onboarding/
- * dashboard). CTAs across these surfaces NEVER say "invest now" - they say
- * "Request access", "Request information", or "Request introduction".
+ * Required compliance disclaimers for the Developer Capital + Capital Partner
+ * Matching surfaces. Divini Procure is a collaboration, due-diligence, and
+ * relationship operating system, NOT a broker-dealer, investment adviser, or
+ * issuer. It does not recommend investments, negotiate securities, receive
+ * capital partner money, hold funds, or execute investment agreements. These
+ * disclaimers must appear on every capital-related page (developer
+ * profile/programs, Capital Partner onboarding/dashboard). CTAs across these
+ * surfaces NEVER say "invest now" - they say "Request access", "Request
+ * information", or "Request introduction".
  */
 
 const POINTS: string[] = [
-  'Divini Procure does not provide investment, legal, tax, or financial advice.',
-  'All opportunities are offered by third-party sponsors / developers. Divini Procure is not the issuer, broker-dealer, or investment adviser for any opportunity.',
+  'Divini Procure does not provide investment, legal, tax, or financial advice, and does not recommend any investment.',
+  'All opportunities are offered by third-party sponsors / developers. Divini Procure is not the issuer, broker-dealer, or investment adviser for any opportunity, and does not negotiate securities on behalf of any party.',
   'Eligibility, accreditation, and suitability must be independently verified. Nothing here confirms that you are qualified to participate in any opportunity.',
-  'Not all opportunities are available to all investors.',
-  'Non-accredited investors may be limited to educational content and publicly available information.',
+  'Not all opportunities are available to all capital partners.',
+  'Non-accredited capital partners may be limited to educational content and publicly available information.',
   'All offering materials are prepared, reviewed, and approved by the sponsor and their legal counsel. Divini Procure does not endorse or guarantee any opportunity.',
+  'Divini Procure does not receive, hold, or transfer capital partner funds, and does not execute investment agreements or distribute returns.',
 ];
 
 export default function ComplianceDisclaimer({ compact = false }: { compact?: boolean }) {

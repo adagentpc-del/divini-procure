@@ -4,7 +4,7 @@
 
 create table if not exists user_sessions (
   jti         text        primary key,
-  user_id     uuid        not null references users(id) on delete cascade,
+  user_id     text        not null references users(id) on delete cascade,
   email       text,
   expires_at  timestamptz not null,
   created_at  timestamptz not null default now()

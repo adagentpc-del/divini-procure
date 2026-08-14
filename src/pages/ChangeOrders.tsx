@@ -155,7 +155,7 @@ export default function ChangeOrders() {
     try {
       const d = await apiSend<{ changeOrder: ChangeOrder; investorApprovalPending?: boolean }>('PATCH', `/change-orders/${id}`, { status });
       if (d.investorApprovalPending) {
-        setOk('Approved, but investor sign-off is still pending.');
+        setOk('Approved, but Capital Partner sign-off is still pending.');
       } else {
         setOk(`Status set to ${status}.`);
       }
@@ -172,7 +172,7 @@ export default function ChangeOrders() {
     <div>
       <div className="page-head">
         <h1>Change Orders</h1>
-        <div className="sub">Raise and track change orders on your projects, with cost and schedule impact and investor approval.</div>
+        <div className="sub">Raise and track change orders on your projects, with cost and schedule impact and Capital Partner approval.</div>
       </div>
 
       {err && <div className="err">{err}</div>}
@@ -231,7 +231,7 @@ export default function ChangeOrders() {
             </div>
             <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <input type="checkbox" checked={investorReq} onChange={(e) => setInvestorReq(e.target.checked)} />
-              <span>Investor approval required</span>
+              <span>Capital Partner approval required</span>
             </label>
             <button className="btn primary" disabled={busy || !title.trim()} type="submit">Create change order</button>
           </form>
@@ -241,7 +241,7 @@ export default function ChangeOrders() {
       <div className="card">
         <table className="table">
           <thead>
-            <tr><th>Title</th><th>Vendor</th><th>Cost impact</th><th>Schedule</th><th>Status</th><th>Investor</th><th></th></tr>
+            <tr><th>Title</th><th>Vendor</th><th>Cost impact</th><th>Schedule</th><th>Status</th><th>Capital Partner</th><th></th></tr>
           </thead>
           <tbody>
             {rows.map((c) => (
@@ -273,7 +273,7 @@ export default function ChangeOrders() {
             <div className="sub">
               <span className={statusCls(detail.changeOrder.status)}>{detail.changeOrder.status}</span>
               {detail.changeOrder.investor_approval_required && (
-                <> &nbsp;Investor: <span className={investorCls(detail.changeOrder.investor_approval_status)}>{detail.changeOrder.investor_approval_status}</span></>
+                <> &nbsp;Capital Partner: <span className={investorCls(detail.changeOrder.investor_approval_status)}>{detail.changeOrder.investor_approval_status}</span></>
               )}
             </div>
           </div>

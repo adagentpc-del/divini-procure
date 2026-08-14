@@ -120,7 +120,10 @@ export default function ProjectHealthBadge({ buildingId, showDetails = false }: 
 
       {expanded && (
         <div style={{ marginTop: '0.5rem', width: 180, background: '#fff', border: '1px solid var(--line, #e5e7eb)', borderRadius: 8, padding: '0.75rem', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
-          <ScoreBar label="Budget" value={snapshot.budget_score} />
+          {/* This column reflects the share of packages that have received a
+              bid, not a financial budget calculation - there is no project
+              budget engine yet. Labeled honestly rather than as "Budget". */}
+          <ScoreBar label="Budget Health" value={snapshot.budget_score} />
           <ScoreBar label="Schedule" value={snapshot.schedule_score} />
           <ScoreBar label="Vendors" value={snapshot.vendor_score} />
           <ScoreBar label="Docs" value={snapshot.documentation_score} />

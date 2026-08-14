@@ -6,7 +6,7 @@ on:
 
 jobs:
   test:
-    name: Typecheck and test
+    name: Typecheck, build, and test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -20,11 +20,189 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Install server dependencies
+        # server/ is a fully separate npm project (its own package.json +
+        # package-lock.json, not an npm workspace member) - the root
+        # `npm install` above never touches it. Every step below that
+        # touches server/ (typecheck, the vuln gate, and npm run
+        # test:integration in the integration-tests job further down)
+        # needs server/node_modules to actually exist first; without this
+        # step "Typecheck server" fails with "Cannot find module 'express'"
+        # for every server dependency, not a real type error.
+        run: npm install --prefix server
+
       - name: Typecheck server
         run: npx tsc -p server/tsconfig.json --noEmit
 
       - name: Typecheck SPA
         run: npx tsc -p tsconfig.json --noEmit
 
+      - name: Build SPA (real vite build, not just typecheck)
+        # tsc --noEmit above only catches type errors; a real `vite build`
+        # exercises bundling/asset-resolution/plugin failures that noEmit
+        # cannot, and is what deploy.sh actually runs before every release.
+        run: npm run build
+
       - name: Run tests
         run: npm test
+
+      - name: Dependency vulnerability scan (production dependencies)
+        # Report-only: does not fail the build. Scoped to production deps so
+        # it reflects what's actually shipped, not desktop/mobile build
+        # tooling. Review output manually; see AI_PROJECT_OS/52_COMPLIANCE.md
+        # (SOC 2 CC4/CC7) for the triage process.
+        run: npm audit --omit=dev || true
+
+      - name: Dependency vulnerability gate (high/critical, production deps) - SPA
+        # Compliance completion pass (closes part of R-12, docs/platform-
+        # standard/release-readiness.md): unlike the report-only scan above,
+        # this DOES fail the build, but only at high/critical severity - a
+        # known-exploitable production dependency should block a release the
+        # same way a failing test does. Moderate/low findings stay
+        # report-only above; they are common, frequently have no available
+        # fix, and gating on them would make this check noisy enough to
+        # ignore. Currently clean (0 high/critical) - verified locally
+        # before adding this gate.
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Dependency vulnerability gate (high/critical, production deps) - server
+        run: npm audit --omit=dev --audit-level=high --prefix server
+
+  db-schema:
+    name: Validate db/apply-all.sql on a fresh database
+    runs-on: ubuntu-latest
+    # This is a REQUIRED gate, not report-only: a schema-file edit that
+    # breaks a from-scratch bootstrap has repeatedly been a real, silent bug
+    # in this repo (see AI_PROJECT_OS/13_CHANGELOG.md) - typecheck cannot
+    # catch it because it is a runtime SQL/ordering problem, not a type
+    # error. Mirrors the documented production bootstrap procedure exactly
+    # (23_DEPLOYMENT.md): apply-all.sql is run TWICE to resolve cross-file
+    # FK ordering, and that is expected/idempotent, not a bug.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: divini
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: divini_procure
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U divini -d divini_procure"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Apply schema (first pass - resolves some cross-file FK ordering)
+        env:
+          PGPASSWORD: ci-only-password
+        run: psql -h localhost -U divini -d divini_procure -v ON_ERROR_STOP=1 -f db/apply-all.sql
+
+      - name: Apply schema (second pass - required, see 23_DEPLOYMENT.md)
+        env:
+          PGPASSWORD: ci-only-password
+        run: psql -h localhost -U divini -d divini_procure -v ON_ERROR_STOP=1 -f db/apply-all.sql
+
+      - name: Sanity check - table count is plausible
+        env:
+          PGPASSWORD: ci-only-password
+        run: |
+          COUNT=$(psql -h localhost -U divini -d divini_procure -t -A -c "select count(*) from information_schema.tables where table_schema='public';")
+          echo "public tables: $COUNT"
+          if [ "$COUNT" -lt 100 ]; then
+            echo "Expected 100+ tables after a full apply-all.sql bootstrap, got $COUNT - schema likely did not apply cleanly." >&2
+            exit 1
+          fi
+
+  integration-tests:
+    name: Route/integration tests against a real database
+    runs-on: ubuntu-latest
+    # Phase 0 (ALFY2-adjacent stabilization pass): unlike the pure-function
+    # suite in `test`, these exercise the actual route -> authorization ->
+    # database boundary (see tests/integration/), starting with the
+    # agreement-signing P0 authorization fix. Requires a real Postgres, the
+    # real compiled server build, and the schema bootstrapped exactly like
+    # db-schema above.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: divini
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: divini_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U divini -d divini_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Apply schema (two passes, same as db-schema job)
+        env:
+          PGPASSWORD: ci-only-password
+        run: |
+          psql -h localhost -U divini -d divini_test -v ON_ERROR_STOP=1 -f db/apply-all.sql
+          psql -h localhost -U divini -d divini_test -v ON_ERROR_STOP=1 -f db/apply-all.sql
+
+      - name: Create a non-superuser app role (RLS must be enforced under test)
+        # The official postgres Docker image makes POSTGRES_USER (divini)
+        # the initdb-time bootstrap superuser - and Postgres superusers
+        # ALWAYS bypass Row-Level Security, regardless of FORCE ROW LEVEL
+        # SECURITY (that only exempts the table owner, a separate, narrower
+        # carve-out). Every local dev/test Postgres in this repo's history
+        # has `divini` as an ordinary non-superuser role, so RLS was always
+        # correctly enforced there - this CI service container is the one
+        # place it silently wasn't, meaning this integration-tests job has
+        # never actually verified RLS at all until now. Live-reproduced:
+        # every "an outsider/unrelated company cannot see X" test (which
+        # expects a 404 from RLS making the row invisible) instead got a
+        # 200/403 from an app-level check finding the row anyway - by
+        # temporarily granting a local role superuser and reproducing the
+        # identical failures.
+        #
+        # `alter role divini nosuperuser` does NOT work here - Postgres
+        # refuses to let the cluster's bootstrap superuser strip its own
+        # SUPERUSER attribute ("permission denied to alter role... The
+        # bootstrap user must have the SUPERUSER attribute"), confirmed
+        # live against this same CI setup. Instead, create a second,
+        # ordinary role with explicit grants and point the app at THAT role
+        # for the actual test run; divini (still superuser) keeps owning
+        # the schema, which is fine - RLS applies to any non-owner,
+        # non-superuser querier regardless of FORCE, and non-owner is
+        # exactly what this new role is.
+        env:
+          PGPASSWORD: ci-only-password
+        run: |
+          psql -h localhost -U divini -d divini_test -v ON_ERROR_STOP=1 -c "create role divini_app with login password 'ci-only-password' nosuperuser;"
+          psql -h localhost -U divini -d divini_test -v ON_ERROR_STOP=1 -c "grant usage on schema public to divini_app;"
+          psql -h localhost -U divini -d divini_test -v ON_ERROR_STOP=1 -c "grant all privileges on all tables in schema public to divini_app;"
+          psql -h localhost -U divini -d divini_test -v ON_ERROR_STOP=1 -c "grant all privileges on all sequences in schema public to divini_app;"
+
+      - name: Run integration tests
+        env:
+          DATABASE_URL: postgres://divini_app:ci-only-password@localhost:5432/divini_test
+          SESSION_SECRET: ci-only-session-secret-not-for-prod
+          # FILE_STORAGE_DIR defaults to /data/procure-files (config.ts), an
+          # absolute root-level path the unprivileged `runner` user on
+          # GitHub-hosted runners cannot mkdir (EACCES). Document-upload
+          # integration tests need somewhere writable; point it at the
+          # workspace instead. This was never caught before because this job
+          # always failed earlier (missing server/node_modules, then a
+          # pnpm-not-found step) before ever reaching a real upload test.
+          FILE_STORAGE_DIR: ${{ github.workspace }}/tmp-test-storage
+        run: npm run test:integration

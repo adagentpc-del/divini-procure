@@ -6,9 +6,9 @@
  * toggle. They can also preview exactly what the public view returns.
  *
  * PUBLIC vs PRIVATE: this page only controls the public profile. The PRIVATE
- * side of the company (subscription, internal fees, deal pipeline, investor
- * financials, relationships) lives in its own areas and is never shown or
- * exposed here.
+ * side of the company (subscription, internal fees, deal pipeline, Capital
+ * Partner financials, relationships) lives in its own areas and is never shown
+ * or exposed here.
  */
 import { useEffect, useState } from 'react';
 import { useAuth } from '../lib/auth';
@@ -147,7 +147,7 @@ export default function PublicDeveloperProfile() {
 
       <div className="note" style={{ marginBottom: 12 }}>
         Public vs private: this page only edits your public profile. Your private posture (subscription, fees,
-        deal pipeline, investor financials, relationships) is never shown here and is never exposed publicly.
+        deal pipeline, Capital Partner financials, relationships) is never shown here and is never exposed publicly.
       </div>
 
       {err && <div className="err">{err}</div>}

@@ -138,7 +138,7 @@ export default function Reports() {
     try {
       setInvestor(await apiGet<InvestorResp>(`/reports/investor-report?companyId=${companyId}`));
     } catch (e: any) {
-      setLoadErr(e?.message || 'Failed to load investor report.');
+      setLoadErr(e?.message || 'Failed to load Capital Partner report.');
     }
   }
 
@@ -279,7 +279,7 @@ export default function Reports() {
         {pipeline && (
           <div className="report-print">
             <h2>Capital Pipeline — {company.name}</h2>
-            {pipeline.programs.length === 0 && <div className="note">No investment programs.</div>}
+            {pipeline.programs.length === 0 && <div className="note">No capital programs.</div>}
             {pipeline.programs.map((p, i) => (
               <div key={i} style={{ marginBottom: 12 }}>
                 <h3 style={{ marginBottom: 4 }}>{p.name || 'Untitled program'}</h3>
@@ -301,10 +301,10 @@ export default function Reports() {
         )}
       </div>
 
-      {/* ---- Investor report ---- */}
+      {/* ---- Capital Partner report ---- */}
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="page-head">
-          <h3 style={{ margin: 0 }}>Investor report</h3>
+          <h3 style={{ margin: 0 }}>Capital Partner report</h3>
           <div style={{ display: 'flex', gap: 8 }}>
             <button className="btn" onClick={loadInvestor}>Build report</button>
             {investor && <button className="btn" onClick={() => window.print()}>Print / Save as PDF</button>}
@@ -312,7 +312,7 @@ export default function Reports() {
         </div>
         {investor && (
           <div className="report-print">
-            <h2>Investor Report — {investor.company.name}</h2>
+            <h2>Capital Partner Report — {investor.company.name}</h2>
             <div className="note">Generated {new Date(investor.generatedAt).toLocaleString()}</div>
             <table>
               <tbody>

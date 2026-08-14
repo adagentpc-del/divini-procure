@@ -72,6 +72,32 @@ export async function getTrustProfile(companyId: string): Promise<TrustProfile |
   return q1<TrustProfile>(`select * from developer_trust_profiles where company_id = $1`, [companyId]);
 }
 
+/**
+ * Batched variant of getTrustScore() for a list of companies - one query
+ * instead of one per company. Used by routes that score a whole list of
+ * programs/investors in a single request (e.g. GET /investor/matches),
+ * where the previous per-row getTrustScore() call was a genuine N+1 (found
+ * during a platform-hardening pass). computeTrust() itself is pure, so
+ * batching only the DB read preserves identical scoring output.
+ */
+export async function getTrustScoresByCompany(
+  companyIds: string[],
+): Promise<Map<string, TrustScore & { profile: TrustProfile | null }>> {
+  const result = new Map<string, TrustScore & { profile: TrustProfile | null }>();
+  const uniqueIds = [...new Set(companyIds)];
+  if (uniqueIds.length === 0) return result;
+  const rows = await q<TrustProfile>(
+    `select * from developer_trust_profiles where company_id = any($1)`,
+    [uniqueIds],
+  );
+  const byCompany = new Map(rows.map((r) => [r.company_id, r]));
+  for (const id of uniqueIds) {
+    const profile = byCompany.get(id) ?? null;
+    result.set(id, { ...computeTrust(profile), profile });
+  }
+  return result;
+}
+
 const EDITABLE = [
   "years_operating",
   "projects_completed",

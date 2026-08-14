@@ -99,17 +99,29 @@ async function loadCompany(companyId: string): Promise<CompanyRow | null> {
   return q1<CompanyRow>(`select id, kind, name, rating from companies where id = $1`, [companyId]);
 }
 
-/** Build the deterministic vendor score (win rate, delivery, submittals, reviews, profile). */
-async function scoreVendor(c: CompanyRow): Promise<ScoreFactor[]> {
+/**
+ * Build the deterministic vendor score (win rate, delivery, submittals, reviews, profile).
+ * `asOfDate`, when provided, restricts every event-based factor to rows that
+ * existed by that date (created_at <= asOfDate), for score-history (G-03,
+ * docs/ai-layer-design.md section 3.3) - recomputed fresh from source rows,
+ * never a stored/cached historical snapshot, matching this codebase's
+ * established "recompute from source" convention. Profile completeness
+ * cannot be reconstructed historically (vendor_profiles has no version
+ * history) and is honestly reported as current-state-only in that case,
+ * never presented as if it were accurate for the requested date.
+ */
+async function scoreVendor(c: CompanyRow, asOfDate: Date | null = null): Promise<ScoreFactor[]> {
   const factors: ScoreFactor[] = [];
+  const cutoff = asOfDate ? asOfDate.toISOString() : null;
 
   // ---- Bid win rate (up to 30) -------------------------------------------
   const bidAgg = await q1<{ total: number; awarded: number }>(
     `select count(*)::int as total,
             count(*) filter (where awarded = true)::int as awarded
        from bids
-      where vendor_company_id = $1 and coalesce(is_draft, false) = false`,
-    [c.id],
+      where vendor_company_id = $1 and coalesce(is_draft, false) = false
+        ${cutoff ? "and created_at <= $2" : ""}`,
+    cutoff ? [c.id, cutoff] : [c.id],
   );
   const bidsTotal = num(bidAgg?.total);
   const bidsAwarded = num(bidAgg?.awarded);
@@ -134,8 +146,9 @@ async function scoreVendor(c: CompanyRow): Promise<ScoreFactor[]> {
             )::int as on_time,
             count(*) filter (where completion_date is not null)::int as completed
        from deliveries
-      where vendor_company_id = $1`,
-    [c.id],
+      where vendor_company_id = $1
+        ${cutoff ? "and created_at <= $2" : ""}`,
+    cutoff ? [c.id, cutoff] : [c.id],
   );
   const delCompleted = num(delAgg?.completed);
   const delOnTime = num(delAgg?.on_time);
@@ -157,8 +170,9 @@ async function scoreVendor(c: CompanyRow): Promise<ScoreFactor[]> {
             count(*) filter (where current_status = 'approved')::int as approved,
             count(*) filter (where current_status in ('approved','rejected','revise_resubmit'))::int as decided
        from submittals
-      where vendor_company_id = $1`,
-    [c.id],
+      where vendor_company_id = $1
+        ${cutoff ? "and created_at <= $2" : ""}`,
+    cutoff ? [c.id, cutoff] : [c.id],
   );
   const subDecided = num(subAgg?.decided);
   const subApproved = num(subAgg?.approved);
@@ -176,8 +190,10 @@ async function scoreVendor(c: CompanyRow): Promise<ScoreFactor[]> {
 
   // ---- Reviews (up to 15) ------------------------------------------------
   const revAgg = await q1<{ avg: number | null; cnt: number }>(
-    `select avg(stars) as avg, count(*)::int as cnt from reviews where ratee_company_id = $1`,
-    [c.id],
+    `select avg(stars) as avg, count(*)::int as cnt from reviews
+      where ratee_company_id = $1
+        ${cutoff ? "and created_at <= $2" : ""}`,
+    cutoff ? [c.id, cutoff] : [c.id],
   );
   const reviewAvg = revAgg?.avg == null ? null : num(revAgg.avg);
   const reviewCount = num(revAgg?.cnt);
@@ -216,23 +232,31 @@ async function scoreVendor(c: CompanyRow): Promise<ScoreFactor[]> {
     label: "Profile completeness",
     points: profilePts,
     max: 10,
-    detail: profileBits.length ? profileBits.join(", ") : "Incomplete vendor profile",
+    detail: cutoff
+      ? `${profileBits.length ? profileBits.join(", ") : "Incomplete vendor profile"} (current profile state - vendor_profiles has no version history, so this factor cannot be reconstructed as of a past date)`
+      : profileBits.length
+        ? profileBits.join(", ")
+        : "Incomplete vendor profile",
   });
 
   return factors;
 }
 
-/** Build the deterministic developer score (volume, awards, payment, breadth). */
-async function scoreDeveloper(c: CompanyRow): Promise<ScoreFactor[]> {
+/**
+ * Build the deterministic developer score (volume, awards, payment, breadth).
+ * See scoreVendor()'s docstring for the asOfDate/score-history contract.
+ */
+async function scoreDeveloper(c: CompanyRow, asOfDate: Date | null = null): Promise<ScoreFactor[]> {
   const factors: ScoreFactor[] = [];
+  const cutoff = asOfDate ? asOfDate.toISOString() : null;
 
   // ---- Project volume (up to 25) -----------------------------------------
   const projAgg = await q1<{ buildings: number; packages: number }>(
-    `select (select count(*) from buildings b where b.company_id = $1)::int as buildings,
+    `select (select count(*) from buildings b where b.company_id = $1 ${cutoff ? "and b.created_at <= $2" : ""})::int as buildings,
             (select count(*) from packages p
                join buildings b on b.id = p.building_id
-              where b.company_id = $1)::int as packages`,
-    [c.id],
+              where b.company_id = $1 ${cutoff ? "and p.created_at <= $2" : ""})::int as packages`,
+    cutoff ? [c.id, cutoff] : [c.id],
   );
   const buildings = num(projAgg?.buildings);
   const packages = num(projAgg?.packages);
@@ -252,8 +276,9 @@ async function scoreDeveloper(c: CompanyRow): Promise<ScoreFactor[]> {
             count(*) filter (where p.status = 'awarded')::int as awarded_pkgs
        from packages p
        join buildings b on b.id = p.building_id
-      where b.company_id = $1`,
-    [c.id],
+      where b.company_id = $1
+        ${cutoff ? "and p.created_at <= $2" : ""}`,
+    cutoff ? [c.id, cutoff] : [c.id],
   );
   const openPkgs = num(awardAgg?.open_pkgs);
   const awardedPkgs = num(awardAgg?.awarded_pkgs);
@@ -278,8 +303,9 @@ async function scoreDeveloper(c: CompanyRow): Promise<ScoreFactor[]> {
        from bids bd
        join packages p on p.id = bd.package_id
        join buildings b on b.id = p.building_id
-      where b.company_id = $1`,
-    [c.id],
+      where b.company_id = $1
+        ${cutoff ? "and bd.created_at <= $2" : ""}`,
+    cutoff ? [c.id, cutoff] : [c.id],
   );
   const awardedBids = num(payAgg?.awarded);
   const paidBids = num(payAgg?.paid);
@@ -304,12 +330,14 @@ async function scoreDeveloper(c: CompanyRow): Promise<ScoreFactor[]> {
           join packages p on p.id = bd.package_id
           join buildings b on b.id = p.building_id
          where b.company_id = $1 and bd.vendor_company_id is not null
+           ${cutoff ? "and bd.created_at <= $2" : ""}
         union
         select dvr.vendor_company_id
           from developer_vendor_relationships dvr
          where dvr.developer_company_id = $1
+           ${cutoff ? "and dvr.created_at <= $2" : ""}
      ) t`,
-    [c.id],
+    cutoff ? [c.id, cutoff] : [c.id],
   );
   const vendors = num(breadth?.vendors);
   // 4 points per distinct vendor, capped at 25.
@@ -350,6 +378,53 @@ export async function diviniScore(companyId: string): Promise<DiviniScore | null
     score,
     factors,
     computed_at: inserted?.computed_at ?? new Date().toISOString(),
+  };
+}
+
+export type DiviniScoreAsOf = {
+  company_id: string;
+  entity_kind: "buyer" | "vendor";
+  as_of: string;
+  score: number;
+  factors: ScoreFactor[];
+  historical_note: string;
+};
+
+/**
+ * Procurement Graph G-03 (docs/ai-layer-design.md section 3.3): the Divini
+ * Score as it would have been on a past date, recomputed fresh from
+ * timestamped source rows - NEVER persisted (this must not write a
+ * backdated row into divini_scores, which would corrupt the real audit
+ * trail of when a score was actually computed). Every event-based factor
+ * (bids, deliveries, submittals, reviews, relationships) is scoped to rows
+ * that existed by asOfDate; every STATUS-based check (a bid's `awarded`
+ * flag, a package's `status`) reflects that row's CURRENT status, not a
+ * true point-in-time snapshot of status - this codebase has no status-
+ * history table for any of these, so a perfectly accurate historical
+ * status is not reconstructable. This is a deliberate, documented
+ * approximation ("existed by this date, in its current state") rather
+ * than a false claim of full historical precision - see scoreVendor()'s
+ * profile-completeness handling for the one factor that is entirely
+ * current-state (vendor_profiles has no history at all).
+ */
+export async function diviniScoreAsOf(companyId: string, asOfDate: Date): Promise<DiviniScoreAsOf | null> {
+  const c = await loadCompany(companyId);
+  if (!c) return null;
+
+  const entity_kind: "buyer" | "vendor" = c.kind === "vendor" ? "vendor" : "buyer";
+  const factors =
+    entity_kind === "vendor" ? await scoreVendor(c, asOfDate) : await scoreDeveloper(c, asOfDate);
+  const raw = factors.reduce((s, f) => s + f.points, 0);
+  const score = clamp(Math.round(raw), 0, 100);
+
+  return {
+    company_id: companyId,
+    entity_kind,
+    as_of: asOfDate.toISOString(),
+    score,
+    factors,
+    historical_note:
+      "Recomputed from source rows that existed by this date. Status-based factors (e.g. a bid's awarded flag) reflect each row's current status, not a true historical snapshot - this system has no status-history table. Never a cached/stored score.",
   };
 }
 
@@ -487,6 +562,70 @@ export async function buildRelationshipEdges(): Promise<number> {
     }
   }
 
+  // ---- 'commitment': recency-decayed real dollar volume, developer <-> vendor.
+  // Procurement Graph G-01 (docs/ai-layer-design.md section 3.1). Distinct
+  // from the 'bid'/'awarded' edges above, which weight by raw event COUNT
+  // (how many bids/awards) - this weights by actual COMMITTED MONEY (awards
+  // is the canonical commitment event per Phase 1's financial model),
+  // decayed by age so a $2M relationship from 3 years ago does not outweigh
+  // an active $200K one from last month. Half-life of 365 days: an award's
+  // dollar contribution to the edge weight halves every year it ages,
+  // recomputed fresh from source every rebuild (never a stored decay that
+  // itself needs re-decaying).
+  const COMMITMENT_HALF_LIFE_DAYS = 365;
+  const commitmentPairs = await q<{
+    developer_company_id: string;
+    vendor_company_id: string;
+    award_count: number;
+    total_amount_cents: string;
+    decayed_weight: string;
+  }>(
+    `select developer_company_id, vendor_company_id,
+            count(*)::int as award_count,
+            sum(awarded_amount_cents)::text as total_amount_cents,
+            sum(
+              (awarded_amount_cents::numeric / 100.0)
+              * power(0.5, extract(epoch from (now() - created_at)) / 86400.0 / $1)
+            )::text as decayed_weight
+       from awards
+      where status = 'active'
+        and developer_company_id is not null
+        and vendor_company_id is not null
+      group by developer_company_id, vendor_company_id`,
+    [COMMITMENT_HALF_LIFE_DAYS],
+  );
+  for (const r of commitmentPairs) {
+    if (r.developer_company_id === r.vendor_company_id) continue;
+    await upsertEdge(r.developer_company_id, r.vendor_company_id, "commitment", num(r.decayed_weight), {
+      awardCount: num(r.award_count),
+      totalAmountCents: num(r.total_amount_cents),
+      halfLifeDays: COMMITMENT_HALF_LIFE_DAYS,
+    });
+    count++;
+  }
+
+  // ---- 'co_bid': vendor <-> vendor, both bid on the same package(s).
+  // Procurement Graph G-02a. Undirected (one edge per unordered pair,
+  // ordered by id so a rebuild never creates both (A,B) and (B,A)).
+  // Weight = number of distinct packages both vendors bid on together.
+  const coBidPairs = await q<{ vendor_a: string; vendor_b: string; shared_packages: number }>(
+    `select a.vendor_company_id as vendor_a, b.vendor_company_id as vendor_b,
+            count(distinct a.package_id)::int as shared_packages
+       from bids a
+       join bids b
+         on a.package_id = b.package_id
+        and a.vendor_company_id < b.vendor_company_id
+      where a.vendor_company_id is not null and b.vendor_company_id is not null
+        and coalesce(a.is_draft, false) = false and coalesce(b.is_draft, false) = false
+      group by a.vendor_company_id, b.vendor_company_id`,
+  );
+  for (const r of coBidPairs) {
+    await upsertEdge(r.vendor_a, r.vendor_b, "co_bid", num(r.shared_packages), {
+      sharedPackages: num(r.shared_packages),
+    });
+    count++;
+  }
+
   return count;
 }
 
@@ -534,6 +673,59 @@ export async function relationshipGraph(companyId: string): Promise<Relationship
   }));
 
   return { company_id: companyId, nodes, edges };
+}
+
+export type RelatedPackage = {
+  id: string;
+  category: string;
+  status: string;
+  building_id: string;
+  building_name: string;
+  relation: "same_project" | "same_trade_portfolio";
+};
+
+/**
+ * Procurement Graph G-02b (docs/ai-layer-design.md section 3.2):
+ * package-to-package relatedness. Deliberately NOT stored/materialized
+ * edges (packages are not companies - relationship_edges's schema is
+ * company-to-company only) and deliberately NOT cross-tenant: this only
+ * ever returns packages from the SAME developer company as the input
+ * package (either the same building, or the same trade category elsewhere
+ * in that company's own portfolio), never another developer's packages.
+ * Surfacing "similar packages at other companies" would be a cross-tenant
+ * competitive-intelligence feature this document's design explicitly does
+ * not propose. Computed on demand, no new table, matching this codebase's
+ * "recompute from source" convention.
+ */
+export async function relatedPackages(packageId: string): Promise<RelatedPackage[]> {
+  const self = await q1<{ id: string; category: string; building_id: string; company_id: string | null }>(
+    `select p.id, p.category, p.building_id, b.company_id
+       from packages p join buildings b on b.id = p.building_id
+      where p.id = $1`,
+    [packageId],
+  );
+  if (!self || !self.company_id) return [];
+
+  const sameProject = await q<RelatedPackage>(
+    `select p.id, p.category, p.status, p.building_id, b.name as building_name,
+            'same_project' as relation
+       from packages p join buildings b on b.id = p.building_id
+      where p.building_id = $1 and p.id != $2
+      order by p.created_at desc`,
+    [self.building_id, self.id],
+  );
+
+  const sameTradeElsewhere = await q<RelatedPackage>(
+    `select p.id, p.category, p.status, p.building_id, b.name as building_name,
+            'same_trade_portfolio' as relation
+       from packages p join buildings b on b.id = p.building_id
+      where b.company_id = $1 and p.category = $2 and p.building_id != $3 and p.id != $4
+      order by p.created_at desc
+      limit 25`,
+    [self.company_id, self.category, self.building_id, self.id],
+  );
+
+  return [...sameProject, ...sameTradeElsewhere];
 }
 
 // ---------------------------------------------------------------------------

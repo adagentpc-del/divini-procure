@@ -17,6 +17,9 @@ import {
   extractProfileFromUrl,
   type CompanyPayload,
 } from '../lib/db';
+import { apiGet, apiSend } from '../lib/api';
+import { type Tier, audienceForKind, basePlansFor, freeTierKeyForAudience, money, limitText } from '../lib/tiers';
+import { FREE_BID_LIMIT } from '../lib/monetization';
 
 const VENDOR_SERVICES = [
   'Millwork', 'Cabinetry', 'Doors', 'Furniture', 'Lighting',
@@ -49,6 +52,20 @@ function readRoleHint(): Kind | null {
   }
 }
 
+// Stashed by the Pricing page when a visitor picks a specific plan before
+// signing up - registration requires email verification, which can happen
+// minutes or days later in a different tab, so a query param would not
+// survive; localStorage does (same pattern as procure_onboard_role above).
+function readTierHint(): string | null {
+  try {
+    const q = new URLSearchParams(window.location.search).get('tier');
+    if (q) return q;
+    return localStorage.getItem('procure_onboard_tier');
+  } catch {
+    return null;
+  }
+}
+
 function normalizeRole(v: string | null | undefined): Kind | null {
   const r = (v ?? '').toLowerCase().trim();
   if (r === 'vendor' || r === 'supplier') return 'vendor';
@@ -59,6 +76,55 @@ function normalizeRole(v: string | null | undefined): Kind | null {
 
 function toggleIn(list: string[], setList: (v: string[]) => void, v: string) {
   setList(list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
+}
+
+// ---------------------------------------------------------------------------
+// Draft persistence — this flow requires leaving the app to verify email,
+// often on a different device or tab, and can otherwise be interrupted by
+// anything from a phone call to an accidental tab close. Without this, a
+// user who filled in step 1 and picked a plan on step 2 lost all of it and
+// had to start over from a blank step 1 on return - confirmed by actually
+// closing a tab mid-flow and reopening it. Expires after 48h so a very old
+// abandoned draft does not resurface unexpectedly for someone starting
+// fresh; the Vendor Agreement checkbox is deliberately never restored, so
+// re-affirming consent is always a fresh action.
+const DRAFT_KEY = 'procure_onboard_draft';
+const DRAFT_TTL_MS = 48 * 60 * 60 * 1000;
+
+type Draft = {
+  savedAt: number;
+  kind: Kind;
+  step: number;
+  name: string;
+  website: string;
+  assetTypes: string[];
+  services: string[];
+  focusAreas: string[];
+  selectedTierKey: string;
+  contact: string;
+  contactTitle: string;
+  phone: string;
+};
+
+function readDraft(): Draft | null {
+  try {
+    const raw = localStorage.getItem(DRAFT_KEY);
+    if (!raw) return null;
+    const d = JSON.parse(raw) as Partial<Draft>;
+    if (!d.savedAt || Date.now() - d.savedAt > DRAFT_TTL_MS) return null;
+    if (!d.name && !d.contact && (d.step ?? 0) === 0) return null; // nothing worth restoring
+    return d as Draft;
+  } catch {
+    return null;
+  }
+}
+
+function writeDraft(d: Draft): void {
+  try { localStorage.setItem(DRAFT_KEY, JSON.stringify(d)); } catch { /* private browsing */ }
+}
+
+function clearDraft(): void {
+  try { localStorage.removeItem(DRAFT_KEY); } catch { /* ignore */ }
 }
 
 // ---------------------------------------------------------------------------
@@ -80,7 +146,11 @@ export default function Onboarding() {
   const [pulling, setPulling] = useState(false);
   const [pullMsg, setPullMsg] = useState('');
 
-  // Step 2 fields
+  // Step 2 (plan) fields
+  const [tiers, setTiers] = useState<Tier[]>([]);
+  const [selectedTierKey, setSelectedTierKey] = useState<string>(freeTierKeyForAudience(audienceForKind('buyer')));
+
+  // Step 3 fields
   const [contact, setContact] = useState('');
   const [contactTitle, setContactTitle] = useState('');
   const [email, setEmail] = useState(session?.user.email ?? '');
@@ -90,14 +160,67 @@ export default function Onboarding() {
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
 
-  // Pre-select role from URL / localStorage
+  // Resume an interrupted attempt, or pre-select role from URL / localStorage.
+  // A URL query param is a fresh, deliberate signal (e.g. clicked a specific
+  // "join as a vendor" link) and always wins over a stale saved draft.
   useEffect(() => {
+    const hasExplicitRoleParam = !!normalizeRole(new URLSearchParams(window.location.search).get('role'));
+    const draft = hasExplicitRoleParam ? null : readDraft();
+    if (draft) {
+      setKind(draft.kind);
+      setStep(draft.step);
+      setName(draft.name);
+      setWebsite(draft.website);
+      setAssetTypes(draft.assetTypes);
+      setServices(draft.services);
+      setFocusAreas(draft.focusAreas);
+      setSelectedTierKey(draft.selectedTierKey);
+      setContact(draft.contact);
+      setContactTitle(draft.contactTitle);
+      if (draft.phone) setPhone(draft.phone);
+      return;
+    }
     const hint = readRoleHint();
     if (hint) {
       setKind(hint);
+      setSelectedTierKey(freeTierKeyForAudience(audienceForKind(hint)));
       setStep(0);
     }
   }, []);
+
+  // Snapshot progress after the fields above have settled, so an interruption
+  // (closed tab, dead battery, a phone call) does not lose it.
+  useEffect(() => {
+    if (!name.trim() && step === 0) return; // nothing entered yet - do not create an empty draft
+    writeDraft({
+      savedAt: Date.now(),
+      kind, step, name, website, assetTypes, services, focusAreas,
+      selectedTierKey, contact, contactTitle, phone,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kind, step, name, website, assetTypes, services, focusAreas, selectedTierKey, contact, contactTitle, phone]);
+
+  // Plan catalogue - loaded once; the user is already authenticated at this
+  // point (they just have not created a company/role yet), so the same
+  // requireUser-gated /subscriptions/tiers endpoint the rest of the app uses
+  // works here too.
+  useEffect(() => {
+    apiGet<{ tiers: Tier[] }>('/subscriptions/tiers').then((d) => setTiers(d.tiers ?? [])).catch(() => {});
+  }, []);
+
+  const plans = useMemo(() => basePlansFor(tiers, audienceForKind(kind)), [tiers, kind]);
+
+  // Apply a stashed plan hint from the Pricing page once the catalogue has
+  // loaded and only if it's a real, selectable plan for the resolved
+  // audience - never trust the hint blindly.
+  useEffect(() => {
+    if (plans.length === 0) return;
+    const tierHint = readTierHint();
+    if (tierHint && plans.some((p) => p.key === tierHint)) {
+      setSelectedTierKey(tierHint);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plans]);
 
   // Apply one-time prefill stashed by the invite claim page
   useEffect(() => {
@@ -133,6 +256,7 @@ export default function Onboarding() {
     setStep(0);
     setErr('');
     setAgreed(false);
+    setSelectedTierKey(freeTierKeyForAudience(audienceForKind(k)));
   }
 
   async function pullFromWebsite() {
@@ -174,6 +298,11 @@ export default function Onboarding() {
     setStep(1);
   }
 
+  function nextFromPlan() {
+    setErr('');
+    setStep(2);
+  }
+
   async function submit() {
     setErr('');
     if (!name.trim()) { setErr('Company name is required.'); setStep(0); return; }
@@ -197,14 +326,43 @@ export default function Onboarding() {
       if (kind === 'vendor') {
         payload.services = services;
         payload.service_categories = services;
+        payload.vendorAgreementAccepted = agreed;
       } else if (kind === 'investor') {
         payload.focus_areas = focusAreas;
       } else {
         payload.asset_types = assetTypes;
       }
 
-      await createCompanyForUser(session!.user.id, payload);
+      const created = await createCompanyForUser(session!.user.id, payload);
       await refreshCompany();
+      clearDraft();
+
+      // Free tier: nothing further to do. Paid tier: kick off checkout - a
+      // Stripe redirect for a real price, or an immediate record-only
+      // assignment when Stripe isn't configured for this tier yet. Either
+      // way the account already exists, so a failure here never blocks
+      // access - just report it and let the user upgrade later from
+      // Subscription.
+      const freeKey = freeTierKeyForAudience(audienceForKind(kind));
+      if (selectedTierKey && selectedTierKey !== freeKey) {
+        try {
+          const successUrl = `${window.location.origin}/subscription?session_id={CHECKOUT_SESSION_ID}`;
+          const cancelUrl = `${window.location.origin}/app`;
+          const r = await apiSend<{ url?: string | null }>('POST', '/subscriptions/checkout', {
+            companyId: created.id,
+            tierKey: selectedTierKey,
+            successUrl,
+            cancelUrl,
+          });
+          if (r.url) {
+            window.location.href = r.url;
+            return;
+          }
+        } catch {
+          // Non-fatal: the account was created successfully on the free
+          // tier default. The user can pick a plan from Subscription.
+        }
+      }
       nav('/app');
     } catch (e: any) {
       setErr(e?.message ?? 'Could not create your company. Please try again.');
@@ -217,7 +375,7 @@ export default function Onboarding() {
   const progress = useMemo(
     () => (
       <div style={{ display: 'flex', gap: 6, marginBottom: 22 }}>
-        {[0, 1].map((i) => (
+        {[0, 1, 2].map((i) => (
           <div
             key={i}
             style={{
@@ -240,19 +398,17 @@ export default function Onboarding() {
         {/* Header */}
         <div style={{ marginBottom: 6 }}>
           <div style={{ fontSize: 12, color: 'var(--muted)', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 4 }}>
-            Step {step + 1} of 2
+            Step {step + 1} of 3
           </div>
           <h1 style={{ fontSize: 24, marginBottom: 2 }}>
-            {step === 0
-              ? 'Set up your organization'
-              : kind === 'investor'
-                ? 'Your contact details'
-                : 'Your contact details'}
+            {step === 0 ? 'Set up your organization' : step === 1 ? 'Choose your plan' : 'Your contact details'}
           </h1>
           <div className="note">
             {step === 0
               ? "Takes under a minute. You can add documents and media from your dashboard."
-              : "We'll use this to personalize your account."}
+              : step === 1
+                ? 'Start free, or pick a plan now - you can change this anytime from Subscription.'
+                : "We'll use this to personalize your account."}
           </div>
         </div>
 
@@ -271,7 +427,7 @@ export default function Onboarding() {
                 {([
                   { k: 'buyer', label: 'Developer / Buyer' },
                   { k: 'vendor', label: 'Vendor / Supplier' },
-                  { k: 'investor', label: 'Investor' },
+                  { k: 'investor', label: 'Capital Partner' },
                 ] as { k: Kind; label: string }[]).map(({ k, label }) => (
                   <button
                     type="button"
@@ -379,9 +535,73 @@ export default function Onboarding() {
         )}
 
         {/* ================================================================
-            STEP 2: Contact + (Vendor Agreement)
+            STEP 2: Choose a plan
             ================================================================ */}
         {step === 1 && (
+          <>
+            <div style={{ display: 'grid', gap: 10 }}>
+              {plans.length === 0 ? (
+                <div className="note">Loading plans...</div>
+              ) : (
+                plans.map((t) => {
+                  const selected = selectedTierKey === t.key;
+                  return (
+                    <div
+                      key={t.key}
+                      onClick={() => setSelectedTierKey(t.key)}
+                      style={{
+                        cursor: 'pointer',
+                        border: `1px solid ${selected ? 'var(--emerald)' : 'var(--line)'}`,
+                        borderRadius: 10,
+                        padding: '12px 14px',
+                        background: selected ? 'rgba(16,185,129,0.06)' : 'transparent',
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span
+                            style={{
+                              width: 16, height: 16, borderRadius: '50%',
+                              border: `2px solid ${selected ? 'var(--emerald)' : 'var(--muted)'}`,
+                              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                            }}
+                          >
+                            {selected && <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--emerald)' }} />}
+                          </span>
+                          <strong>{t.name}</strong>
+                        </div>
+                        <span className="note">{money(t.price_cents)}</span>
+                      </div>
+                      <div className="note" style={{ fontSize: 12, marginTop: 6, paddingLeft: 24 }}>
+                        {kind === 'buyer' && `${limitText(t.bid_package_limit)} bid packages · ${limitText(t.active_project_limit)} active projects`}
+                        {kind === 'vendor' && `${t.key === freeTierKeyForAudience('vendor') ? FREE_BID_LIMIT : 'Unlimited'} bids per quarter · ${limitText(t.vendor_invite_limit)} vendor invites`}
+                        {kind === 'investor' && `${limitText(t.investor_match_limit)} Capital Partner matches`}
+                        {(t.ai_features || t.reporting_access || t.white_glove) && ' · '}
+                        {t.ai_features && 'AI features '}
+                        {t.reporting_access && 'Reporting '}
+                        {t.white_glove && 'White glove'}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+            <div className="note" style={{ marginTop: 10 }}>
+              {selectedTierKey === freeTierKeyForAudience(audienceForKind(kind))
+                ? "You're on the free plan - upgrade anytime from Subscription."
+                : 'A paid plan checks out securely through Stripe right after your account is created.'}
+            </div>
+            <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
+              <button type="button" className="btn lg" onClick={() => setStep(0)} style={{ flex: 1 }}>Back</button>
+              <button type="button" className="btn primary lg" onClick={nextFromPlan} style={{ flex: 2 }}>Continue</button>
+            </div>
+          </>
+        )}
+
+        {/* ================================================================
+            STEP 3: Contact + (Vendor Agreement)
+            ================================================================ */}
+        {step === 2 && (
           <>
             <div className="two">
               <div className="field">
@@ -439,8 +659,9 @@ export default function Onboarding() {
                   and buyers. Divini Procure may verify your credentials and suspend accounts that
                   misrepresent qualifications. Joining and browsing are free. Bidding and contacting
                   developers unlock once your credentials pass verification. Free vendors get 5 bids per
-                  quarter; Vendor Pro is unlimited. A 2% success fee, capped at $2,500, applies only when
-                  you win work through the platform.
+                  quarter; Vendor Pro is unlimited. A 5% platform fee, capped at $25,000 (2% capped at
+                  $10,000 for an existing relationship), plus a separate 0.1% infrastructure fee capped at
+                  $1,500, applies only when you win work through the platform.
                 </div>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 14 }}>
                   <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} />
@@ -473,7 +694,7 @@ export default function Onboarding() {
               <button
                 type="button"
                 className="btn lg"
-                onClick={() => { setErr(''); setStep(0); }}
+                onClick={() => { setErr(''); setStep(1); }}
                 disabled={busy}
                 style={{ flex: 1 }}
               >

@@ -9,6 +9,20 @@
 -- pass resolves any cross-file foreign-key that was declared before its parent
 -- table existed on the first pass. Files are concatenated parents-first.
 -- Zero em dashes.
+--
+-- Row-Level Security note: db/schema-rls.sql (spliced in near the end of
+-- this file) enables and FORCEs RLS on several tables, including a policy
+-- gate on subscription_tiers writes (admin only). Both this file's own
+-- re-runnable seed INSERTs into subscription_tiers (idempotent via ON
+-- CONFLICT) and the RLS bootstrap itself must keep working on every re-run
+-- against an already-migrated database (the documented two-pass procedure
+-- in 23_DEPLOYMENT.md, and CI's db-schema job, both apply this whole file
+-- TWICE against the same database). Running this file at all is itself a
+-- trusted, admin-equivalent operation (a DBA/deploy script, not a live user
+-- request), so set that context for the session up front - this is the
+-- same admin-equivalent treatment schema-rls.sql's own header comment
+-- already documents for background jobs with no request context.
+select set_config('app.is_admin', 't', false);
 -- =====================================================================
 
 
@@ -707,6 +721,1029 @@ create table if not exists rfq_suggested_lines (
 create index if not exists idx_rfq_suggested_package on rfq_suggested_lines(package_id);
 create index if not exists idx_documents_category on documents(category);
 
+-- ===== schema-pipeline.sql =====
+-- ============================================================================
+-- Divini Procure - DIVINI PIPELINE (user-facing sales / procurement CRM)
+-- ----------------------------------------------------------------------------
+-- NOT to be confused with db/schema-crm.sql (crm_records), which is Divini's
+-- own INTERNAL sales pipeline for signing up developers/vendors/investors as
+-- customers. Divini Pipeline is the opposite: a tool END USERS use to run
+-- their OWN sales/procurement funnel on the platform.
+--
+--   VENDOR profile_type: tracks bid opportunities they are pursuing (an
+--   inquiry, an invited package, a direct RFQ) from first contact through
+--   award or loss. An opportunity MAY link to a real packages/bids row once
+--   one exists, or stand alone as an early-stage lead before it does.
+--
+--   DEVELOPER profile_type: tracks their own vendor-sourcing/procurement
+--   funnel per package - which vendors they are courting, at what stage,
+--   with what next action - independent of (but linkable to) the formal
+--   bids already submitted against a packages row.
+--
+-- Design principle (see AI_PROJECT_OS Capital Partner module notes): this is
+-- a SHARED ENGINE. One set of tables serves both profile types via
+-- profile_type + org-customizable stage definitions, rather than duplicating
+-- a parallel schema per profile.
+--
+-- An opportunity belongs to exactly one organization_id (the company running
+-- ITS OWN funnel); it is not a shared record between two companies the way a
+-- purchase order is. Access = member of organization_id, or admin.
+--
+-- Idempotent: safe to re-run. Apply standalone via psql, e.g.
+--   docker exec -i aibos_postgres psql -U aibos -d divini_procure < db/schema-pipeline.sql
+-- Zero em dashes by convention. Integer cents (estimated_value_cents bigint).
+-- ============================================================================
+
+create extension if not exists "pgcrypto";
+
+-- ---------------------------------------------------------------------------
+-- Stage definitions. Global defaults (organization_id is null) ship seeded
+-- per profile_type; an organization may add its own custom stage set later
+-- (a role-specific pipeline template, per the spec) by inserting rows with
+-- its own organization_id - those take precedence over the global default in
+-- the app layer, not via a DB constraint.
+-- ---------------------------------------------------------------------------
+create table if not exists pipeline_stage_definitions (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid references companies(id) on delete cascade,  -- null = global default
+  profile_type text not null check (profile_type in ('vendor', 'developer')),
+  stage_key text not null,
+  label text not null,
+  sort_order int not null default 0,
+  is_won boolean not null default false,
+  is_lost boolean not null default false,
+  active boolean not null default true,
+  created_at timestamptz default now()
+);
+create index if not exists idx_pipeline_stage_defs_org_profile
+  on pipeline_stage_definitions (organization_id, profile_type);
+
+-- ---------------------------------------------------------------------------
+-- The opportunity record itself.
+-- ---------------------------------------------------------------------------
+create table if not exists pipeline_opportunities (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references companies(id) on delete cascade,
+  profile_type text not null check (profile_type in ('vendor', 'developer')),
+
+  name text not null,
+
+  -- counterparty: an existing company account, or free-text before one exists
+  client_company_id uuid references companies(id) on delete set null,
+  client_name text,
+  client_email text,
+  client_phone text,
+
+  -- links into the real procurement records once they exist
+  package_id uuid references packages(id) on delete set null,
+  bid_id uuid references bids(id) on delete set null,
+  building_id uuid references buildings(id) on delete set null,
+
+  category text,
+  source text,
+  estimated_value_cents bigint,
+  probability_basis_points int not null default 5000
+    check (probability_basis_points between 0 and 10000),
+
+  stage_key text not null default 'new',
+  status text not null default 'open' check (status in ('open', 'won', 'lost')),
+
+  owner_user_id text references users(id),
+  next_action text,
+  next_action_date date,
+  expected_close_date date,
+  last_activity_at timestamptz,
+
+  loss_reason_id uuid,
+  loss_notes text,
+  won_at timestamptz,
+  lost_at timestamptz,
+
+  notes text,
+  created_by text references users(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists idx_pipeline_opps_org on pipeline_opportunities (organization_id);
+create index if not exists idx_pipeline_opps_stage on pipeline_opportunities (organization_id, stage_key);
+create index if not exists idx_pipeline_opps_status on pipeline_opportunities (organization_id, status);
+create index if not exists idx_pipeline_opps_owner on pipeline_opportunities (owner_user_id);
+create index if not exists idx_pipeline_opps_package on pipeline_opportunities (package_id);
+
+-- Append-only. Never update or delete a row: the full stage history is the
+-- audit trail for how long an opportunity sat in each stage.
+create table if not exists pipeline_stage_history (
+  id uuid primary key default gen_random_uuid(),
+  opportunity_id uuid not null references pipeline_opportunities(id) on delete cascade,
+  from_stage_key text,
+  to_stage_key text not null,
+  changed_by text references users(id),
+  changed_at timestamptz not null default now()
+);
+create index if not exists idx_pipeline_stage_history_opp on pipeline_stage_history (opportunity_id);
+
+-- Logged interactions (calls, emails, notes, meetings, site visits). This is
+-- what "last_activity_at" and the readiness score's recency signal read from.
+create table if not exists pipeline_activities (
+  id uuid primary key default gen_random_uuid(),
+  opportunity_id uuid not null references pipeline_opportunities(id) on delete cascade,
+  activity_type text not null default 'note'
+    check (activity_type in ('note', 'call', 'email', 'meeting', 'site_visit', 'system')),
+  body text,
+  created_by text references users(id),
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_pipeline_activities_opp on pipeline_activities (opportunity_id, created_at desc);
+
+-- Next-action tasks. An opportunity's single "next_action" field is a quick
+-- summary; this table is the real, trackable task list behind it.
+create table if not exists pipeline_tasks (
+  id uuid primary key default gen_random_uuid(),
+  opportunity_id uuid not null references pipeline_opportunities(id) on delete cascade,
+  title text not null,
+  due_at timestamptz,
+  assigned_to text references users(id),
+  status text not null default 'open' check (status in ('open', 'completed', 'cancelled')),
+  completed_at timestamptz,
+  completed_by text references users(id),
+  created_by text references users(id),
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_pipeline_tasks_opp on pipeline_tasks (opportunity_id);
+create index if not exists idx_pipeline_tasks_due on pipeline_tasks (assigned_to, due_at) where status = 'open';
+
+create table if not exists pipeline_tags (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references companies(id) on delete cascade,
+  label text not null,
+  created_at timestamptz default now(),
+  unique (organization_id, label)
+);
+create table if not exists pipeline_opportunity_tags (
+  opportunity_id uuid not null references pipeline_opportunities(id) on delete cascade,
+  tag_id uuid not null references pipeline_tags(id) on delete cascade,
+  primary key (opportunity_id, tag_id)
+);
+
+-- Configurable catalogs. Global defaults (organization_id null) ship seeded;
+-- an organization may add its own.
+create table if not exists pipeline_loss_reasons (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid references companies(id) on delete cascade,
+  label text not null,
+  active boolean not null default true,
+  created_at timestamptz default now()
+);
+create table if not exists pipeline_sources (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid references companies(id) on delete cascade,
+  label text not null,
+  active boolean not null default true,
+  created_at timestamptz default now()
+);
+
+-- ---------------------------------------------------------------------------
+-- Seed default stage definitions. Idempotent: only inserts when no global
+-- (organization_id is null) row of that profile_type + stage_key exists yet.
+-- ---------------------------------------------------------------------------
+insert into pipeline_stage_definitions (organization_id, profile_type, stage_key, label, sort_order, is_won, is_lost)
+select null, v.profile_type, v.stage_key, v.label, v.sort_order, v.is_won, v.is_lost
+from (values
+  -- VENDOR: pursuing bid opportunities
+  ('vendor', 'new',              'New',               10, false, false),
+  ('vendor', 'reviewing',        'Reviewing',         20, false, false),
+  ('vendor', 'qualified',        'Qualified',         30, false, false),
+  ('vendor', 'info_needed',      'Information Needed',40, false, false),
+  ('vendor', 'bid_in_progress',  'Bid In Progress',   50, false, false),
+  ('vendor', 'bid_submitted',    'Bid Submitted',     60, false, false),
+  ('vendor', 'negotiation',      'Negotiation',       70, false, false),
+  ('vendor', 'awarded',          'Awarded',           80, true,  false),
+  ('vendor', 'lost',             'Lost',              90, false, true),
+  -- DEVELOPER: sourcing vendors for a package
+  ('developer', 'new',               'New',                10, false, false),
+  ('developer', 'reviewing',         'Reviewing',          20, false, false),
+  ('developer', 'info_needed',       'Information Needed',30, false, false),
+  ('developer', 'sourcing_vendors',  'Sourcing Vendors',  40, false, false),
+  ('developer', 'bids_in',           'Bids In',            50, false, false),
+  ('developer', 'comparing',         'Comparing',          60, false, false),
+  ('developer', 'negotiation',       'Negotiation',        70, false, false),
+  ('developer', 'awarded',           'Awarded',            80, true,  false),
+  ('developer', 'lost',              'Lost',               90, false, true)
+) as v(profile_type, stage_key, label, sort_order, is_won, is_lost)
+where not exists (
+  select 1 from pipeline_stage_definitions d
+   where d.organization_id is null and d.profile_type = v.profile_type and d.stage_key = v.stage_key
+);
+
+-- Seed default loss reasons (global).
+insert into pipeline_loss_reasons (organization_id, label)
+select null, r.label
+from (values ('Price'), ('Timeline'), ('Lost to competitor'), ('Scope mismatch'),
+             ('Client went quiet'), ('Budget cancelled'), ('Other')) as r(label)
+where not exists (
+  select 1 from pipeline_loss_reasons l where l.organization_id is null and l.label = r.label
+);
+
+-- Seed default sources (global).
+insert into pipeline_sources (organization_id, label)
+select null, s.label
+from (values ('Marketplace match'), ('Direct inquiry'), ('Referral'), ('Repeat client'),
+             ('Cold outreach'), ('Invited to bid'), ('Other')) as s(label)
+where not exists (
+  select 1 from pipeline_sources p where p.organization_id is null and p.label = s.label
+);
+
+-- ===== schema-scope-builder.sql =====
+-- ============================================================================
+-- Divini Procure - DIVINI SCOPE BUILDER (structured procurement requirements)
+-- ----------------------------------------------------------------------------
+-- Helps a developer define exactly what is being purchased/delivered/
+-- installed for a bid package, as STRUCTURED data (typed fields per trade),
+-- not a free-text blob. Reduces scope gaps, change orders, and disputes by
+-- making the requirement set explicit and versioned before it goes out to
+-- vendors.
+--
+--   scope_templates / scope_template_fields - reusable, trade-specific
+--     requirement definitions. Global defaults (organization_id null) ship
+--     seeded per common construction category; an organization may define
+--     its own custom template.
+--   scope_instances - one filled-out scope for a real package. Standard
+--     narrative sections (site conditions, access, delivery/install,
+--     exclusions, acceptance criteria, change-order rules) live directly on
+--     this row since they apply to virtually every scope regardless of
+--     trade; trade-specific structured answers live in scope_responses.
+--   scope_responses - the typed answer to each template field.
+--   scope_versions - an immutable snapshot taken every time a scope is
+--     published or republished (preserve revision history).
+--   scope_change_events - append-only log of what changed and when.
+--
+-- On publish, a scope_instance's structured content is synced into
+-- packages.requirements (text[]) as readable lines - the first real writer
+-- of that column, which server/src/routes/intel.ts already reads for
+-- vendor-package matching.
+--
+-- Idempotent: safe to re-run. Apply standalone via psql, e.g.
+--   docker exec -i aibos_postgres psql -U aibos -d divini_procure < db/schema-scope-builder.sql
+-- Zero em dashes by convention.
+-- ============================================================================
+
+create extension if not exists "pgcrypto";
+
+create table if not exists scope_templates (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid references companies(id) on delete cascade,  -- null = global default
+  category text not null,
+  name text not null,
+  description text,
+  active boolean not null default true,
+  created_by text references users(id),
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+create index if not exists idx_scope_templates_org_category on scope_templates (organization_id, category);
+
+create table if not exists scope_template_fields (
+  id uuid primary key default gen_random_uuid(),
+  template_id uuid not null references scope_templates(id) on delete cascade,
+  field_key text not null,
+  label text not null,
+  field_type text not null check (field_type in ('text', 'number', 'quantity', 'date', 'boolean', 'select', 'multiselect')),
+  unit text,               -- for quantity fields, e.g. "sq ft", "linear ft", "each"
+  options jsonb,           -- for select/multiselect: array of option labels
+  required boolean not null default false,
+  section text,            -- groups fields into UI sections
+  sort_order int not null default 0,
+  help_text text,
+  created_at timestamptz default now(),
+  unique (template_id, field_key)
+);
+create index if not exists idx_scope_template_fields_template on scope_template_fields (template_id, sort_order);
+
+create table if not exists scope_instances (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references companies(id) on delete cascade,
+  package_id uuid references packages(id) on delete cascade,
+  template_id uuid references scope_templates(id) on delete set null,
+  category text not null,
+  title text not null,
+
+  site_conditions text,
+  access_restrictions text,
+  delivery_requirements text,
+  install_requirements text,
+  exclusions text[] not null default '{}',
+  acceptance_criteria text[] not null default '{}',
+  change_order_rules text,
+
+  status text not null default 'draft' check (status in ('draft', 'published', 'archived')),
+  current_version int not null default 0,
+
+  created_by text references users(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists idx_scope_instances_org on scope_instances (organization_id);
+create index if not exists idx_scope_instances_package on scope_instances (package_id);
+
+create table if not exists scope_responses (
+  id uuid primary key default gen_random_uuid(),
+  scope_instance_id uuid not null references scope_instances(id) on delete cascade,
+  field_key text not null,
+  value_text text,
+  value_number numeric,
+  value_bool boolean,
+  value_date date,
+  value_json jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (scope_instance_id, field_key)
+);
+create index if not exists idx_scope_responses_instance on scope_responses (scope_instance_id);
+
+-- Immutable. Never update or delete a row: this is the estimate-versus-actual
+-- style audit trail for what the scope said at each publish point.
+create table if not exists scope_versions (
+  id uuid primary key default gen_random_uuid(),
+  scope_instance_id uuid not null references scope_instances(id) on delete cascade,
+  version_number int not null,
+  snapshot_json jsonb not null,
+  change_summary text,
+  created_by text references users(id),
+  created_at timestamptz not null default now(),
+  unique (scope_instance_id, version_number)
+);
+create index if not exists idx_scope_versions_instance on scope_versions (scope_instance_id);
+
+create table if not exists scope_change_events (
+  id uuid primary key default gen_random_uuid(),
+  scope_instance_id uuid not null references scope_instances(id) on delete cascade,
+  event_type text not null check (event_type in ('created', 'field_updated', 'published', 'republished', 'archived')),
+  field_key text,
+  old_value jsonb,
+  new_value jsonb,
+  actor text references users(id),
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_scope_change_events_instance on scope_change_events (scope_instance_id, created_at);
+
+-- ---------------------------------------------------------------------------
+-- Seed a handful of global default templates for common construction trades.
+-- Idempotent: only inserts when no global template of that category/field
+-- exists yet. Organizations can add their own via POST /scope/templates.
+-- ---------------------------------------------------------------------------
+insert into scope_templates (organization_id, category, name, description, created_by)
+select null, v.category, v.name, 'Divini default template.', null
+from (values
+  ('electrical',     'Electrical Rough-In & Trim'),
+  ('plumbing',        'Plumbing Rough-In & Fixtures'),
+  ('hvac',             'HVAC Install'),
+  ('concrete',         'Concrete / Foundation'),
+  ('general_labor',    'General Labor / Workforce')
+) as v(category, name)
+where not exists (
+  select 1 from scope_templates t where t.organization_id is null and t.category = v.category
+);
+
+insert into scope_template_fields (template_id, field_key, label, field_type, unit, options, required, section, sort_order)
+select st.id, v.field_key, v.label, v.field_type, v.unit, v.options::jsonb, v.required, v.section, v.sort_order
+from (values
+  ('electrical',     'square_footage',           'Square footage',                'quantity', 'sq ft',        null,                                              true,  'Scope',      10),
+  ('electrical',     'panel_amperage',           'Service panel amperage',        'number',   'amps',         null,                                              false, 'Scope',      20),
+  ('electrical',     'circuit_count',            'Circuit count',                 'number',   'circuits',     null,                                              false, 'Scope',      30),
+  ('electrical',     'fixture_count',            'Light fixture count',           'number',   'fixtures',     null,                                              false, 'Scope',      40),
+  ('electrical',     'permit_pulled_by',         'Permit pulled by',              'select',   null,           '["Developer","Vendor","Not required"]',          true,  'Compliance', 50),
+  ('plumbing',       'fixture_count',            'Fixture count',                 'number',   'fixtures',     null,                                              true,  'Scope',      10),
+  ('plumbing',       'pipe_material',            'Pipe material',                 'select',   null,           '["Copper","PEX","PVC","Cast iron"]',             true,  'Scope',      20),
+  ('plumbing',       'water_heater_included',    'Water heater included',         'boolean',  null,           null,                                              false, 'Scope',      30),
+  ('plumbing',       'permit_pulled_by',         'Permit pulled by',              'select',   null,           '["Developer","Vendor","Not required"]',          true,  'Compliance', 40),
+  ('hvac',           'square_footage',           'Conditioned square footage',    'quantity', 'sq ft',        null,                                              true,  'Scope',      10),
+  ('hvac',           'system_type',              'System type',                   'select',   null,           '["Split system","Package unit","Mini split","VRF"]', true, 'Scope',   20),
+  ('hvac',           'zone_count',               'Zone count',                    'number',   'zones',        null,                                              false, 'Scope',      30),
+  ('hvac',           'existing_ductwork',        'Existing ductwork reused',      'boolean',  null,           null,                                              false, 'Scope',      40),
+  ('concrete',       'volume',                   'Volume',                        'quantity', 'cubic yards',  null,                                              true,  'Scope',      10),
+  ('concrete',       'psi_rating',               'PSI rating',                    'number',   'psi',          null,                                              true,  'Scope',      20),
+  ('concrete',       'rebar_included',           'Rebar / reinforcement included','boolean',  null,           null,                                              false, 'Scope',      30),
+  ('concrete',       'finish_type',              'Finish type',                   'select',   null,           '["Broom","Smooth trowel","Stamped","Exposed aggregate"]', false, 'Scope', 40),
+  ('general_labor',  'worker_count',             'Number of workers',             'number',   'workers',      null,                                              true,  'Scope',      10),
+  ('general_labor',  'shift_length',             'Shift length',                  'number',   'hours',        null,                                              true,  'Scope',      20),
+  ('general_labor',  'certifications_required',  'Certifications required',       'text',     null,           null,                                              false, 'Compliance', 30),
+  ('general_labor',  'supervisor_required',      'Supervisor required on site',   'boolean',  null,           null,                                              false, 'Scope',      40)
+) as v(category, field_key, label, field_type, unit, options, required, section, sort_order)
+join scope_templates st on st.organization_id is null and st.category = v.category
+where not exists (
+  select 1 from scope_template_fields f where f.template_id = st.id and f.field_key = v.field_key
+);
+
+-- ===== schema-bid-studio.sql =====
+-- ============================================================================
+-- Divini Procure - DIVINI BID STUDIO (structured vendor bid submission)
+-- ----------------------------------------------------------------------------
+-- Additive extension of the EXISTING bids / bid_line_items tables (db/schema.sql)
+-- and the existing submission path (server/src/db.ts submitPricedBid, mounted
+-- at POST /api/packages/:id/bids). Divini Bid Studio does not replace that
+-- path or the separate bid_items/package_line_items BOQ-pricing feature; it
+-- adds a structured DRAFT-BUILD workflow on top: line-item packages with
+-- optional upgrades, taxes/discounts/deposit, a payment schedule, assumptions/
+-- exclusions/terms, an expiration date, versioned drafts, and reusable
+-- templates. On submit, the computed total is written into the existing
+-- bids.price column (dollars) so every downstream reader (award workflow,
+-- quote comparison, bid_recommendations, purchase orders) keeps working
+-- unchanged.
+--
+-- Money convention note: bids.price and bid_line_items.unit_price are
+-- pre-existing DOLLAR (numeric) columns - see server/src/routes/award-workflow.ts
+-- ("bids.price is dollars; amount_cents = round(price * 100)"). The new
+-- columns added here (subtotal_cents, tax_cents, discount_cents, total_cents,
+-- deposit_cents) are integer CENTS, matching the rest of the money-handling
+-- code added this session (payment_authorizations, platform_revenue). The
+-- conversion happens once, in server/src/lib/bid-totals.ts.
+--
+-- Idempotent: safe to re-run. Apply standalone via psql, e.g.
+--   docker exec -i aibos_postgres psql -U aibos -d divini_procure < db/schema-bid-studio.sql
+-- Zero em dashes by convention.
+-- ============================================================================
+
+create extension if not exists "pgcrypto";
+
+-- ---------- extend the existing bids table ----------
+alter table if exists bids add column if not exists scope_instance_id uuid references scope_instances(id) on delete set null;
+alter table if exists bids add column if not exists expires_at timestamptz;
+alter table if exists bids add column if not exists deposit_cents bigint;
+alter table if exists bids add column if not exists deposit_percent_basis_points int;
+alter table if exists bids add column if not exists tax_cents bigint;
+alter table if exists bids add column if not exists discount_cents bigint;
+alter table if exists bids add column if not exists subtotal_cents bigint;
+alter table if exists bids add column if not exists total_cents bigint;
+alter table if exists bids add column if not exists assumptions text;
+alter table if exists bids add column if not exists exclusions text[] not null default '{}';
+alter table if exists bids add column if not exists terms text;
+alter table if exists bids add column if not exists current_version int not null default 0;
+
+-- ---------- extend the existing bid_line_items table ----------
+alter table if exists bid_line_items add column if not exists description text;
+alter table if exists bid_line_items add column if not exists category text;
+alter table if exists bid_line_items add column if not exists optional boolean not null default false;
+alter table if exists bid_line_items add column if not exists selected boolean not null default true;
+alter table if exists bid_line_items add column if not exists sort_order int not null default 0;
+-- Compliance completion pass: unit of measure (e.g. "SF", "EA", "LF"),
+-- consistent with package_line_items.unit and bid_template_line_items.unit
+-- below - missing here was a genuine oversight in this migration. Every
+-- route in server/src/routes/bid-studio.ts (POST/PATCH line-items, the
+-- save-as-template and template-apply copy paths) already reads/writes a
+-- `unit` field and was reproducibly 500ing against this table with the
+-- column undefined - live-reproduced and fixed here, not a hypothetical gap.
+-- (This line exists in db/schema-bid-studio.sql already; apply-all.sql's
+-- copy had drifted out of sync and was missing it - the actual bug this
+-- fix closes, found only because a from-scratch CI bootstrap finally
+-- exercised this path. Keep both files in sync when editing either.)
+alter table if exists bid_line_items add column if not exists unit text;
+
+-- ---------- payment schedule ----------
+create table if not exists bid_payment_milestones (
+  id uuid primary key default gen_random_uuid(),
+  bid_id uuid not null references bids(id) on delete cascade,
+  label text not null,
+  percent_basis_points int,   -- either a percent of the total...
+  amount_cents bigint,        -- ...or a flat amount. One of the two is set.
+  due_event text not null default 'milestone'
+    check (due_event in ('deposit', 'milestone', 'completion', 'net_15', 'net_30', 'net_60', 'other')),
+  sort_order int not null default 0,
+  created_at timestamptz default now()
+);
+create index if not exists idx_bid_payment_milestones_bid on bid_payment_milestones (bid_id, sort_order);
+
+-- ---------- immutable draft/submission version snapshots ----------
+create table if not exists bid_versions (
+  id uuid primary key default gen_random_uuid(),
+  bid_id uuid not null references bids(id) on delete cascade,
+  version_number int not null,
+  snapshot_json jsonb not null,
+  change_summary text,
+  created_by text references users(id),
+  created_at timestamptz not null default now(),
+  unique (bid_id, version_number)
+);
+create index if not exists idx_bid_versions_bid on bid_versions (bid_id);
+
+-- ---------- reusable vendor bid templates ("save as template" workflow) ----------
+create table if not exists bid_templates (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references companies(id) on delete cascade,
+  category text,
+  name text not null,
+  assumptions text,
+  exclusions text[] not null default '{}',
+  terms text,
+  deposit_percent_basis_points int,
+  created_by text references users(id),
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+create index if not exists idx_bid_templates_org on bid_templates (organization_id);
+
+create table if not exists bid_template_line_items (
+  id uuid primary key default gen_random_uuid(),
+  template_id uuid not null references bid_templates(id) on delete cascade,
+  name text not null,
+  description text,
+  category text,
+  qty numeric not null default 1,
+  unit text,
+  unit_price numeric,
+  optional boolean not null default false,
+  sort_order int not null default 0
+);
+create index if not exists idx_bid_template_line_items_template on bid_template_line_items (template_id);
+
+-- ===== schema-follow-up-desk.sql =====
+-- ============================================================================
+-- Divini Procure - DIVINI FOLLOW-UP DESK (rules-based reminders, no LLM)
+-- ----------------------------------------------------------------------------
+-- A workflow is a named sequence of steps (delay, condition, action,
+-- template) that runs against a specific record - a stale Divini Pipeline
+-- opportunity, an unsubmitted Divini Bid Studio draft, a bid expiring soon, a
+-- scope left in draft, or a vendor credential nearing expiry. Every step's
+-- WORDING comes from a fixed template with {{merge_field}} substitution
+-- (server/src/lib/follow-up-scheduling.ts renderTemplate) and every
+-- CONDITION is a named, deterministic check against the linked record's
+-- current state (server/src/routes/follow-up.ts) - nothing here is
+-- generated text.
+--
+--   follow_up_templates  - reusable message bodies (global defaults +
+--     org-specific), one per (workflow_key, step_order) pairing by convention.
+--   follow_up_workflows / follow_up_steps - the rule definitions. Global
+--     defaults (organization_id null) ship seeded; an org can add its own.
+--   follow_up_enrollments - one row per (workflow, record) actively running.
+--     Unique per workflow+record so a record is never double-enrolled.
+--   follow_up_actions - the execution log: what fired, when, and whether it
+--     succeeded - the audit trail for "which follow-up closed the deal."
+--
+-- Idempotent: safe to re-run. Apply standalone via psql, e.g.
+--   docker exec -i aibos_postgres psql -U aibos -d divini_procure < db/schema-follow-up-desk.sql
+-- Zero em dashes by convention.
+-- ============================================================================
+
+create extension if not exists "pgcrypto";
+
+create table if not exists follow_up_templates (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid references companies(id) on delete cascade, -- null = global default
+  template_key text not null,
+  channel text not null default 'email' check (channel in ('email', 'in_app_notification', 'task')),
+  subject text,
+  body text not null,
+  created_by text references users(id),
+  created_at timestamptz default now()
+);
+create index if not exists idx_follow_up_templates_org_key on follow_up_templates (organization_id, template_key);
+
+create table if not exists follow_up_workflows (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid references companies(id) on delete cascade, -- null = global default
+  workflow_key text not null,
+  name text not null,
+  context_type text not null
+    check (context_type in ('pipeline_opportunity', 'bid_draft', 'bid_submitted', 'scope_instance', 'vendor_credential')),
+  active boolean not null default true,
+  -- statuses on the linked record that mean "stop, this is resolved"
+  stop_on_statuses text[] not null default '{}',
+  created_by text references users(id),
+  created_at timestamptz default now()
+);
+create index if not exists idx_follow_up_workflows_org_context on follow_up_workflows (organization_id, context_type);
+
+create table if not exists follow_up_steps (
+  id uuid primary key default gen_random_uuid(),
+  workflow_id uuid not null references follow_up_workflows(id) on delete cascade,
+  step_order int not null default 0,
+  delay_value int not null default 0,
+  delay_unit text not null default 'days' check (delay_unit in ('minutes', 'hours', 'days', 'business_days')),
+  -- a named, deterministic condition checked in code before firing; null = always fire
+  condition_code text,
+  action_type text not null check (action_type in ('send_email', 'notify', 'create_task')),
+  template_id uuid references follow_up_templates(id) on delete set null,
+  assigned_role text default 'owner' check (assigned_role in ('owner', 'admin')),
+  requires_approval boolean not null default false,
+  created_at timestamptz default now(),
+  unique (workflow_id, step_order)
+);
+create index if not exists idx_follow_up_steps_workflow on follow_up_steps (workflow_id, step_order);
+
+create table if not exists follow_up_enrollments (
+  id uuid primary key default gen_random_uuid(),
+  workflow_id uuid not null references follow_up_workflows(id) on delete cascade,
+  organization_id uuid not null references companies(id) on delete cascade,
+  context_type text not null,
+  context_id uuid not null,
+  current_step int not null default 0,
+  status text not null default 'active' check (status in ('active', 'paused', 'stopped', 'completed')),
+  enrolled_at timestamptz not null default now(),
+  next_action_at timestamptz,
+  completed_at timestamptz,
+  stop_reason text,
+  created_by text references users(id),
+  unique (workflow_id, context_type, context_id)
+);
+create index if not exists idx_follow_up_enrollments_due on follow_up_enrollments (status, next_action_at) where status = 'active';
+create index if not exists idx_follow_up_enrollments_org on follow_up_enrollments (organization_id);
+create index if not exists idx_follow_up_enrollments_context on follow_up_enrollments (context_type, context_id);
+
+create table if not exists follow_up_actions (
+  id uuid primary key default gen_random_uuid(),
+  enrollment_id uuid not null references follow_up_enrollments(id) on delete cascade,
+  step_id uuid references follow_up_steps(id) on delete set null,
+  action_type text not null,
+  status text not null default 'pending' check (status in ('pending', 'sent', 'skipped', 'failed', 'awaiting_approval')),
+  scheduled_at timestamptz not null default now(),
+  executed_at timestamptz,
+  approved_by text references users(id),
+  failure_reason text,
+  created_at timestamptz default now()
+);
+create index if not exists idx_follow_up_actions_enrollment on follow_up_actions (enrollment_id, created_at desc);
+
+-- ---------------------------------------------------------------------------
+-- Seed 4 global default workflows covering the highest-value cases across
+-- the three tools built so far. Idempotent: only inserts when no global
+-- workflow of that workflow_key exists yet. Organizations can add their own.
+-- ---------------------------------------------------------------------------
+
+-- 1) A Divini Pipeline opportunity with no logged activity in 14 days.
+insert into follow_up_templates (organization_id, template_key, channel, subject, body)
+select null, 'pipeline_stale_opportunity_step1', 'in_app_notification', null,
+       'No activity logged on "{{opportunityName}}" in 14 days. Log a call, note, or next action to keep it moving.'
+where not exists (select 1 from follow_up_templates where organization_id is null and template_key = 'pipeline_stale_opportunity_step1');
+
+insert into follow_up_workflows (organization_id, workflow_key, name, context_type, stop_on_statuses)
+select null, 'pipeline_stale_opportunity', 'Stale opportunity follow-up', 'pipeline_opportunity', array['won','lost']
+where not exists (select 1 from follow_up_workflows where organization_id is null and workflow_key = 'pipeline_stale_opportunity');
+
+insert into follow_up_steps (workflow_id, step_order, delay_value, delay_unit, condition_code, action_type, template_id, assigned_role)
+select w.id, 0, 14, 'days', 'no_recent_activity_14d', 'notify', t.id, 'owner'
+  from follow_up_workflows w, follow_up_templates t
+ where w.organization_id is null and w.workflow_key = 'pipeline_stale_opportunity'
+   and t.organization_id is null and t.template_key = 'pipeline_stale_opportunity_step1'
+   and not exists (select 1 from follow_up_steps s where s.workflow_id = w.id and s.step_order = 0);
+
+-- 2) A Divini Bid Studio draft left unsubmitted for 5 days.
+insert into follow_up_templates (organization_id, template_key, channel, subject, body)
+select null, 'bid_draft_stale_step1', 'in_app_notification', null,
+       'Your bid draft has been sitting for 5 days. Finish it in Divini Bid Studio before the package closes.'
+where not exists (select 1 from follow_up_templates where organization_id is null and template_key = 'bid_draft_stale_step1');
+
+insert into follow_up_workflows (organization_id, workflow_key, name, context_type, stop_on_statuses)
+select null, 'bid_draft_stale', 'Unfinished bid draft reminder', 'bid_draft', array['submitted','shortlisted','awarded','revision']
+where not exists (select 1 from follow_up_workflows where organization_id is null and workflow_key = 'bid_draft_stale');
+
+insert into follow_up_steps (workflow_id, step_order, delay_value, delay_unit, condition_code, action_type, template_id, assigned_role)
+select w.id, 0, 5, 'days', 'draft_still_open', 'notify', t.id, 'owner'
+  from follow_up_workflows w, follow_up_templates t
+ where w.organization_id is null and w.workflow_key = 'bid_draft_stale'
+   and t.organization_id is null and t.template_key = 'bid_draft_stale_step1'
+   and not exists (select 1 from follow_up_steps s where s.workflow_id = w.id and s.step_order = 0);
+
+-- 3) A submitted bid whose expiration date is within 3 days.
+insert into follow_up_templates (organization_id, template_key, channel, subject, body)
+select null, 'bid_expiring_soon_step1', 'email', 'Your bid expires soon',
+       'Your bid on package {{packageId}} expires on {{expiresAt}}. Contact the developer if you need an extension.'
+where not exists (select 1 from follow_up_templates where organization_id is null and template_key = 'bid_expiring_soon_step1');
+
+insert into follow_up_workflows (organization_id, workflow_key, name, context_type, stop_on_statuses)
+select null, 'bid_expiring_soon', 'Bid expiring reminder', 'bid_submitted', array['awarded','revision']
+where not exists (select 1 from follow_up_workflows where organization_id is null and workflow_key = 'bid_expiring_soon');
+
+insert into follow_up_steps (workflow_id, step_order, delay_value, delay_unit, condition_code, action_type, template_id, assigned_role)
+select w.id, 0, 0, 'days', 'expiring_within_3d', 'send_email', t.id, 'owner'
+  from follow_up_workflows w, follow_up_templates t
+ where w.organization_id is null and w.workflow_key = 'bid_expiring_soon'
+   and t.organization_id is null and t.template_key = 'bid_expiring_soon_step1'
+   and not exists (select 1 from follow_up_steps s where s.workflow_id = w.id and s.step_order = 0);
+
+-- 4) A vendor credential (license/insurance/etc) expiring within 30 days.
+insert into follow_up_templates (organization_id, template_key, channel, subject, body)
+select null, 'credential_expiring_step1', 'email', 'Credential expiring soon',
+       'Your {{credentialType}} expires on {{expiresAt}}. Renew and re-upload it to stay eligible to bid.'
+where not exists (select 1 from follow_up_templates where organization_id is null and template_key = 'credential_expiring_step1');
+
+insert into follow_up_workflows (organization_id, workflow_key, name, context_type, stop_on_statuses)
+select null, 'credential_expiring', 'Credential expiry reminder', 'vendor_credential', array['expired']
+where not exists (select 1 from follow_up_workflows where organization_id is null and workflow_key = 'credential_expiring');
+
+insert into follow_up_steps (workflow_id, step_order, delay_value, delay_unit, condition_code, action_type, template_id, assigned_role)
+select w.id, 0, 0, 'days', 'credential_expiring_30d', 'send_email', t.id, 'owner'
+  from follow_up_workflows w, follow_up_templates t
+ where w.organization_id is null and w.workflow_key = 'credential_expiring'
+   and t.organization_id is null and t.template_key = 'credential_expiring_step1'
+   and not exists (select 1 from follow_up_steps s where s.workflow_id = w.id and s.step_order = 0);
+
+-- ===== schema-blueprint.sql =====
+-- ============================================================================
+-- Divini Procure - DIVINI BLUEPRINT (document intelligence, no fabrication)
+-- ----------------------------------------------------------------------------
+-- Extends the EXISTING documents table and /api/documents upload endpoint
+-- (server/src/routes.ts) rather than duplicating them - that endpoint
+-- already does secure multipart upload, extension/MIME validation, path-
+-- traversal-safe storage keys, and pluggable local/S3 storage with envelope
+-- encryption. This module adds classification and AI-assisted (optional,
+-- gracefully degrading) project-summary drafting on top.
+--
+-- HONESTY NOTE (as originally written here): at the time this file was
+-- written, this codebase had no CAD-parsing or OCR library, so Divini
+-- Blueprint classified documents from FILENAME AND EXTENSION ONLY
+-- (server/src/lib/document-classifier.ts's classifyDocument()).
+-- UPDATE: db/schema-blueprint-content-extraction.sql later added real PDF
+-- text extraction and OCR (server/src/lib/text-extraction.ts, ocr.ts) and
+-- real DXF parsing (dxf-extraction.ts) - see that file for the current
+-- state. classifyDocument() itself is unchanged and still filename-only;
+-- the newer classifyFromContent() is the one that reads real content.
+-- Binary CAD (DWG/RVT/IFC) still has no reader - see cad-conversion.ts.
+-- Its "AI summary" step (server/src/routes/blueprint.ts, using the
+-- existing optional server/src/lib/llm.ts client) drafts narrative from
+-- classification plus any text the user explicitly supplies - never from
+-- file content it cannot see. Every field is a labeled suggestion requiring
+-- user review; nothing here is ever auto-published.
+--
+--   ai_extraction_runs - one row per "run analysis" action against a set of
+--     documents. Preserves the exact model/config used (source traceability).
+--   blueprint_summary_fields - one row per extracted/suggested project
+--     attribute (name, area, unit count, ...), each with its own confidence,
+--     source, and user-edit/confirm state - never a single opaque blob.
+--   blueprint_trade_suggestions - suggested bid-package trades. Creating an
+--     actual package/scope/opportunity from a suggestion is a separate,
+--     explicit user action (server/src/routes/blueprint.ts) that links back
+--     to the EXISTING packages / scope_instances / pipeline_opportunities
+--     tables - Blueprint does not duplicate those.
+--
+-- Idempotent: safe to re-run. Apply standalone via psql, e.g.
+--   docker exec -i aibos_postgres psql -U aibos -d divini_procure < db/schema-blueprint.sql
+-- Zero em dashes by convention.
+-- ============================================================================
+
+create extension if not exists "pgcrypto";
+
+-- ---------- extend the existing documents table ----------
+alter table if exists documents add column if not exists discipline text;
+alter table if exists documents add column if not exists document_category text;
+alter table if exists documents add column if not exists classification_confidence text
+  check (classification_confidence in ('high', 'medium', 'low'));
+alter table if exists documents add column if not exists classification_rule text;
+alter table if exists documents add column if not exists classified_at timestamptz;
+alter table if exists documents add column if not exists processing_status text not null default 'uploaded'
+  check (processing_status in ('uploaded', 'classifying', 'classified', 'failed'));
+alter table if exists documents add column if not exists checksum text;
+alter table if exists documents add column if not exists revision_number int not null default 1;
+alter table if exists documents add column if not exists revision_label text;
+alter table if exists documents add column if not exists parent_document_id uuid references documents(id) on delete set null;
+alter table if exists documents add column if not exists confidentiality_level text not null default 'internal'
+  check (confidentiality_level in ('internal', 'organization', 'restricted', 'public'));
+alter table if exists documents add column if not exists ai_consent boolean not null default true;
+alter table if exists documents add column if not exists category_overridden_by_user boolean not null default false;
+
+create index if not exists idx_documents_building on documents (building_id);
+create index if not exists idx_documents_category on documents (document_category);
+
+create table if not exists ai_extraction_runs (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references companies(id) on delete cascade,
+  building_id uuid references buildings(id) on delete cascade,
+  input_document_ids uuid[] not null default '{}',
+  -- deterministic-only unless the optional LLM client was configured AND used
+  used_ai boolean not null default false,
+  ai_model text,
+  status text not null default 'running' check (status in ('running', 'complete', 'failed')),
+  failure_reason text,
+  created_by text references users(id),
+  created_at timestamptz not null default now(),
+  completed_at timestamptz
+);
+create index if not exists idx_ai_extraction_runs_building on ai_extraction_runs (building_id);
+
+create table if not exists blueprint_summary_fields (
+  id uuid primary key default gen_random_uuid(),
+  extraction_run_id uuid not null references ai_extraction_runs(id) on delete cascade,
+  building_id uuid not null references buildings(id) on delete cascade,
+  field_key text not null,
+  field_label text not null,
+  suggested_value text,
+  source_document_id uuid references documents(id) on delete set null,
+  source_note text,
+  -- high | medium | low | manual_confirmation_required
+  confidence text not null default 'low'
+    check (confidence in ('high', 'medium', 'low', 'manual_confirmation_required')),
+  user_confirmed boolean not null default false,
+  user_edited_value text,
+  edited_by text references users(id),
+  edited_at timestamptz,
+  created_at timestamptz not null default now(),
+  unique (extraction_run_id, field_key)
+);
+create index if not exists idx_blueprint_summary_fields_building on blueprint_summary_fields (building_id);
+
+create table if not exists blueprint_trade_suggestions (
+  id uuid primary key default gen_random_uuid(),
+  extraction_run_id uuid not null references ai_extraction_runs(id) on delete cascade,
+  building_id uuid not null references buildings(id) on delete cascade,
+  trade_category text not null,
+  package_title text not null,
+  rationale text,
+  confidence text not null default 'low' check (confidence in ('high', 'medium', 'low')),
+  supporting_document_count int not null default 0,
+  status text not null default 'suggested'
+    check (status in ('suggested', 'accepted', 'rejected', 'merged')),
+  created_package_id uuid references packages(id) on delete set null,
+  created_scope_instance_id uuid references scope_instances(id) on delete set null,
+  reviewed_by text references users(id),
+  reviewed_at timestamptz,
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_blueprint_trade_suggestions_building on blueprint_trade_suggestions (building_id);
+
+-- Links a trade suggestion (or a manually tagged document) to the packages
+-- it should inform, beyond the documents.package_id single-package link -
+-- a source drawing set often applies to more than one bid package.
+create table if not exists blueprint_document_package_links (
+  document_id uuid not null references documents(id) on delete cascade,
+  package_id uuid not null references packages(id) on delete cascade,
+  linked_by text references users(id),
+  created_at timestamptz default now(),
+  primary key (document_id, package_id)
+);
+
+-- ===== schema-blueprint-addenda.sql =====
+-- ============================================================================
+-- Divini Procure - DIVINI BLUEPRINT: revisions and addenda
+-- ----------------------------------------------------------------------------
+-- documents already carries parent_document_id / revision_number /
+-- revision_label (added in schema-blueprint.sql) but nothing populated or
+-- read them yet - server/src/lib/revision-matcher.ts and the
+-- /blueprint/documents/:id/suggest-revision-of + /link-revision + /revisions
+-- endpoints (server/src/routes/blueprint.ts) close that gap.
+--
+-- document_addenda is a reviewable bundle of new/revised documents affecting
+-- one or more EXISTING packages, taken through draft -> review -> published
+-- (published is terminal, same "draft is the only editable state" invariant
+-- used by change-orders and Divini Bid Studio elsewhere in this codebase).
+-- Publishing notifies every member of every vendor company with a
+-- bid_invites or bids row on an affected package: an in-app notifications
+-- row always, plus a best-effort email via the existing gracefully-
+-- degrading lib/email.ts. document_addendum_acknowledgments tracks each
+-- notified vendor company's acknowledgment.
+--
+-- HONESTY NOTE: there is no content-level diffing here (no "changed
+-- dimensions", no "changed specifications" claims, no automatic revision
+-- linking) - this codebase cannot read document content. Revision matching
+-- is a filename-pattern SUGGESTION only, always requiring explicit user
+-- confirmation before two documents are linked. Addendum authorship (what
+-- changed, why) is entirely user-written.
+--
+-- Idempotent: safe to re-run. Zero em dashes by convention.
+-- ============================================================================
+
+create table if not exists document_addenda (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references companies(id) on delete cascade,
+  building_id uuid not null references buildings(id) on delete cascade,
+  title text not null,
+  description text,
+  affected_document_ids uuid[] not null default '{}',
+  affected_package_ids uuid[] not null default '{}',
+  bid_deadline_extended_to date,
+  status text not null default 'draft' check (status in ('draft', 'review', 'published')),
+  created_by text references users(id),
+  published_by text references users(id),
+  published_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists idx_document_addenda_building on document_addenda (building_id);
+create index if not exists idx_document_addenda_org on document_addenda (organization_id);
+
+create table if not exists document_addendum_acknowledgments (
+  addendum_id uuid not null references document_addenda(id) on delete cascade,
+  vendor_company_id uuid not null references companies(id) on delete cascade,
+  notified_at timestamptz,
+  acknowledged_at timestamptz,
+  acknowledged_by text references users(id),
+  primary key (addendum_id, vendor_company_id)
+);
+
+-- ===== schema-blueprint-phase2.sql =====
+-- ============================================================================
+-- Divini Procure - DIVINI BLUEPRINT PHASE 2 (CSI divisions, budget import,
+-- quantity observations) - the pieces of the CAD/Drawing/Plan/Specification/
+-- Bid Intelligence master spec buildable with NO additional external
+-- service or API key: pure deterministic logic and manual data entry only.
+-- ----------------------------------------------------------------------------
+--
+-- CSI DIVISION: documents gain a low-confidence, filename/discipline-
+-- derived CSI division guess (server/src/lib/csi-divisions.ts), same
+-- override-locking pattern as document_category/discipline.
+--
+-- BUDGET IMPORT: budget_imports / budget_import_lines. CSV only - this
+-- codebase has no spreadsheet-parsing library (no xlsx/exceljs in
+-- package.json), so server/src/lib/csv-parser.ts is a small dependency-free
+-- CSV parser, and XLS/XLSX import is explicitly unsupported rather than
+-- silently mishandled. Each row is matched against the project's existing
+-- packages by deterministic keyword overlap
+-- (server/src/lib/budget-mapper.ts), never auto-applied - status stays
+-- 'unmapped' until a human confirms or reassigns it.
+--
+-- QUANTITY OBSERVATIONS: quantity_observations. NEVER AI-populated - this
+-- codebase cannot read drawing content, so unlike everything else in
+-- Divini Blueprint there is no "suggested" value here at all, only a
+-- manual-entry table. The `source` column is deliberately constrained to
+-- always equal 'user_entered' as a guardrail: a future change that wanted
+-- to add an AI-derived source would have to consciously alter this schema,
+-- not quietly repurpose the column.
+--
+-- Idempotent: safe to re-run. Zero em dashes by convention.
+-- ============================================================================
+
+alter table if exists documents add column if not exists csi_division_code text;
+alter table if exists documents add column if not exists csi_division_name text;
+alter table if exists documents add column if not exists csi_division_confidence text
+  check (csi_division_confidence in ('medium', 'low'));
+alter table if exists documents add column if not exists csi_division_overridden_by_user boolean not null default false;
+
+create index if not exists idx_documents_csi_division on documents (csi_division_code);
+
+create table if not exists budget_imports (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references companies(id) on delete cascade,
+  building_id uuid not null references buildings(id) on delete cascade,
+  source_document_id uuid references documents(id) on delete set null,
+  filename text,
+  row_count int not null default 0,
+  skipped_row_count int not null default 0,
+  created_by text references users(id),
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_budget_imports_building on budget_imports (building_id);
+
+create table if not exists budget_import_lines (
+  id uuid primary key default gen_random_uuid(),
+  import_id uuid not null references budget_imports(id) on delete cascade,
+  raw_category text,
+  raw_description text,
+  raw_amount text,
+  amount_cents bigint not null,
+  matched_package_id uuid references packages(id) on delete set null,
+  match_confidence text check (match_confidence in ('medium', 'low')),
+  match_overridden_by_user boolean not null default false,
+  status text not null default 'unmapped' check (status in ('unmapped', 'mapped', 'ignored')),
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_budget_import_lines_import on budget_import_lines (import_id);
+create index if not exists idx_budget_import_lines_package on budget_import_lines (matched_package_id);
+
+create table if not exists quantity_observations (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references companies(id) on delete cascade,
+  building_id uuid not null references buildings(id) on delete cascade,
+  package_id uuid references packages(id) on delete set null,
+  description text not null,
+  quantity numeric not null,
+  unit text,
+  source text not null default 'user_entered' check (source = 'user_entered'),
+  verification_status text not null default 'unverified' check (verification_status in ('unverified', 'verified')),
+  notes text,
+  created_by text references users(id),
+  updated_by text references users(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists idx_quantity_observations_building on quantity_observations (building_id);
+create index if not exists idx_quantity_observations_package on quantity_observations (package_id);
+
+-- ===== schema-blueprint-content-extraction.sql =====
+-- ============================================================================
+-- Divini Procure - DIVINI BLUEPRINT: real content extraction
+-- ----------------------------------------------------------------------------
+-- Adds storage for text actually read from a document - a PDF's real text
+-- layer (server/src/lib/text-extraction.ts, pdf-parse), an OCR result on a
+-- scanned page or image (server/src/lib/ocr.ts, tesseract.js), or a DXF's
+-- real TEXT/MTEXT entities and layer names (server/src/lib/dxf-extraction.ts,
+-- dxf-parser). This is a genuine capability upgrade over the rest of this
+-- codebase's filename-only classification, for the file types that can
+-- actually be parsed with no external service or API key.
+--
+-- extraction_method distinguishes HOW the text was obtained, since a PDF
+-- text layer is much more reliable than OCR on a scan, which is more
+-- reliable than nothing at all. Binary CAD formats (DWG, RVT, IFC) have no
+-- extraction path yet and stay 'none' until a real conversion service is
+-- configured (see server/src/lib/cad-conversion.ts).
+--
+-- Idempotent: safe to re-run. Zero em dashes by convention.
+-- ============================================================================
+
+alter table if exists documents add column if not exists extracted_text text;
+alter table if exists documents add column if not exists extraction_method text not null default 'none'
+  check (extraction_method in ('pdf_text_layer', 'ocr', 'dxf_entities', 'none', 'failed'));
+alter table if exists documents add column if not exists extraction_error text;
+alter table if exists documents add column if not exists extracted_at timestamptz;
+
+create index if not exists idx_documents_extraction_method on documents (extraction_method);
+
 -- ===== schema-award-workflow.sql =====
 -- ============================================================================
 -- Divini Procure - Award-to-Procurement Workflow (idempotent add-on)
@@ -976,6 +2013,113 @@ create table if not exists submittal_history (
 create index if not exists idx_submittals_package on submittals(package_id);
 create index if not exists idx_submittal_history_submittal on submittal_history(submittal_id);
 
+-- ===== schema-grandfathered-fee.sql =====
+-- Divini Procure - GRANDFATHERED EXISTING-RELATIONSHIP FEE
+-- =========================================================
+-- Tracks a SPECIFIC developer (buyer company) <-> vendor company relationship
+-- and, when the developer attests the relationship pre-existed Divini Procure
+-- (already under contract, already working together, already in active
+-- negotiations, or already selected/shortlisted), grandfathers THAT pair into a
+-- 2% payment-authorization fee forever. The 2% applies ONLY to that one
+-- developer-vendor pair, never globally to the vendor and never to other
+-- developers.
+--
+-- Extends the EXISTING model: developers are companies(kind='buyer'),
+-- vendors are companies(kind='vendor'), projects are buildings(id). This does
+-- NOT touch referral_partners / partner_commissions (those stay as-is).
+--
+-- Idempotent: safe to re-run. Apply standalone via psql, e.g.
+--   docker exec -i aibos_postgres psql -U aibos -d divini_procure < db/schema-grandfathered-fee.sql
+-- Zero em dashes by convention.
+
+create table if not exists developer_vendor_relationships (
+  id uuid primary key default gen_random_uuid(),
+  developer_company_id uuid not null references companies(id) on delete cascade,
+  vendor_company_id    uuid not null references companies(id) on delete cascade,
+  project_id           uuid references buildings(id) on delete set null,
+
+  -- no_prior_relationship | existing_relationship_claimed |
+  -- existing_relationship_under_review | grandfathered_2_percent |
+  -- standard_fee | disputed | inactive
+  relationship_status  text not null default 'no_prior_relationship',
+
+  -- developer attestation that the relationship pre-existed the platform
+  existing_relationship_confirmed boolean default false,
+  -- active_contract | active_negotiation | already_working_together |
+  -- already_selected_or_shortlisted | prior_vendor_relationship | other
+  existing_relationship_type      text,
+  existing_relationship_confirmed_by text references users(id) on delete set null,
+  existing_relationship_confirmed_at timestamptz,
+  existing_relationship_notes     text,
+  supporting_document_url         text,
+
+  -- granular pre-platform flags (one or more may be true)
+  active_contract_before_platform              boolean default false,
+  active_negotiations_before_platform          boolean default false,
+  already_working_together_before_platform     boolean default false,
+  already_selected_or_shortlisted_before_platform boolean default false,
+
+  -- grandfathered 2% fee state (relationship-specific, forever)
+  grandfathered_fee_eligible        boolean default false,
+  grandfathered_fee_percentage      numeric not null default 2.00,
+  grandfathered_fee_applies_forever boolean default true,
+  grandfathered_fee_started_at      timestamptz,
+
+  -- standard fee captured for contrast/reporting (nullable; resolved from
+  -- platform settings at calc time when null)
+  standard_fee_percentage numeric,
+
+  -- developer_checkbox | admin_override | contract_upload | negotiation_proof |
+  -- legacy_relationship | manual_adjustment
+  fee_rule_source text,
+
+  -- not_required | pending_review | approved | rejected | needs_more_info
+  admin_review_status text not null default 'not_required',
+  admin_reviewed_by   text references users(id) on delete set null,
+  admin_reviewed_at   timestamptz,
+  admin_notes         text,
+
+  audit_log_id uuid,
+  created_by   text references users(id) on delete set null,
+  created_at   timestamptz default now(),
+  updated_at   timestamptz default now(),
+
+  -- one canonical relationship row per developer-vendor pair
+  unique (developer_company_id, vendor_company_id)
+);
+
+create index if not exists dvr_developer_idx on developer_vendor_relationships(developer_company_id);
+create index if not exists dvr_vendor_idx    on developer_vendor_relationships(vendor_company_id);
+create index if not exists dvr_review_idx    on developer_vendor_relationships(admin_review_status);
+create index if not exists dvr_status_idx    on developer_vendor_relationships(relationship_status);
+
+-- Append-only audit trail for every relationship/fee event.
+create table if not exists dvr_audit_log (
+  id uuid primary key default gen_random_uuid(),
+  relationship_id uuid references developer_vendor_relationships(id) on delete cascade,
+  developer_company_id uuid,
+  vendor_company_id    uuid,
+  actor_user_id text,
+  actor_email   text,
+  -- relationship_created | existing_relationship_confirmed | status_change |
+  -- admin_review | fee_override | fee_change | document_uploaded | disputed |
+  -- deactivated
+  action text not null,
+  detail jsonb,
+  created_at timestamptz default now()
+);
+
+create index if not exists dvr_audit_rel_idx on dvr_audit_log(relationship_id);
+
+-- Safety: ensure columns exist if an older partial version of the table was
+-- created previously (no-ops when already present).
+alter table developer_vendor_relationships add column if not exists project_id uuid references buildings(id) on delete set null;
+alter table developer_vendor_relationships add column if not exists supporting_document_url text;
+alter table developer_vendor_relationships add column if not exists standard_fee_percentage numeric;
+alter table developer_vendor_relationships add column if not exists fee_rule_source text;
+alter table developer_vendor_relationships add column if not exists admin_reviewed_by text;
+alter table developer_vendor_relationships add column if not exists admin_reviewed_at timestamptz;
+
 -- ===== schema-agreements.sql =====
 -- ============================================================================
 -- Divini Procure - AGREEMENTS + native e-signature.
@@ -1148,34 +2292,49 @@ create index if not exists idx_bid_invites_vendor on bid_invites(vendor_company_
 -- ===== schema-fee-matrix.sql =====
 -- Divini Procure - FEE MATRIX + payer_type
 -- =========================================================
--- Additive layer on top of the grandfathered existing-relationship fee.
--- A configurable matrix of platform fee rules (standard platform fee, preferred
--- vendor placement, white glove, referral partner, capital introduction) with a
--- payer_type dimension (who pays / how it is collected) and a scope dimension
--- (global default, or scoped to a specific developer, vendor, developer-vendor
--- pair, or program). This does NOT touch developer_vendor_relationships: a pair
--- already grandfathered (relationship_status = 'grandfathered_2_percent') ALWAYS
--- wins and is resolved first in server/src/lib/fee-matrix.ts. The matrix only
--- decides what applies when no grandfathered pair governs the context.
+-- The SINGLE SOURCE OF TRUTH for platform fee percentages, caps, and fee types.
+-- Nothing in the app hard-codes a fee percentage or cap: server/src/lib/
+-- fee-matrix.ts resolves every fee (standard platform, existing-relationship,
+-- platform infrastructure, preferred vendor placement, white glove, referral
+-- partner, capital introduction) from this table, with a payer_type dimension
+-- (who pays / how it is collected) and a scope dimension (global default, or
+-- scoped to a specific developer, vendor, developer-vendor pair, or program).
+-- An enterprise org's custom fee schedule is just a developer- or
+-- vendor-scoped row that outranks the global default.
+--
+-- This does NOT touch developer_vendor_relationships: a pair already
+-- grandfathered (relationship_status = 'grandfathered_2_percent') ALWAYS wins
+-- for the standard_platform rule type and is resolved first in
+-- server/src/lib/fee-matrix.ts. The matrix only decides what applies when no
+-- grandfathered pair governs the context, and governs every other rule type
+-- (including platform_infrastructure_fee) unconditionally.
+--
+-- The legacy uncapped 10% default and the legacy hard-coded 2%/1% capped
+-- success-fee model are both retired; this table is authoritative for both.
 --
 -- Idempotent: safe to re-run. Apply standalone via psql, e.g.
 --   docker exec -i aibos_postgres psql -U aibos -d divini_procure < db/schema-fee-matrix.sql
--- Zero em dashes by convention. Integer cents (flat_cents bigint).
+-- Zero em dashes by convention. Integer cents (flat_cents bigint, cap_cents bigint).
 
 create table if not exists fee_rules (
   id uuid primary key default gen_random_uuid(),
 
   -- grandfathered_2pct (informational mirror only; the live grandfathered rate
   -- is resolved from developer_vendor_relationships, never from this table) |
-  -- standard_platform | preferred_vendor_placement | white_glove |
-  -- referral_partner | capital_introduction
+  -- standard_platform | platform_infrastructure_fee | preferred_vendor_placement
+  -- | white_glove | referral_partner
+  --
+  -- NOTE: there is intentionally no capital-raise / investor-introduction fee
+  -- type here. Divini Procure is not a broker or placement agent and does not
+  -- charge a success fee on capital introductions; see 90_FUTURE_IDEAS.md /
+  -- the Capital Partner module spec for the compliance boundary.
   rule_type text not null check (rule_type in (
     'grandfathered_2pct',
     'standard_platform',
+    'platform_infrastructure_fee',
     'preferred_vendor_placement',
     'white_glove',
-    'referral_partner',
-    'capital_introduction'
+    'referral_partner'
   )),
 
   -- global | developer | vendor | pair | program
@@ -1189,6 +2348,11 @@ create table if not exists fee_rules (
 
   percentage numeric,
   flat_cents bigint,
+  -- cap on the percentage fee, in cents. Null/0 = uncapped. Used by
+  -- standard_platform, grandfathered_2pct, and platform_infrastructure_fee so
+  -- a large award never carries a punitive fee. Enterprise orgs get a custom
+  -- schedule via a developer/vendor-scoped row with its own percentage + cap.
+  cap_cents bigint,
 
   -- developer_pays | vendor_pays | split_fee | deducted_from_vendor_payment |
   -- added_to_developer_invoice | admin_configured
@@ -1213,6 +2377,22 @@ create index if not exists idx_fee_rules_rule_type on fee_rules (rule_type);
 create index if not exists idx_fee_rules_developer on fee_rules (developer_company_id);
 create index if not exists idx_fee_rules_vendor on fee_rules (vendor_company_id);
 
+-- Defensive re-run: if fee_rules already existed from an earlier apply (before
+-- cap_cents / platform_infrastructure_fee existed, or while capital_introduction
+-- still existed), bring it up to date and remove any capital-introduction rows
+-- (Divini Procure does not charge a fee on capital introductions).
+alter table if exists fee_rules add column if not exists cap_cents bigint;
+delete from fee_rules where rule_type = 'capital_introduction';
+alter table if exists fee_rules drop constraint if exists fee_rules_rule_type_check;
+alter table if exists fee_rules add constraint fee_rules_rule_type_check check (rule_type in (
+  'grandfathered_2pct',
+  'standard_platform',
+  'platform_infrastructure_fee',
+  'preferred_vendor_placement',
+  'white_glove',
+  'referral_partner'
+));
+
 create table if not exists fee_rule_audit (
   id uuid primary key default gen_random_uuid(),
   fee_rule_id uuid,
@@ -1230,12 +2410,49 @@ create index if not exists idx_fee_rule_audit_rule on fee_rule_audit (fee_rule_i
 -- row of that rule_type exists yet. Re-running is a no-op.
 -- ---------------------------------------------------------------------------
 
--- Standard platform fee: 10% default, developer pays.
-insert into fee_rules (rule_type, scope, percentage, payer_type, notes, created_by)
-select 'standard_platform', 'global', 10.0, 'developer_pays',
-       'Default Divini Procure platform/referral fee.', 'seed'
+-- Standard platform fee: 5%, capped at $25,000, developer pays. This is the
+-- SINGLE source of truth for the standard marketplace transaction fee; the old
+-- uncapped 10% legacy default is retired.
+insert into fee_rules (rule_type, scope, percentage, cap_cents, payer_type, notes, created_by)
+select 'standard_platform', 'global', 5.0, 2500000, 'developer_pays',
+       'Standard Divini Procure platform fee: 5% of the transaction, capped at $25,000.', 'seed'
 where not exists (
   select 1 from fee_rules where rule_type = 'standard_platform' and scope = 'global'
+);
+
+-- Migrate a pre-existing global standard_platform row that still carries the
+-- retired 10%/uncapped default forward to the current 5%/$25,000 model. Only
+-- touches rows that still match the old seed exactly, never an admin edit.
+update fee_rules
+   set percentage = 5.0, cap_cents = 2500000,
+       notes = 'Standard Divini Procure platform fee: 5% of the transaction, capped at $25,000.',
+       updated_at = now()
+ where rule_type = 'standard_platform' and scope = 'global'
+   and percentage = 10.0 and cap_cents is null;
+
+-- Existing vendor relationship (grandfathered) fee: 2%, capped at $10,000.
+-- Informational mirror only: the LIVE grandfathered rate for a specific pair is
+-- always resolved from developer_vendor_relationships (see fee-rules.ts), which
+-- always wins over this row. This row exists so the rate/cap is visible and
+-- editable in the admin fee matrix, and is the fallback for the cap when a pair
+-- is grandfathered without a relationship-level percentage override.
+insert into fee_rules (rule_type, scope, percentage, cap_cents, payer_type, notes, created_by)
+select 'grandfathered_2pct', 'global', 2.0, 1000000, 'vendor_pays',
+       'Existing vendor relationship fee: 2% of the transaction, capped at $10,000.', 'seed'
+where not exists (
+  select 1 from fee_rules where rule_type = 'grandfathered_2pct' and scope = 'global'
+);
+
+-- Platform infrastructure fee: 0.1%, capped at $1,500. Always shown as its own
+-- line item, never merged into the platform fee and never labeled as a
+-- payment-processor fee. Applies at the same rate regardless of grandfathered
+-- status (see fee-matrix.ts: this rule type is excluded from the grandfathered
+-- pair short-circuit).
+insert into fee_rules (rule_type, scope, percentage, cap_cents, payer_type, notes, created_by)
+select 'platform_infrastructure_fee', 'global', 0.1, 150000, 'deducted_from_vendor_payment',
+       'Platform infrastructure fee: 0.1% of the transaction, capped at $1,500.', 'seed'
+where not exists (
+  select 1 from fee_rules where rule_type = 'platform_infrastructure_fee' and scope = 'global'
 );
 
 -- Preferred vendor placement: flat monthly placement fee, vendor pays.
@@ -1262,120 +2479,29 @@ where not exists (
   select 1 from fee_rules where rule_type = 'referral_partner' and scope = 'global'
 );
 
--- Capital introduction fee: percentage, admin configured.
-insert into fee_rules (rule_type, scope, percentage, payer_type, notes, created_by)
-select 'capital_introduction', 'global', 2.0, 'admin_configured',
-       'Capital introduction fee for investor matching. Configure per arrangement.', 'seed'
-where not exists (
-  select 1 from fee_rules where rule_type = 'capital_introduction' and scope = 'global'
-);
 
--- ===== schema-grandfathered-fee.sql =====
--- Divini Procure - GRANDFATHERED EXISTING-RELATIONSHIP FEE
--- =========================================================
--- Tracks a SPECIFIC developer (buyer company) <-> vendor company relationship
--- and, when the developer attests the relationship pre-existed Divini Procure
--- (already under contract, already working together, already in active
--- negotiations, or already selected/shortlisted), grandfathers THAT pair into a
--- 2% payment-authorization fee forever. The 2% applies ONLY to that one
--- developer-vendor pair, never globally to the vendor and never to other
--- developers.
---
--- Extends the EXISTING model: developers are companies(kind='buyer'),
--- vendors are companies(kind='vendor'), projects are buildings(id). This does
--- NOT touch referral_partners / partner_commissions (those stay as-is).
---
--- Idempotent: safe to re-run. Apply standalone via psql, e.g.
---   docker exec -i aibos_postgres psql -U aibos -d divini_procure < db/schema-grandfathered-fee.sql
--- Zero em dashes by convention.
-
-create table if not exists developer_vendor_relationships (
+-- (moved earlier: referral_partners must exist before partner_commissions/partner_payouts reference it)
+-- ---------- referral partners ----------
+-- A business partner who refers customers in exchange for a revenue share or a
+-- flat fee. `company_id` is nullable so a partner need not be a registered
+-- company. revenue_share_pct is fully editable post-create (PATCH).
+create table if not exists referral_partners (
   id uuid primary key default gen_random_uuid(),
-  developer_company_id uuid not null references companies(id) on delete cascade,
-  vendor_company_id    uuid not null references companies(id) on delete cascade,
-  project_id           uuid references buildings(id) on delete set null,
-
-  -- no_prior_relationship | existing_relationship_claimed |
-  -- existing_relationship_under_review | grandfathered_2_percent |
-  -- standard_fee | disputed | inactive
-  relationship_status  text not null default 'no_prior_relationship',
-
-  -- developer attestation that the relationship pre-existed the platform
-  existing_relationship_confirmed boolean default false,
-  -- active_contract | active_negotiation | already_working_together |
-  -- already_selected_or_shortlisted | prior_vendor_relationship | other
-  existing_relationship_type      text,
-  existing_relationship_confirmed_by text references users(id) on delete set null,
-  existing_relationship_confirmed_at timestamptz,
-  existing_relationship_notes     text,
-  supporting_document_url         text,
-
-  -- granular pre-platform flags (one or more may be true)
-  active_contract_before_platform              boolean default false,
-  active_negotiations_before_platform          boolean default false,
-  already_working_together_before_platform     boolean default false,
-  already_selected_or_shortlisted_before_platform boolean default false,
-
-  -- grandfathered 2% fee state (relationship-specific, forever)
-  grandfathered_fee_eligible        boolean default false,
-  grandfathered_fee_percentage      numeric not null default 2.00,
-  grandfathered_fee_applies_forever boolean default true,
-  grandfathered_fee_started_at      timestamptz,
-
-  -- standard fee captured for contrast/reporting (nullable; resolved from
-  -- platform settings at calc time when null)
-  standard_fee_percentage numeric,
-
-  -- developer_checkbox | admin_override | contract_upload | negotiation_proof |
-  -- legacy_relationship | manual_adjustment
-  fee_rule_source text,
-
-  -- not_required | pending_review | approved | rejected | needs_more_info
-  admin_review_status text not null default 'not_required',
-  admin_reviewed_by   text references users(id) on delete set null,
-  admin_reviewed_at   timestamptz,
-  admin_notes         text,
-
-  audit_log_id uuid,
-  created_by   text references users(id) on delete set null,
-  created_at   timestamptz default now(),
-  updated_at   timestamptz default now(),
-
-  -- one canonical relationship row per developer-vendor pair
-  unique (developer_company_id, vendor_company_id)
-);
-
-create index if not exists dvr_developer_idx on developer_vendor_relationships(developer_company_id);
-create index if not exists dvr_vendor_idx    on developer_vendor_relationships(vendor_company_id);
-create index if not exists dvr_review_idx    on developer_vendor_relationships(admin_review_status);
-create index if not exists dvr_status_idx    on developer_vendor_relationships(relationship_status);
-
--- Append-only audit trail for every relationship/fee event.
-create table if not exists dvr_audit_log (
-  id uuid primary key default gen_random_uuid(),
-  relationship_id uuid references developer_vendor_relationships(id) on delete cascade,
-  developer_company_id uuid,
-  vendor_company_id    uuid,
-  actor_user_id text,
-  actor_email   text,
-  -- relationship_created | existing_relationship_confirmed | status_change |
-  -- admin_review | fee_override | fee_change | document_uploaded | disputed |
-  -- deactivated
-  action text not null,
-  detail jsonb,
+  company_id uuid references companies(id) on delete set null,
+  name text not null,
+  partner_email text,
+  referral_code text unique not null,
+  referral_link text,
+  commission_type text default 'percent',  -- percent | flat
+  revenue_share_pct numeric,                -- when commission_type = percent
+  flat_fee_cents bigint,                    -- when commission_type = flat
+  applies_to text,
+  status text default 'active',             -- active | disabled
+  terms text,
+  created_by text,
   created_at timestamptz default now()
 );
-
-create index if not exists dvr_audit_rel_idx on dvr_audit_log(relationship_id);
-
--- Safety: ensure columns exist if an older partial version of the table was
--- created previously (no-ops when already present).
-alter table developer_vendor_relationships add column if not exists project_id uuid references buildings(id) on delete set null;
-alter table developer_vendor_relationships add column if not exists supporting_document_url text;
-alter table developer_vendor_relationships add column if not exists standard_fee_percentage numeric;
-alter table developer_vendor_relationships add column if not exists fee_rule_source text;
-alter table developer_vendor_relationships add column if not exists admin_reviewed_by text;
-alter table developer_vendor_relationships add column if not exists admin_reviewed_at timestamptz;
+create index if not exists referral_partners_status_idx on referral_partners (status);
 
 -- ===== schema-procure-rev.sql =====
 -- ============================================================================
@@ -1464,17 +2590,20 @@ create extension if not exists "pgcrypto";
 
 -- ---------- platform revenue (the accrual ledger) ----------
 -- One row per accrued revenue event. source_type tells you where it came from
--- (a procurement fee on a payment authorization, a capital-introduction fee, a
--- subscription, or a manual entry). base_cents is the amount the fee was
--- computed on; fee_cents is what Divini accrues. fee_source / payer_type carry
--- the fee-matrix resolution context so the ledger is self-explaining. status
--- moves accrued -> invoiced -> collected (or waived / void) by ADMIN action
--- only; nothing here auto-charges. payment_authorization_id is the idempotency
--- key for procurement fees (one accrual per authorization).
+-- (the platform fee or infrastructure fee on a payment authorization, a
+-- subscription, or a manual entry). Deliberately no capital-introduction /
+-- investor-matching source type: Divini Procure is not a broker or placement
+-- agent and never charges a fee for connecting a developer to a capital
+-- partner. base_cents is the amount the fee was computed on; fee_cents is
+-- what Divini accrues. fee_source / payer_type carry the fee-matrix
+-- resolution context so the ledger is self-explaining. status moves accrued
+-- -> invoiced -> collected (or waived / void) by ADMIN action only; nothing
+-- here auto-charges. payment_authorization_id + source_type is the
+-- idempotency key (one accrual per authorization per fee type).
 create table if not exists platform_revenue (
   id uuid primary key default gen_random_uuid(),
   source_type text not null default 'procurement_fee'
-    check (source_type in ('procurement_fee','capital_introduction','subscription','manual')),
+    check (source_type in ('procurement_fee','infrastructure_fee','subscription','manual')),
   developer_company_id uuid,
   vendor_company_id uuid,
   purchase_order_id uuid,
@@ -1496,9 +2625,19 @@ create table if not exists platform_revenue (
 
 create index if not exists platform_revenue_status_idx on platform_revenue (status);
 create index if not exists platform_revenue_developer_idx on platform_revenue (developer_company_id);
--- One accrual per payment authorization (idempotency for procurement fees).
-create unique index if not exists platform_revenue_payment_auth_uniq
-  on platform_revenue (payment_authorization_id)
+
+-- Defensive re-run: widen the source_type check (dropping capital_introduction,
+-- which Divini Procure does not charge) and move the idempotency key from "one
+-- accrual per authorization" to "one accrual per authorization PER fee type"
+-- so the platform fee and the infrastructure fee can each have their own row
+-- on the same payment authorization.
+delete from platform_revenue where source_type = 'capital_introduction';
+alter table if exists platform_revenue drop constraint if exists platform_revenue_source_type_check;
+alter table if exists platform_revenue add constraint platform_revenue_source_type_check
+  check (source_type in ('procurement_fee','infrastructure_fee','subscription','manual'));
+drop index if exists platform_revenue_payment_auth_uniq;
+create unique index if not exists platform_revenue_payment_auth_type_uniq
+  on platform_revenue (payment_authorization_id, source_type)
   where payment_authorization_id is not null;
 
 -- ===== schema-payouts.sql =====
@@ -1718,6 +2857,57 @@ create table if not exists profile_programs (
 -- ---------------------------------------------------------------------------
 create index if not exists idx_profile_decks_company_id on profile_decks (company_id);
 create index if not exists idx_profile_programs_company_id on profile_programs (company_id);
+
+-- (moved earlier: investment_programs must exist before opportunity_teasers references it)
+-- ---------------------------------------------------------------------------
+-- An individual investment program / offering (a deal). Optionally tied to a
+-- project (buildings.id). Visibility + status drive what investors can see.
+-- ---------------------------------------------------------------------------
+create table if not exists investment_programs (
+  id uuid primary key default gen_random_uuid(),
+  company_id uuid references companies(id) on delete cascade,
+  project_id uuid references buildings(id) on delete set null,
+  name text,
+  program_type text,
+  asset_class text,
+  location text,
+  project_stage text,
+  target_raise_cents bigint,
+  min_investment_cents bigint,
+  max_investment_cents bigint,
+  investor_type_accepted text,
+  accredited_only boolean,
+  non_accredited_accepted boolean,
+  offering_type text,
+  investment_vehicle text,
+  projected_return text,
+  preferred_return text,
+  equity_multiple text,
+  irr_target text,
+  hold_period text,
+  distribution_schedule text,
+  use_of_funds text,
+  capital_stack text,
+  risk_level text,
+  exit_strategy text,
+  qualification_requirements text,
+  nda_required boolean,
+  kyc_required boolean,
+  proof_of_funds_required boolean,
+  visibility text default 'public_teaser' check (visibility in (
+    'public_teaser','approved_investor_preview','nda_required','accredited_only',
+    'non_accredited_program','family_office_only','admin_approved_only',
+    'private_invite_only','closed'
+  )),
+  status text default 'draft' check (status in (
+    'draft','submitted_for_review','needs_edits','approved','active','paused','closed','rejected'
+  )),
+  admin_review_status text default 'not_required',
+  admin_notes text,
+  created_by text,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
 
 -- ===== schema-teasers-profiles.sql =====
 -- Divini Procure - OPPORTUNITY TEASERS + PUBLIC/PRIVATE DEVELOPER PROFILES +
@@ -2289,6 +3479,22 @@ select 'specialty_fabrication',
   'Custom and specialty fabrication. Shop drawings and a sample required before production.'
 where not exists (select 1 from vendor_onboarding_templates where category = 'specialty_fabrication');
 
+-- (moved earlier: invite_codes must exist before schema-invite-prefill.sql ALTERs it)
+-- ---------- invite codes ----------
+-- Admin-generated invitations to onboard a buyer/vendor company. The `code`
+-- powers a public claim link (PUBLIC_APP_URL + /join/:code).
+create table if not exists invite_codes (
+  id uuid primary key default gen_random_uuid(),
+  code text unique not null,
+  email text,
+  company_kind text,                 -- 'buyer' | 'vendor' (advisory; not enforced)
+  status text default 'pending',     -- pending | claimed | revoked
+  created_by text,                   -- admin email
+  claimed_at timestamptz,
+  created_at timestamptz default now()
+);
+create index if not exists invite_codes_status_idx on invite_codes (status);
+
 -- ===== schema-invite-prefill.sql =====
 -- ============================================================================
 -- Divini Procure — INVITE PRE-FILL columns (idempotent add-on)
@@ -2417,55 +3623,6 @@ create table if not exists developer_investment_profiles (
   updated_at timestamptz default now()
 );
 
--- ---------------------------------------------------------------------------
--- An individual investment program / offering (a deal). Optionally tied to a
--- project (buildings.id). Visibility + status drive what investors can see.
--- ---------------------------------------------------------------------------
-create table if not exists investment_programs (
-  id uuid primary key default gen_random_uuid(),
-  company_id uuid references companies(id) on delete cascade,
-  project_id uuid references buildings(id) on delete set null,
-  name text,
-  program_type text,
-  asset_class text,
-  location text,
-  project_stage text,
-  target_raise_cents bigint,
-  min_investment_cents bigint,
-  max_investment_cents bigint,
-  investor_type_accepted text,
-  accredited_only boolean,
-  non_accredited_accepted boolean,
-  offering_type text,
-  investment_vehicle text,
-  projected_return text,
-  preferred_return text,
-  equity_multiple text,
-  irr_target text,
-  hold_period text,
-  distribution_schedule text,
-  use_of_funds text,
-  capital_stack text,
-  risk_level text,
-  exit_strategy text,
-  qualification_requirements text,
-  nda_required boolean,
-  kyc_required boolean,
-  proof_of_funds_required boolean,
-  visibility text default 'public_teaser' check (visibility in (
-    'public_teaser','approved_investor_preview','nda_required','accredited_only',
-    'non_accredited_program','family_office_only','admin_approved_only',
-    'private_invite_only','closed'
-  )),
-  status text default 'draft' check (status in (
-    'draft','submitted_for_review','needs_edits','approved','active','paused','closed','rejected'
-  )),
-  admin_review_status text default 'not_required',
-  admin_notes text,
-  created_by text,
-  created_at timestamptz default now(),
-  updated_at timestamptz default now()
-);
 
 -- ---------------------------------------------------------------------------
 -- Offering documents attached to a program. May be NDA-gated or
@@ -2839,11 +3996,16 @@ values
   ('vendor_pro',           'Vendor Pro',           'vendor',      14900,
      null, null, 25,   0,    0,    10,  true,  true,  false, 50),
 
-  -- Investor tiers
-  ('investor_basic',       'Investor Basic',       'investor',        0,
-     0,    0,    0,    0,    10,   2,   false, false, false, 60),
-  ('investor_qualified',   'Investor Qualified',   'investor',    49900,
-     0,    0,    0,    0,    null, 5,   true,  true,  false, 70)
+  -- Capital Partner tiers (audience stays 'investor' at the database level;
+  -- the product-facing name is "Capital Partner" everywhere else)
+  ('capital_partner_free',          'Capital Partner Free',          'investor',      0,
+     0,    0,    0,    0,    5,    1,    false, false, false, 60),
+  ('capital_partner_professional',  'Capital Partner Professional',  'investor',   4900,
+     0,    0,    0,    0,    25,   5,    true,  true,  false, 70),
+  ('capital_partner_institutional', 'Capital Partner Institutional', 'investor',  14900,
+     0,    0,    0,    0,    null, 20,   true,  true,  false, 80),
+  ('capital_partner_enterprise',    'Capital Partner Enterprise',    'investor',   null,
+     0,    0,    0,    0,    null, null, true,  true,  true,  90)
 on conflict (key) do nothing;
 
 -- ---------------------------------------------------------------------------
@@ -2867,6 +4029,104 @@ alter table subscription_entitlements add column if not exists seat_limit int;
 alter table subscription_entitlements add column if not exists updated_at timestamptz default now();
 
 create index if not exists subscription_entitlements_tier_idx on subscription_entitlements (tier_key);
+
+-- ===== schema-marketplace-publication.sql =====
+-- ============================================================================
+-- Divini Procure - MARKETPLACE PUBLICATION, SCHEDULING, AND URGENCY
+-- ----------------------------------------------------------------------------
+-- Extends the pre-existing `packages` table (create/list/status already live
+-- in server/src/routes.ts, server/src/db.ts) rather than a new parallel
+-- listing system. Today a package with status='open' is already visible to
+-- every vendor via getOpenPackages() - there is no visibility tier, no
+-- validation gate, no scheduling, and no urgency concept. This adds all four,
+-- per the CAD/Drawing/Plan/Specification/Bid Intelligence master spec's
+-- "marketplace publication" sections (20-25):
+--
+--   visibility           - who can see the listing once published (private
+--                           draft through public marketplace)
+--   publish_at            - an optional future timestamp; status stays
+--                           'draft' until server/src/index.ts's interval
+--                           sweep flips it to 'open' at the scheduled time
+--   published_at / published_by / publication_snapshot
+--                          - the moment and identity of the actual publish
+--                            action, plus a locked jsonb snapshot of the key
+--                            fields at that moment (spec: "lock a
+--                            publication snapshot, preserve editable
+--                            working version")
+--   urgency                - standard/priority/urgent/emergency, gated by a
+--                            per-tier monthly limit (see below)
+--   question_deadline, site_visit_at, response_required_by, nda_required
+--                          - the remaining scheduling/qualification fields
+--                            server/src/routes/marketplace-publication.ts
+--                            validates before allowing publish
+--   terms_acknowledged_by/at
+--                          - the spec's required human-review acknowledgment
+--                            (section 30) before a package can go live
+--
+-- Urgent-listing limits reuse the EXISTING, configurable subscription tier
+-- engine (server/src/lib/entitlements.ts, subscription_tiers /
+-- subscription_entitlements) rather than a hardcoded number - a new
+-- urgent_listing_monthly_limit column on both tables, following the exact
+-- override-wins-else-tier-default pattern already used for every other
+-- limit in that engine. This codebase's actual developer tier ladder is
+-- developer_free / developer_pro / developer_enterprise (not the master
+-- spec's five-tier Explorer/Starter/Growth/Professional/Enterprise naming),
+-- so the spec's limits are adapted onto these three: free = unavailable (0),
+-- pro = a generous monthly allowance, enterprise = unlimited by default
+-- (contract-defined via a per-company override, same as every other
+-- enterprise limit in this engine).
+--
+-- Idempotent: safe to re-run. Zero em dashes by convention.
+-- ============================================================================
+
+-- Default is 'public_marketplace', NOT 'private_draft': the pre-existing
+-- createPackage() defaults a package's status straight to 'open' (publicly
+-- listed) unless the caller passes a status, and getOpenPackages() is being
+-- narrowed below to also filter on visibility. Defaulting visibility to
+-- 'public_marketplace' keeps every already-open package, and every package
+-- created through that unchanged legacy path, exactly as visible as it is
+-- today. A package's status ('draft' vs 'open'/'shortlisting') remains the
+-- real gate on whether it is listed at all; visibility only narrows WHO can
+-- see it once status allows listing in the first place. Callers that want
+-- the new draft-first review-then-publish flow (Divini Blueprint's
+-- create-package, or the new PATCH .../publication endpoint) set
+-- visibility explicitly.
+alter table if exists packages add column if not exists visibility text not null default 'public_marketplace'
+  check (visibility in (
+    'private_draft', 'organization_only', 'selected_team', 'invite_only',
+    'preferred_vendors', 'qualified_vendors', 'divini_verified',
+    'public_marketplace', 'private_group', 'hidden_scheduled'
+  ));
+alter table if exists packages add column if not exists publish_at timestamptz;
+alter table if exists packages add column if not exists published_at timestamptz;
+alter table if exists packages add column if not exists published_by text references users(id);
+alter table if exists packages add column if not exists publication_snapshot jsonb;
+alter table if exists packages add column if not exists question_deadline timestamptz;
+alter table if exists packages add column if not exists site_visit_at timestamptz;
+alter table if exists packages add column if not exists response_required_by timestamptz;
+alter table if exists packages add column if not exists nda_required boolean not null default false;
+alter table if exists packages add column if not exists urgency text not null default 'standard'
+  check (urgency in ('standard', 'priority', 'urgent', 'emergency'));
+alter table if exists packages add column if not exists urgency_reason text;
+alter table if exists packages add column if not exists terms_acknowledged_by text references users(id);
+alter table if exists packages add column if not exists terms_acknowledged_at timestamptz;
+
+create index if not exists idx_packages_publish_at on packages (publish_at) where publish_at is not null;
+create index if not exists idx_packages_urgency on packages (urgency) where urgency <> 'standard';
+
+alter table if exists subscription_tiers add column if not exists urgent_listing_monthly_limit int;
+alter table if exists subscription_entitlements add column if not exists urgent_listing_monthly_limit int;
+
+-- Seed the developer tiers' urgent-listing allowance. Re-runnable: only
+-- touches rows that have not already been given a value, so an admin's
+-- later per-company override or a manually adjusted tier default is never
+-- clobbered by re-applying this file.
+update subscription_tiers set urgent_listing_monthly_limit = 0
+  where key = 'developer_free' and urgent_listing_monthly_limit is null;
+update subscription_tiers set urgent_listing_monthly_limit = 5
+  where key = 'developer_pro' and urgent_listing_monthly_limit is null;
+-- developer_enterprise stays NULL = unlimited by default (contract-defined
+-- per the spec; an admin can still set a specific per-company override).
 
 -- ===== schema-admin-tasks.sql =====
 -- Divini Procure - ADMIN TASK MANAGEMENT
@@ -3108,20 +4368,6 @@ create index if not exists idx_relationship_edges_to on relationship_edges(to_co
 
 create extension if not exists "pgcrypto";
 
--- ---------- invite codes ----------
--- Admin-generated invitations to onboard a buyer/vendor company. The `code`
--- powers a public claim link (PUBLIC_APP_URL + /join/:code).
-create table if not exists invite_codes (
-  id uuid primary key default gen_random_uuid(),
-  code text unique not null,
-  email text,
-  company_kind text,                 -- 'buyer' | 'vendor' (advisory; not enforced)
-  status text default 'pending',     -- pending | claimed | revoked
-  created_by text,                   -- admin email
-  claimed_at timestamptz,
-  created_at timestamptz default now()
-);
-create index if not exists invite_codes_status_idx on invite_codes (status);
 
 -- ---------- discount codes ----------
 create table if not exists discount_codes (
@@ -3139,27 +4385,6 @@ create table if not exists discount_codes (
 );
 create index if not exists discount_codes_status_idx on discount_codes (status);
 
--- ---------- referral partners ----------
--- A business partner who refers customers in exchange for a revenue share or a
--- flat fee. `company_id` is nullable so a partner need not be a registered
--- company. revenue_share_pct is fully editable post-create (PATCH).
-create table if not exists referral_partners (
-  id uuid primary key default gen_random_uuid(),
-  company_id uuid references companies(id) on delete set null,
-  name text not null,
-  partner_email text,
-  referral_code text unique not null,
-  referral_link text,
-  commission_type text default 'percent',  -- percent | flat
-  revenue_share_pct numeric,                -- when commission_type = percent
-  flat_fee_cents bigint,                    -- when commission_type = flat
-  applies_to text,
-  status text default 'active',             -- active | disabled
-  terms text,
-  created_by text,
-  created_at timestamptz default now()
-);
-create index if not exists referral_partners_status_idx on referral_partners (status);
 
 -- ---------- per-user referral codes + referrals + credits ----------
 create table if not exists referral_codes (
@@ -3255,7 +4480,12 @@ alter table if exists vendor_credentials add column if not exists doc_status tex
 alter table if exists vendor_profiles add column if not exists verified_at timestamptz;
 alter table if exists vendor_profiles add column if not exists verification_expires_at timestamptz; -- earliest credential expiry
 
--- ---------- Success fee on awards (payment_authorizations) ----------
+-- ---------- Platform fee on awards (payment_authorizations) ----------
+-- Columns keep their original "success_fee_*" names for backward compatibility
+-- with existing readers, but now hold the SINGLE unified platform fee (5%
+-- capped $25,000 standard; 2% capped $10,000 existing-relationship), always
+-- resolved from the fee_rules matrix (db/schema-fee-matrix.sql), not a
+-- hard-coded constant.
 alter table if exists payment_authorizations add column if not exists award_cents bigint;
 alter table if exists payment_authorizations add column if not exists success_fee_pct numeric;
 alter table if exists payment_authorizations add column if not exists success_fee_cap_cents bigint;
@@ -3263,6 +4493,14 @@ alter table if exists payment_authorizations add column if not exists success_fe
 alter table if exists payment_authorizations add column if not exists success_fee_grandfathered boolean default false;
 alter table if exists payment_authorizations add column if not exists success_fee_status text default 'accrued'
   check (success_fee_status in ('accrued','invoiced','billed','paid','waived','void'));
+
+-- ---------- Platform infrastructure fee on awards (payment_authorizations) --
+-- Always a separate line item (0.1% capped $1,500), never merged into the
+-- platform fee above and never labeled as a payment-processor fee. Resolved
+-- from the fee_rules matrix (rule_type = 'platform_infrastructure_fee').
+alter table if exists payment_authorizations add column if not exists service_buffer_pct numeric;
+alter table if exists payment_authorizations add column if not exists service_buffer_cap_cents bigint;
+alter table if exists payment_authorizations add column if not exists service_buffer_cents bigint;
 
 -- ---------- Tier catalogue seeds (idempotent; never overwrite admin edits) ----------
 -- subscription_tiers exists (key, name, audience, price_cents, *_limit, seat_limit, ai_features...).
@@ -3346,26 +4584,35 @@ alter table investor_profiles
 -- ===========================================================================
 -- Divini Procure - PAID TIERS + PAYWALL GATES (v2 monetization)
 -- ===========================================================================
--- Additive + idempotent. The developer_pro / investor_qualified tiers already
--- exist; this adds the Family-Office Concierge tier, an investor plan column,
--- and the "who viewed my raise" tracking table. Gating stays inert until a paid
--- tier is assigned (developer via subscription_entitlements, investor via plan).
+-- Additive + idempotent. The developer_pro / capital_partner_* tiers are
+-- seeded in db/schema-subscriptions.sql; this adds the individual Capital
+-- Partner plan column and the "who viewed my raise" tracking table. Gating
+-- stays inert until a paid tier is assigned (developer via
+-- subscription_entitlements, capital partner via plan).
 -- ===========================================================================
 
--- Family-Office Concierge: white-glove, private, curated (an investor tier).
-insert into subscription_tiers
-  (key, name, audience, price_cents,
-   active_project_limit, bid_package_limit, vendor_invite_limit,
-   investment_program_limit, investor_match_limit, seat_limit,
-   ai_features, reporting_access, white_glove, sort)
-values
-  ('family_office_concierge', 'Family Office Concierge', 'investor', 99900,
-     0, 0, 0, 0, null, 5, true, true, true, 80)
-on conflict (key) do nothing;
-
--- Investor plan assignment (investors are user-keyed, not company-keyed).
+-- Capital Partner plan assignment (capital partners are user-keyed, not
+-- company-keyed, since an individual/family office signs in as themself, not
+-- as an organization). Mirrors the subscription_tiers Capital Partner ladder
+-- (free / professional $49mo / institutional $149mo / enterprise custom) as a
+-- simple label on the user's own investor_profiles row.
 alter table investor_profiles
-  add column if not exists plan text default 'free';   -- 'free' | 'premium' (investor_qualified) | 'concierge' (family_office_concierge)
+  add column if not exists plan text default 'free';   -- 'free' | 'professional' | 'institutional' | 'enterprise'
+
+-- Defensive re-run: migrate a pre-existing row still on a retired plan value
+-- forward to its closest current equivalent.
+update investor_profiles set plan = 'professional' where plan = 'premium';
+update investor_profiles set plan = 'enterprise' where plan = 'concierge';
+
+-- "Who viewed my raise" - a Developer Pro analytics surface.
+create table if not exists program_views (
+  id uuid primary key default gen_random_uuid(),
+  program_id uuid references investment_programs(id) on delete cascade,
+  viewer_user_id text,
+  viewed_at timestamptz not null default now()
+);
+create index if not exists program_views_program_idx on program_views(program_id);
+create index if not exists program_views_dedup_idx on program_views(program_id, viewer_user_id, viewed_at);
 
 -- "Who viewed my raise" - a Developer Pro analytics surface.
 create table if not exists program_views (
@@ -3401,6 +4648,18 @@ create table if not exists app_config (
   updated_at timestamptz not null default now()
 );
 
+
+-- ===== schema-quick-hits.sql =====
+-- Investor watchlist (real original source, found via a case-sensitive
+-- grep miss earlier - it uses CREATE TABLE uppercase) + project health
+-- snapshots + progress photos. None of the three were spliced into this
+-- file at all; project_health_snapshots and progress_photos back real,
+-- routed features (server/src/routes/project-health.ts,
+-- progress-photos.ts) that were completely broken on a fresh database.
+-- investor_watchlist.user_id was uuid in the source file but users.id is
+-- text (same bug class as schema-sessions.sql) - fixed in
+-- db/schema-quick-hits.sql itself before splicing in here.
+\i db/schema-quick-hits.sql
 
 -- ===== schema-watchlist-userid-fix.sql =====
 -- Migration: fix investor_watchlist.user_id type mismatch (uuid -> text)
@@ -3454,3 +4713,169 @@ COMMIT;
 
 -- Referral partner onboarding (agreement e-sign + banking)
 \i db/schema-referral-partner-onboarding.sql
+
+-- Consent records (Florida E-SIGN Act) + ownership-transfer/campaign audit
+-- logs. Was never spliced into this file at all - registration writes
+-- users.terms_agreed_at unconditionally (server/src/db.ts
+-- upsertUserForRegistration), so a fresh database's registration flow
+-- failed outright with "column terms_agreed_at does not exist" until this
+-- was added. Found via a from-scratch apply-all.sql + real server
+-- bootstrap test; see AI_PROJECT_OS/13_CHANGELOG.md.
+\i db/schema-consent-and-audit.sql
+
+-- Server-side session tracking (real logout revocation). Also never spliced
+-- in at all - every login/register/verify that reaches createSession()
+-- (server/src/db.ts) failed with "relation user_sessions does not exist"
+-- on a fresh database. Its user_id column was also declared uuid, but
+-- users.id is text (native email/password auth, not a UUID scheme) -
+-- fixed in db/schema-sessions.sql itself before splicing in here.
+\i db/schema-sessions.sql
+
+-- The following schema-*.sql files existed in db/ but were never included in
+-- this file at all, found by systematically diffing every db/schema-*.sql
+-- against what apply-all.sql actually splices in (after finding several
+-- individually via real end-to-end testing). Each was checked for real,
+-- routed application usage and safe dependency ordering (all depend only on
+-- tables created earlier in this file) before being added here. See
+-- AI_PROJECT_OS/13_CHANGELOG.md for detail on each.
+
+-- Certificate of Insurance tracking (server/src/routes/coi.ts, /coi-tracker).
+\i db/schema-coi.sql
+
+-- Dispute Center (server/src/routes/disputes.ts, /dispute-center).
+\i db/schema-disputes.sql
+
+-- Lender Portal + draw requests (server/src/routes/lender-portal.ts,
+-- /lender-portal, /lender-view/:token).
+\i db/schema-lender-portal.sql
+
+-- Retainage + lien waivers (server/src/routes/retainage.ts, /retainage).
+\i db/schema-retainage.sql
+
+-- Allows bids.status = withdrawn/rejected, which intel.ts and
+-- quote-comparison.ts already query for and filter out - both were
+-- unreachable states on a fresh database until this constraint was widened.
+\i db/schema-bid-status-fix.sql
+
+-- opportunity_teasers.company_id FK gap-closure (audit item #33).
+\i db/schema-fk-fixes.sql
+
+-- Stripe billing columns + stripe_checkout_sessions idempotency table
+-- (server/src/lib/stripe.ts, server/src/routes/subscriptions.ts). Without
+-- this the entire paid-subscription checkout/webhook path was broken on a
+-- fresh database - a core revenue path, not a peripheral feature.
+\i db/schema-stripe-billing.sql
+
+-- CAN-SPAM one-click unsubscribe (email_suppressions,
+-- campaign_recipients.unsubscribe_token; server/src/routes/campaigns.ts).
+-- The file's own header said "apply after db/apply-all.sql" as a separate
+-- manual step, but nothing about it actually requires that separation, and
+-- leaving it out silently broke the real unsubscribe mechanism this
+-- session's own compliance pass relied on and verified as working
+-- (AI_PROJECT_OS/13_CHANGELOG.md entry 14).
+\i db/schema-unsubscribe.sql
+
+-- Fix account deletion hard-failing for any user with real product usage
+-- (ALFY2 Section 06 - see db/schema-user-fk-cascade-fix.sql for the full
+-- writeup and the live-reproduced failure this closes).
+\i db/schema-user-fk-cascade-fix.sql
+
+-- Row-Level Security (Section 05 follow-up). server/src/lib/requestContext.ts
+-- + auth.ts + pool.ts now set app.user_id / app.is_admin on every query (see
+-- db/schema-rls.sql's own header comment), so the policies below are live,
+-- not inert - verified end to end (register/login/company/building/package/
+-- bid/document/account-delete, plus adversarial cross-tenant reads blocked
+-- at the DB layer independent of the app layer).
+\i db/schema-rls.sql
+
+-- Phase 0 financial-integrity fix: link the two independent referral-
+-- commission rails so the same commission cannot be paid twice (see the
+-- file's own header for the full writeup).
+\i db/schema-referral-commission-dedup.sql
+
+-- Phase 0 financial source-of-truth fix: link retainage records to their
+-- canonical Purchase Order where one exists (see the file's own header).
+\i db/schema-retainage-po-link.sql
+
+-- Phase 0 relational integrity fix: real foreign keys on the procurement-
+-- money spine (purchase_orders + change_orders) - see the file's own
+-- header for the orphan-check evidence backing this.
+\i db/schema-po-fk-integrity.sql
+
+-- Phase 0 RLS extension: the procurement-financial and legal-document
+-- tables (purchase orders, payments, revenue, payouts, agreements, change
+-- orders, disputes, retainage, progress photos, COI, referral financials,
+-- and the remaining bid/package satellite tables) - see the file's own
+-- header for exactly which route each policy mirrors.
+\i db/schema-rls-high-risk.sql
+
+-- Phase 0: RLS on notifications, added alongside routes/notifications.ts
+-- (the first real reader of this previously write-only table).
+\i db/schema-notifications-rls.sql
+
+-- Phase 0 item 17: minimal durable background job queue (see the file's
+-- own header for what moved onto it and why).
+\i db/schema-jobs.sql
+
+-- Phase 0 item 19: the first real write path for the existing (previously
+-- write-less) reviews table - see the file's own header.
+\i db/schema-reviews.sql
+
+-- Phase 0 item 21: modest Postgres-native (pg_trgm) marketplace search -
+-- see the file's own header.
+\i db/schema-marketplace-search.sql
+
+-- Phase 1 P1-03/P1-04: project budget + package allowance ledgers - typed,
+-- historically-honest revision history replacing the dead buildings.budget
+-- field - see the file's own header.
+\i db/schema-financial-ledgers.sql
+
+-- Phase 1 P1-06/P1-07: awards - the canonical commitment event, one active
+-- award per package enforced at the database level - see the file's own
+-- header.
+\i db/schema-awards.sql
+
+-- Phase 1 P1-08: explicit agreement <-> purchase order linkage + contract
+-- amount - see the file's own header.
+\i db/schema-agreement-po-link.sql
+
+-- Phase 1 P1-09: change order <-> purchase order linkage - see the file's
+-- own header.
+\i db/schema-change-order-po-link.sql
+
+-- Phase 1 P1-10: invoices / payment applications - see the file's own header.
+\i db/schema-invoices.sql
+
+-- Phase 1 P1-11: payment lifecycle (platform release + external record) -
+-- see the file's own header.
+\i db/schema-payments.sql
+
+-- Phase 1 P1-13/P1-18: package financial closeout markers - see the file's
+-- own header.
+\i db/schema-package-closeout.sql
+
+-- Compliance completion pass: RLS for the 4 Divini Bid Studio satellite
+-- tables that had none at the database level (bid_payment_milestones,
+-- bid_versions, bid_templates, bid_template_line_items) - see the file's
+-- own header for how this was found and the policy source of truth.
+\i db/schema-rls-bid-studio.sql
+
+-- Lien waiver e-signature + invoice linkage (competitive gap closure) -
+-- see the file's own header for the escrow-vs-payment-status distinction.
+\i db/schema-lien-waiver-signatures.sql
+
+-- Vendor prequalification: license tracking + relationship-scoped
+-- cross-company COI/license visibility (competitive gap closure) - see the
+-- file's own header for why this is facts-only and not folded into the
+-- Divini Score.
+\i db/schema-vendor-prequalification.sql
+
+-- Plan room activity tracking: who viewed/downloaded, developer-facing
+-- only (competitive gap closure) - see the file's own header.
+\i db/schema-package-activity.sql
+
+-- Developer API platform: personal-access-token-style API keys, scoped
+-- read/write access (competitive gap closure) - see the file's own
+-- header for why this is safe (a key never exceeds its creator's own
+-- permissions).
+\i db/schema-api-keys.sql

@@ -1,0 +1,26 @@
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      dev-tooling:
+        # Capacitor/Electron desktop+mobile build toolchain: dev-only,
+        # never shipped to end users. Grouped so patch PRs for it don't
+        # spam the queue one-package-at-a-time. See 52_COMPLIANCE.md.
+        patterns:
+          - "@capacitor/*"
+          - "electron*"
+
+  - package-ecosystem: "npm"
+    directory: "/server"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

@@ -54,7 +54,7 @@ create index if not exists subscription_entitlements_stripe_cust_idx
 create table if not exists stripe_checkout_sessions (
   id               uuid primary key default gen_random_uuid(),
   session_id       text not null unique,          -- cs_... from Stripe
-  company_id       text references companies(id) on delete set null,
+  company_id       uuid references companies(id) on delete set null,
   tier_key         text,
   status           text not null default 'open'   -- open | complete | expired
     check (status in ('open','complete','expired')),
@@ -66,3 +66,28 @@ create table if not exists stripe_checkout_sessions (
 create index if not exists stripe_checkout_sessions_company_idx
   on stripe_checkout_sessions (company_id)
   where company_id is not null;
+
+-- ============================================================================
+-- stripe_webhook_events: general webhook idempotency (ALFY2 Section 09).
+--
+-- stripe_checkout_sessions above was evidently built for this exact purpose
+-- (it has its own stripe_event_id column) but was never wired into the
+-- webhook handler anywhere in server/src - grep confirms zero references.
+-- It is also scoped to only one event type (checkout.session.completed);
+-- this table instead covers all 4 event types the handler processes
+-- uniformly, keyed on Stripe's own event.id, which is stable across
+-- retries of the same event (Stripe is at-least-once delivery, and can
+-- redeliver a genuinely already-processed event).
+--
+-- Every data-mutating operation the webhook performs is already idempotent
+-- SQL (UPSERT / plain UPDATE by stripe_subscription_id or stripe_customer_id),
+-- so a duplicate delivery was never a data-integrity risk - the real,
+-- user-visible consequence was a duplicate "your subscription is active"
+-- confirmation email on checkout.session.completed. This table closes that.
+-- ============================================================================
+
+create table if not exists stripe_webhook_events (
+  event_id     text primary key,
+  event_type   text not null,
+  processed_at timestamptz not null default now()
+);

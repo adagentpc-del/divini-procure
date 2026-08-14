@@ -23,7 +23,7 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { randomUUID } from "node:crypto";
 import { getAuth, requireUser } from "../auth.js";
-import { loginRateLimit, registerRateLimit, forgotRateLimit, resendVerifyRateLimit } from "../lib/rateLimit.js";
+import { loginRateLimit, registerRateLimit, forgotRateLimit, resendVerifyRateLimit, resetPasswordRateLimit } from "../lib/rateLimit.js";
 import * as db from "../db.js";
 import { sendEmail } from "../lib/email.js";
 import {
@@ -195,7 +195,7 @@ router.post(
     const termsVersion = "2025-01";
     const consentIp = req.ip ?? req.socket?.remoteAddress ?? null;
 
-    await db.upsertUserForRegistration({
+    const user = await db.upsertUserForRegistration({
       newUserId: randomUUID(),
       email: normEmail,
       passwordHash,
@@ -205,6 +205,11 @@ router.post(
       termsVersion,
       consentIp,
     });
+    // Durable acceptance history (see db/schema-consent-and-audit.sql):
+    // the users.terms_* columns above only ever hold the most recent
+    // acceptance, so this is the only record that survives a later
+    // re-acceptance under a new termsVersion.
+    await db.recordLegalAcceptance(user.id, "terms", termsVersion, "register", consentIp);
 
     await sendVerifyEmail(normEmail, verifyToken);
     // No session until verified.
@@ -345,6 +350,7 @@ router.post(
 // ===========================================================================
 router.post(
   "/auth/reset",
+  resetPasswordRateLimit,
   h(async (req, res) => {
     const { token, password, passwordConfirm } = (req.body ?? {}) as {
       token?: string;

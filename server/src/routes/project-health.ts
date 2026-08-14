@@ -5,6 +5,8 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { getAuth, requireUser } from "../auth.js";
 import { q, q1 } from "../pool.js";
+import { computeProjectFinancialSummary } from "../lib/financial-summary.js";
+import type { BudgetHealth } from "../lib/financial-model.js";
 
 const h =
   (fn: (req: Request, res: Response) => Promise<unknown>) =>
@@ -16,7 +18,7 @@ const router = Router();
 async function getCompanyId(userId: string | null | undefined): Promise<string | null> {
   if (!userId) return null;
   const row = await q1<{ company_id: string }>(
-    `SELECT company_id FROM company_members WHERE user_id = $1 LIMIT 1`,
+    `SELECT company_id FROM company_members WHERE user_id = $1 ORDER BY created_at ASC LIMIT 1`,
     [userId],
   );
   return row?.company_id ?? null;
@@ -67,19 +69,29 @@ router.post(
   h(async (req, res) => {
     const { buildingId } = req.params;
 
+    // Phase 1 P1-16: `budget_score` now finally represents actual budget
+    // health, using the real project financial rollup (lib/financial-
+    // summary.ts) - deterministic, transparent rules over real numbers
+    // (forecast vs. current budget, contingency remaining, package
+    // overages), never a predictive model. Before Phase 1 this column held
+    // a bid-PARTICIPATION-rate proxy (Phase 0 honesty pass: correctly
+    // relabeled on the frontend, but never a real financial calculation,
+    // because no project/package budget rollup existed yet). That proxy is
+    // superseded now that one does.
+    const financialSummary = await computeProjectFinancialSummary(buildingId);
+    const budgetHealth: BudgetHealth = financialSummary?.budgetHealth ?? "unbudgeted";
+    const BUDGET_HEALTH_SCORE: Record<BudgetHealth, number> = {
+      healthy: 25,
+      at_risk: 15,
+      over_budget: 5,
+      unbudgeted: 10,
+    };
+    const budgetScore = BUDGET_HEALTH_SCORE[budgetHealth];
+
     const pkgCount = await q1<{ cnt: string }>(
       `SELECT COUNT(*) AS cnt FROM packages WHERE building_id = $1`,
       [buildingId],
     );
-    const bidCount = await q1<{ cnt: string }>(
-      `SELECT COUNT(DISTINCT package_id) AS cnt FROM bids WHERE package_id IN (SELECT id FROM packages WHERE building_id = $1)`,
-      [buildingId],
-    );
-    const budgetScore =
-      Number(pkgCount?.cnt) > 0
-        ? Math.min(25, Math.round((Number(bidCount?.cnt) / Math.max(Number(pkgCount?.cnt), 1)) * 25))
-        : 10;
-
     const awardedCount = await q1<{ cnt: string }>(
       `SELECT COUNT(*) AS cnt FROM packages WHERE building_id = $1 AND status = $2`,
       [buildingId, "awarded"],
@@ -92,7 +104,7 @@ router.post(
     const verifiedVendors = await q1<{ cnt: string }>(
       `SELECT COUNT(*) AS cnt
          FROM bids b
-         JOIN vendor_profiles vp ON vp.company_id = b.company_id
+         JOIN vendor_profiles vp ON vp.company_id = b.vendor_company_id
          JOIN packages p ON p.id = b.package_id
         WHERE p.building_id = $1
           AND p.status = 'awarded'
@@ -135,7 +147,13 @@ router.post(
         scheduleScore,
         vendorScore,
         documentationScore,
-        JSON.stringify({ color }),
+        JSON.stringify({
+          color,
+          budgetHealth,
+          forecastAtCompletionCents: financialSummary?.forecastAtCompletionCents ?? null,
+          budgetCurrentCents: financialSummary?.budgetCurrentCents ?? null,
+          varianceCents: financialSummary?.varianceCents ?? null,
+        }),
       ],
     );
 
@@ -143,6 +161,7 @@ router.post(
       snapshot: {
         score,
         budgetScore,
+        budgetHealth,
         scheduleScore,
         vendorScore,
         documentationScore,

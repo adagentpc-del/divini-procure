@@ -70,11 +70,16 @@ values
   ('vendor_pro',           'Vendor Pro',           'vendor',      14900,
      null, null, 25,   0,    0,    10,  true,  true,  false, 50),
 
-  -- Investor tiers
-  ('investor_basic',       'Investor Basic',       'investor',        0,
-     0,    0,    0,    0,    10,   2,   false, false, false, 60),
-  ('investor_qualified',   'Investor Qualified',   'investor',    49900,
-     0,    0,    0,    0,    null, 5,   true,  true,  false, 70)
+  -- Capital Partner tiers (audience stays 'investor' at the database level;
+  -- the product-facing name is "Capital Partner" everywhere else)
+  ('capital_partner_free',          'Capital Partner Free',          'investor',      0,
+     0,    0,    0,    0,    5,    1,    false, false, false, 60),
+  ('capital_partner_professional',  'Capital Partner Professional',  'investor',   4900,
+     0,    0,    0,    0,    25,   5,    true,  true,  false, 70),
+  ('capital_partner_institutional', 'Capital Partner Institutional', 'investor',  14900,
+     0,    0,    0,    0,    null, 20,   true,  true,  false, 80),
+  ('capital_partner_enterprise',    'Capital Partner Enterprise',    'investor',   null,
+     0,    0,    0,    0,    null, null, true,  true,  true,  90)
 on conflict (key) do nothing;
 
 -- ---------------------------------------------------------------------------

@@ -3,7 +3,7 @@
 -- Investor watchlist: saved search criteria for deal alerts
 CREATE TABLE IF NOT EXISTS investor_watchlist (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   asset_class text,
   location text,
   min_target_return numeric,

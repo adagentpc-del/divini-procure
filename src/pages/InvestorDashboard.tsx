@@ -92,12 +92,12 @@ export default function InvestorDashboard() {
     return (
       <>
         <div className="page-head"><div>
-          <h1>Investor</h1>
-          <div className="sub">You have not created an investor profile yet.</div>
+          <h1>Capital Partner</h1>
+          <div className="sub">You have not created a Capital Partner profile yet.</div>
         </div></div>
         <div className="card">
           <div className="note" style={{ marginBottom: 12 }}>Complete onboarding to be matched with suitable opportunities.</div>
-          <button className="btn primary" onClick={() => nav('/investor-onboarding')}>Start investor onboarding</button>
+          <button className="btn primary" onClick={() => nav('/investor-onboarding')}>Start Capital Partner onboarding</button>
         </div>
         <ComplianceDisclaimer />
       </>
@@ -142,7 +142,7 @@ export default function InvestorDashboard() {
     <>
       <div className="page-head">
         <div>
-          <h1>Investor dashboard</h1>
+          <h1>Capital Partner dashboard</h1>
           <div className="sub">Your qualification, matched opportunities, and access status.</div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
@@ -173,7 +173,7 @@ export default function InvestorDashboard() {
         <div className="card" style={{ marginBottom: 16 }}>
           <div className="note" style={{ fontWeight: 700, marginBottom: 6 }}>Refer &amp; earn</div>
           <div className="note" style={{ marginBottom: 8 }}>
-            Invite a sponsor or a fellow investor. When they join, you earn intro credits.
+            Invite a sponsor or a fellow capital partner. When they join, you earn intro credits.
             {referral.count > 0 && <> You've referred <strong>{referral.count}</strong> so far.</>}
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -189,7 +189,7 @@ export default function InvestorDashboard() {
         <div>
           <div className="note" style={{ fontWeight: 700 }}>Quiet mode {quiet ? '(on)' : '(off)'}</div>
           <div className="note" style={{ marginTop: 4 }}>
-            For family offices and private investors: stay invisible and receive matches as a periodic digest instead of browsing. You reach out only when a deal fits.
+            For family offices and private capital partners: stay invisible and receive matches as a periodic digest instead of browsing. You reach out only when a deal fits.
           </div>
         </div>
         <button className="btn" disabled={busy} onClick={() => toggleQuiet(!quiet)}>
@@ -201,7 +201,7 @@ export default function InvestorDashboard() {
         <div className="note" style={{ fontWeight: 700, marginBottom: 8 }}>Profile</div>
         <div className="two">
           <div><span className="note">Name</span><div>{me.profile?.entity_name || me.profile?.full_name || '-'}</div></div>
-          <div><span className="note">Investor type</span><div>{(me.profile?.investor_type ?? '-').replace?.(/_/g, ' ') ?? '-'}</div></div>
+          <div><span className="note">Capital Partner type</span><div>{(me.profile?.investor_type ?? '-').replace?.(/_/g, ' ') ?? '-'}</div></div>
           <div><span className="note">Accreditation</span><div>{(me.profile?.accreditation_status ?? '-').replace?.(/_/g, ' ') ?? '-'}</div></div>
           <div><span className="note">Allocation</span><div>{dollars(me.preferences?.total_allocation_cents)}</div></div>
         </div>

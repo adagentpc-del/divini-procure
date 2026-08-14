@@ -7,6 +7,7 @@
  * production, front it with an edge/WAF limiter or a shared store. Zero em dashes.
  */
 import type { Request, Response, NextFunction } from "express";
+import { getAuth } from "../auth.js";
 
 type Bucket = { count: number; resetAt: number };
 
@@ -55,6 +56,21 @@ export function rateLimit(opts: { windowMs: number; max: number }) {
 }
 
 /**
+ * General API-wide backstop (ALFY2 Section 07). Before this, only the auth
+ * surface, invite/referral lookups, score-refresh, and LLM calls had any
+ * rate limit at all - every other route (document upload, bid submission,
+ * search, admin actions under a compromised session) had none. This is
+ * intentionally generous (300 req/IP/min) - it exists to blunt obvious
+ * scripted abuse and scraping, not to constrain normal interactive use; a
+ * real user clicking around the app will never come close to it. Same
+ * "courtesy throttle, not DDoS protection" caveat as every other limiter
+ * in this file - see the module header comment. Applied globally in
+ * app.ts, ahead of the router, so it covers every /api route including
+ * ones added later without each one needing to remember to opt in.
+ */
+export const apiRateLimit = rateLimit({ windowMs: 60_000, max: 300 });
+
+/**
  * Global auth-surface limiter: 20 requests per IP per minute.
  * Applied ahead of the entire auth router in app.ts.
  */
@@ -83,6 +99,14 @@ export const forgotRateLimit = rateLimit({ windowMs: 60 * 60_000, max: 5 });
  * Strict limiter for resend-verification: 5 per IP per hour.
  */
 export const resendVerifyRateLimit = rateLimit({ windowMs: 60 * 60_000, max: 5 });
+
+/**
+ * Strict limiter for the password-reset submission endpoint (token + new
+ * password): 10 attempts per IP per 15 minutes. Reset tokens are 32-byte
+ * random hex so brute force is impractical regardless, but this adds
+ * defense-in-depth alongside the blanket /api/auth limiter.
+ */
+export const resetPasswordRateLimit = rateLimit({ windowMs: 15 * 60_000, max: 10 });
 
 /**
  * Invite and referral code public lookup rate limit (#27).
@@ -131,6 +155,45 @@ export function llmRateLimit(opts: { max?: number; windowMs?: number } = {}) {
       const retrySec = Math.max(1, Math.ceil((b.resetAt - now) / 1000));
       res.setHeader("Retry-After", String(retrySec));
       return res.status(429).json({ error: "LLM rate limit exceeded. Please try again later." });
+    }
+    next();
+  };
+}
+
+/**
+ * Developer API platform limiter: per-API-key (not per-IP), since many
+ * different real integrations can legitimately share one server's egress
+ * IP. Deliberately a no-op for ordinary session-cookie requests (apiKey
+ * is only set by an API-key-authenticated call) - those stay governed
+ * solely by the general apiRateLimit backstop above, so this never
+ * double-throttles normal browser traffic. 120 requests/key/minute is
+ * generous for a real integration poll loop while still capping runaway
+ * scripted misuse of a leaked key.
+ */
+export function apiKeyRateLimit(opts: { max?: number; windowMs?: number } = {}) {
+  const { max = 120, windowMs = 60_000 } = opts;
+  const buckets = new Map<string, Bucket>();
+
+  function sweep(now: number) {
+    if (buckets.size < 5000) return;
+    for (const [k, b] of buckets) if (b.resetAt <= now) buckets.delete(k);
+  }
+
+  return function apiKeyRateLimitMw(req: Request, res: Response, next: NextFunction) {
+    const apiKeyId = getAuth(req).apiKey?.id;
+    if (!apiKeyId) return next();
+    const now = Date.now();
+    sweep(now);
+    let b = buckets.get(apiKeyId);
+    if (!b || b.resetAt <= now) {
+      b = { count: 0, resetAt: now + windowMs };
+      buckets.set(apiKeyId, b);
+    }
+    b.count += 1;
+    if (b.count > max) {
+      const retrySec = Math.max(1, Math.ceil((b.resetAt - now) / 1000));
+      res.setHeader("Retry-After", String(retrySec));
+      return res.status(429).json({ error: "API key rate limit exceeded. Please slow down." });
     }
     next();
   };

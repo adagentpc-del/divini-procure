@@ -47,6 +47,8 @@ import {
   type Tier,
 } from "../lib/entitlements.js";
 import { sendEmail } from "../lib/email.js";
+import { inviteLookupRateLimit } from "../lib/rateLimit.js";
+import { runAsAdmin } from "../lib/requestContext.js";
 
 /** Vendor-facing self-serve tiers (the "upgrade to Pro / buy Verified+" set). */
 const SELF_SERVE_TIER_KEYS = new Set(["vendor_pro", "verified_plus", "vendor_featured"]);
@@ -178,7 +180,11 @@ async function resolveStripeCustomer(
       [companyId, customerId],
     );
     return customerId;
-  } catch {
+  } catch (e) {
+    console.error("[subscriptions] resolveStripeCustomer failed", {
+      companyId,
+      error: e instanceof Error ? e.message : String(e),
+    });
     return null;
   }
 }
@@ -221,6 +227,18 @@ async function resolveVendorCompany(
 router.get(
   "/subscriptions/tiers",
   requireUser,
+  h(async (_req, res) => {
+    res.json({ tiers: await listTiers() });
+  }),
+);
+
+// GET /public/subscription-tiers -> the same catalogue, no auth required.
+// Tier pricing/limits are not sensitive data, and the public Pricing page
+// needs real numbers rather than a hand-maintained copy that drifts out of
+// sync with what admins actually configure via /admin/subscriptions/tiers.
+router.get(
+  "/public/subscription-tiers",
+  inviteLookupRateLimit,
   h(async (_req, res) => {
     res.json({ tiers: await listTiers() });
   }),
@@ -284,7 +302,7 @@ router.post(
         key,
         b.name ?? key,
         audience,
-        Number.isFinite(Number(b.price_cents)) ? Number(b.price_cents) : 0,
+        b.price_cents === null ? null : Number.isFinite(Number(b.price_cents)) ? Number(b.price_cents) : 0,
         b.active_project_limit ?? null,
         b.bid_package_limit ?? null,
         b.vendor_invite_limit ?? null,
@@ -395,9 +413,10 @@ router.get(
 );
 
 // ---------------------------------------------------------------------------
-// Admin: investor plan assignment (investors are user-keyed, not company-keyed).
+// Admin: Capital Partner plan assignment (capital partners are user-keyed,
+// not company-keyed).
 // ---------------------------------------------------------------------------
-const INVESTOR_PLANS = new Set(["free", "premium", "concierge"]);
+const INVESTOR_PLANS = new Set(["free", "professional", "institutional", "enterprise"]);
 
 router.get(
   "/admin/investors",
@@ -427,7 +446,7 @@ router.patch(
     const plan = String(b.plan ?? "").trim().toLowerCase();
     if (!userId) return res.status(400).json({ error: "userId required" });
     if (!INVESTOR_PLANS.has(plan))
-      return res.status(400).json({ error: "plan must be free, premium or concierge" });
+      return res.status(400).json({ error: "plan must be free, professional, institutional, or enterprise" });
     const row = await q1(
       `update investor_profiles set plan = $2, updated_at = now() where user_id = $1
        returning id, user_id, email, full_name, plan`,
@@ -513,6 +532,13 @@ router.post(
       [tierKey],
     );
     if (!tier) return res.status(404).json({ error: "tier not found" });
+
+    // Custom/contact-us pricing (price_cents is NULL): never self-serve, and
+    // never free - Number(null) is 0, so this must be checked before the
+    // free-tier fallthrough below or a custom tier would be assigned at $0.
+    if (tier.price_cents === null) {
+      return res.status(400).json({ error: "This plan is custom-priced. Please contact sales.", contactSales: true });
+    }
 
     // Free tier or Stripe not configured: assign immediately.
     if (Number(tier.price_cents) <= 0 || !stripe.isConfigured()) {
@@ -647,12 +673,38 @@ router.post(
     );
     if (ent?.stripe_subscription_id && stripe.isConfigured()) {
       try {
-        // Cancel at period end so the user keeps access until the period they paid for.
+        // Cancel at period end so the user keeps access until the period they
+        // paid for - matches the confirmation copy in Subscription.tsx
+        // ("you will keep access until the end of your current billing
+        // period"). Do NOT downgrade tier_key here: Stripe keeps the
+        // subscription active until the real period boundary and fires
+        // customer.subscription.deleted (or .updated with status
+        // canceled/unpaid) at that point, which is what actually calls
+        // assignFreeTier below in the webhook handler. Downgrading eagerly
+        // here would cut off access the user already paid for, and would
+        // also null out stripe_subscription_id before the webhook needs it
+        // to find this company.
         await stripe.cancelSubscription(ent.stripe_subscription_id, true);
-      } catch {
-        // Already cancelled or expired - proceed to downgrade anyway.
+        await q(
+          `update subscription_entitlements
+              set subscription_status = 'cancel_at_period_end', updated_at = now()
+            where company_id = $1`,
+          [companyId],
+        );
+        return res.json({ ok: true, effective: await getEntitlement(companyId) });
+      } catch (e) {
+        // Stripe call failed (already cancelled/expired remotely, or a
+        // transient error) - fall through to the immediate record-only
+        // downgrade below, since there is no live subscription left to honor.
+        console.error("[subscriptions] Stripe cancelSubscription failed, falling through to immediate downgrade", {
+          companyId,
+          error: e instanceof Error ? e.message : String(e),
+        });
       }
     }
+    // No Stripe subscription to defer to (Stripe not configured, or the
+    // company was only ever assigned a tier record-only): nothing to wait
+    // for, so downgrade immediately.
     await assignFreeTier(companyId);
     res.json({ ok: true, effective: await getEntitlement(companyId) });
   }),
@@ -684,6 +736,33 @@ router.post(
 
     const obj = event.data.object as Record<string, unknown>;
 
+    // Admin-equivalent RLS context for the whole handler (see requestContext.ts's
+    // runAsAdmin doc comment): authenticity is already verified via the Stripe
+    // signature above, but this request still passed through authMiddleware
+    // with no user session, so without this every write below (subscription_
+    // entitlements insert/update, the company-owner lookup for the
+    // confirmation email) would fail or silently no-op under RLS - reproduced
+    // live as a hard "new row violates row-level security policy" on the very
+    // first checkout.session.completed test before this was added.
+    await runAsAdmin(async () => {
+    // Idempotency: Stripe is at-least-once delivery and can redeliver an
+    // event we already processed. Every write below is itself idempotent
+    // SQL, so a duplicate was never a data-integrity risk - but it would
+    // send a second "your subscription is active" email on a redelivered
+    // checkout.session.completed. event.id is stable across redeliveries
+    // of the same event (unlike a fresh id per delivery attempt), so
+    // claiming it here once is a correct, general dedup across all 4
+    // event types this handler processes.
+    const claimed = await q(
+      `insert into stripe_webhook_events (event_id, event_type) values ($1, $2)
+       on conflict (event_id) do nothing
+       returning event_id`,
+      [event.id, event.type],
+    );
+    if (claimed.length === 0) {
+      console.log("[webhook:stripe] duplicate delivery skipped", event.type, event.id);
+      return;
+    }
     try {
       switch (event.type) {
         // -----------------------------------------------------------------
@@ -820,6 +899,7 @@ router.post(
       // events where processing would always fail (e.g. missing tier in DB).
       console.error("[webhook:stripe] processing error", event.type, e);
     }
+    });
 
     res.json({ received: true });
   }),

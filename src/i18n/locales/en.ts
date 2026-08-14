@@ -175,7 +175,7 @@ const en = {
     roleVendor: 'Vendor / Supplier',
     roleDesigner: 'Designer / Architect',
     roleBroker: 'Broker',
-    roleInvestor: 'Investor',
+    roleInvestor: 'Capital Partner',
     website: 'Website',
     websitePlaceholder: 'https://yourcompany.com',
     phone: 'Phone number',

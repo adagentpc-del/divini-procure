@@ -289,6 +289,7 @@ export async function enqueueSplitsForRevenue(
   revenueId: string,
   actorEmail: string | null,
 ): Promise<EnqueueResult> {
+  let created = 0;
   try {
     if (!revenueId) return { created: 0 };
 
@@ -310,7 +311,6 @@ export async function enqueueSplitsForRevenue(
     const splits = await computeSplits(rev);
     if (!splits.length) return { created: 0 };
 
-    let created = 0;
     for (const s of splits) {
       const acct = await findRecipientAccount(s);
       const status = acct.id && acct.payoutsEnabled ? "ready" : "pending";
@@ -355,8 +355,21 @@ export async function enqueueSplitsForRevenue(
       }
     }
     return { created };
-  } catch {
+  } catch (e) {
     // Best effort: never throw into the caller (the revenue collect flow).
-    return { created: 0 };
+    // Both real call sites (payouts.ts, revenue.ts) invoke this WITHOUT
+    // awaiting the result on their own critical path (revenue.ts even uses
+    // a bare `void`) specifically so a split-engine failure cannot fail
+    // the admin action that triggered it - which is exactly why a failure
+    // here must never be silent: nothing else will ever surface it. Also
+    // report the PARTIAL created count achieved before the failure (not a
+    // hardcoded 0), since some payout_instructions rows may genuinely have
+    // been created before a later split failed.
+    console.error("[split-engine] enqueueSplitsForRevenue failed partway through", {
+      revenueId,
+      createdBeforeFailure: created,
+      error: e instanceof Error ? e.message : String(e),
+    });
+    return { created };
   }
 }

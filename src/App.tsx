@@ -52,6 +52,11 @@ const Agreements = lazy(() => import('./pages/Agreements'));
 const AdminCampaigns = lazy(() => import('./pages/AdminCampaigns'));
 const CooDashboard = lazy(() => import('./pages/CooDashboard'));
 const DiviniScores = lazy(() => import('./pages/DiviniScores'));
+const Pipeline = lazy(() => import('./pages/Pipeline'));
+const ScopeBuilder = lazy(() => import('./pages/ScopeBuilder'));
+const BidStudio = lazy(() => import('./pages/BidStudio'));
+const FollowUpDesk = lazy(() => import('./pages/FollowUpDesk'));
+const Blueprint = lazy(() => import('./pages/Blueprint'));
 const WarRoom = lazy(() => import('./pages/WarRoom'));
 const RelationshipGraph = lazy(() => import('./pages/RelationshipGraph'));
 const InvestmentProfile = lazy(() => import('./pages/InvestmentProfile'));
@@ -86,6 +91,7 @@ const AdminAudit = lazy(() => import('./pages/AdminAudit'));
 const Reports = lazy(() => import('./pages/Reports'));
 const AdminAnalytics = lazy(() => import('./pages/AdminAnalytics'));
 const MessagingPolicy = lazy(() => import('./pages/MessagingPolicy'));
+const ApiKeys = lazy(() => import('./pages/ApiKeys'));
 const AdminCsvImport = lazy(() => import('./pages/AdminCsvImport'));
 const MyInvites = lazy(() => import('./pages/MyInvites'));
 const PayoutSettings = lazy(() => import('./pages/PayoutSettings'));
@@ -163,6 +169,11 @@ function Routed() {
         <Route path="/relationships" element={<Gate><Relationships /></Gate>} />
         <Route path="/agreements" element={<Gate><Agreements /></Gate>} />
         <Route path="/coo" element={<Gate><CooDashboard /></Gate>} />
+        <Route path="/pipeline" element={<Gate><Pipeline /></Gate>} />
+        <Route path="/scope-builder" element={<Gate><ScopeBuilder /></Gate>} />
+        <Route path="/bid-studio" element={<Gate><BidStudio /></Gate>} />
+        <Route path="/follow-up-desk" element={<Gate><FollowUpDesk /></Gate>} />
+        <Route path="/blueprint" element={<Gate><Blueprint /></Gate>} />
         <Route path="/divini-scores" element={<Gate><DiviniScores /></Gate>} />
         <Route path="/war-room" element={<Gate><WarRoom /></Gate>} />
         <Route path="/relationship-graph" element={<Gate><RelationshipGraph /></Gate>} />
@@ -202,6 +213,7 @@ function Routed() {
         <Route path="/event-spaces" element={<Gate><EventSpaces /></Gate>} />
         <Route path="/reports" element={<Gate><Reports /></Gate>} />
         <Route path="/messaging-policy" element={<Gate><MessagingPolicy /></Gate>} />
+        <Route path="/api-keys" element={<Gate><ApiKeys /></Gate>} />
         <Route path="/admin/features" element={<SuperAdminGate><AdminFeatures /></SuperAdminGate>} />
         <Route path="/admin/invites" element={<SuperAdminGate><AdminInvites /></SuperAdminGate>} />
         <Route path="/admin/discount-codes" element={<SuperAdminGate><AdminDiscountCodes /></SuperAdminGate>} />

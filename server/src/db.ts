@@ -31,9 +31,65 @@
  * A `ForbiddenError` is thrown when a caller violates the policy; routes map it
  * to HTTP 403. This is the critical correctness work of the re-platform.
  */
-import { q, q1, pool } from "./pool.js";
+import { createHash } from "node:crypto";
+import { q, q1, pool, setRlsContext } from "./pool.js";
 import { getAdminAllowedEmails } from "./config.js";
 import { PlanLimitError, enforceLimit } from "./lib/entitlement-guard.js";
+import { ForbiddenError, NotFoundError } from "./lib/errors.js";
+import { allowedBrowseVisibilities, canViewPackage } from "./lib/marketplace-visibility.js";
+import { runAsAdmin } from "./lib/requestContext.js";
+
+/**
+ * Single-purpose tokens (email verification, password reset, ownership-
+ * transfer claims) are hashed before storage, same rationale as a password:
+ * a database breach must not hand out directly-usable links. The raw token
+ * (sent only in the email) is hashed the same way at lookup time.
+ */
+function hashToken(rawToken: string): string {
+  return createHash("sha256").update(rawToken).digest("hex");
+}
+export { ForbiddenError, NotFoundError };
+
+/**
+ * Read a single row with a transaction-local admin-equivalent RLS context.
+ * Reserved for the handful of pre-authentication user lookups (login,
+ * forgot-password, verify-email, resend-verification) that must find a
+ * users row by email or token BEFORE any session exists - by definition
+ * there is no "current user" for the users_select policy to match yet.
+ * Each of these routes is already rate-limited and returns a generic,
+ * non-enumerating error on failure, same as before RLS.
+ */
+async function q1AsPreAuth<T = any>(text: string, params: any[] = []): Promise<T | null> {
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    await client.query(`select set_config('app.is_admin', 't', true)`);
+    const res = await client.query(text, params);
+    await client.query("commit");
+    return (res.rows[0] as T) ?? null;
+  } catch (e) {
+    await client.query("rollback").catch(() => {});
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+/** Same as q1AsPreAuth, for statements with no row to return. */
+async function qAsPreAuth(text: string, params: any[] = []): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    await client.query(`select set_config('app.is_admin', 't', true)`);
+    await client.query(text, params);
+    await client.query("commit");
+  } catch (e) {
+    await client.query("rollback").catch(() => {});
+    throw e;
+  } finally {
+    client.release();
+  }
+}
 
 /**
  * Enforce a plan limit before a create. Only a PlanLimitError (which extends
@@ -58,21 +114,6 @@ async function guardLimit(
 export function isAdminEmail(email: string | null | undefined): boolean {
   if (!email) return false;
   return getAdminAllowedEmails().includes(email.toLowerCase());
-}
-
-export class ForbiddenError extends Error {
-  status = 403;
-  constructor(msg = "forbidden") {
-    super(msg);
-    this.name = "ForbiddenError";
-  }
-}
-export class NotFoundError extends Error {
-  status = 404;
-  constructor(msg = "not found") {
-    super(msg);
-    this.name = "NotFoundError";
-  }
 }
 
 /** Upsert the user row (so company_members.user_id FK is satisfiable). */
@@ -100,29 +141,36 @@ export interface UserRow {
   created_at: string;
 }
 
-/** Look up a user by (case-insensitive) email. */
+/**
+ * Look up a user by (case-insensitive) email. Pre-authentication by nature
+ * (login, resend-verification, forgot-password all call this before any
+ * session exists) - see q1AsPreAuth().
+ */
 export async function getUserByEmail(email: string): Promise<UserRow | null> {
-  return q1<UserRow>(`select * from users where lower(email) = lower($1)`, [email]);
-}
-
-/** Look up a user by id. */
-export async function getUserById(id: string): Promise<UserRow | null> {
-  return q1<UserRow>(`select * from users where id = $1`, [id]);
-}
-
-export async function getUserByVerifyToken(token: string): Promise<UserRow | null> {
-  return q1<UserRow>(`select * from users where verify_token = $1`, [token]);
+  return q1AsPreAuth<UserRow>(`select * from users where lower(email) = lower($1)`, [email]);
 }
 
 /**
- * Look up a user by a password-reset token. The token is SHA-256 hashed before
- * storage so a database breach does not expose usable reset links.
- * The raw token (sent in email) is hashed here before the lookup.
+ * Look up a user by id. Currently only called from the reset-password flow
+ * (pre-authentication - the reset request itself carries no session), so
+ * this also goes through q1AsPreAuth().
+ */
+export async function getUserById(id: string): Promise<UserRow | null> {
+  return q1AsPreAuth<UserRow>(`select * from users where id = $1`, [id]);
+}
+
+/** Pre-authentication by nature (the email-verify link). See q1AsPreAuth(). */
+export async function getUserByVerifyToken(rawToken: string): Promise<UserRow | null> {
+  return q1AsPreAuth<UserRow>(`select * from users where verify_token = $1`, [hashToken(rawToken)]);
+}
+
+/**
+ * Look up a user by a password-reset token. See hashToken() above and
+ * q1AsPreAuth() (pre-authentication by nature - the reset link itself is
+ * the only credential available at this point).
  */
 export async function getUserByResetToken(rawToken: string): Promise<UserRow | null> {
-  const { createHash } = await import("node:crypto");
-  const hashed = createHash("sha256").update(rawToken).digest("hex");
-  return q1<UserRow>(`select * from users where reset_token = $1`, [hashed]);
+  return q1AsPreAuth<UserRow>(`select * from users where reset_token = $1`, [hashToken(rawToken)]);
 }
 
 /**
@@ -141,32 +189,61 @@ export async function upsertUserForRegistration(args: {
   termsVersion?: string;
   consentIp?: string | null;
 }): Promise<UserRow> {
-  const existing = await getUserByEmail(args.email);
-  if (existing) {
-    return (await q1<UserRow>(
-      `update users set
-         email = $2,
-         password_hash = $3,
-         email_verified = false,
-         verify_token = $4,
-         verify_expires = $5,
-         terms_agreed_at = coalesce($6, terms_agreed_at),
-         terms_version = coalesce($7, terms_version),
-         consent_ip = coalesce($8, consent_ip)
-       where id = $1
-       returning *`,
-      [existing.id, args.email, args.passwordHash, args.verifyToken, args.verifyExpires.toISOString(),
-       args.termsAgreedAt?.toISOString() ?? null, args.termsVersion ?? null, args.consentIp ?? null],
-    ))!;
+  const hashedVerifyToken = hashToken(args.verifyToken);
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    // Registration has no session/identity to check by definition - the
+    // users_select/users_update RLS policies only allow "your own row",
+    // which cannot be true yet. This is the same transaction-local
+    // admin-equivalent escalation used by transferCompanyOwnerEmail, and is
+    // safe for the identical reason: this whole flow is pre-gated at the
+    // route layer (input validation, rate limiting) rather than by a
+    // session that cannot exist yet.
+    await client.query(`select set_config('app.is_admin', 't', true)`);
+
+    const existing = (
+      await client.query<UserRow>(`select * from users where lower(email) = lower($1)`, [args.email])
+    ).rows[0];
+    let row: UserRow;
+    if (existing) {
+      row = (
+        await client.query<UserRow>(
+          `update users set
+             email = $2,
+             password_hash = $3,
+             email_verified = false,
+             verify_token = $4,
+             verify_expires = $5,
+             terms_agreed_at = coalesce($6, terms_agreed_at),
+             terms_version = coalesce($7, terms_version),
+             consent_ip = coalesce($8, consent_ip)
+           where id = $1
+           returning *`,
+          [existing.id, args.email, args.passwordHash, hashedVerifyToken, args.verifyExpires.toISOString(),
+           args.termsAgreedAt?.toISOString() ?? null, args.termsVersion ?? null, args.consentIp ?? null],
+        )
+      ).rows[0];
+    } else {
+      row = (
+        await client.query<UserRow>(
+          `insert into users (id, email, password_hash, email_verified, verify_token, verify_expires,
+                              terms_agreed_at, terms_version, consent_ip)
+           values ($1, $2, $3, false, $4, $5, $6, $7, $8)
+           returning *`,
+          [args.newUserId, args.email, args.passwordHash, hashedVerifyToken, args.verifyExpires.toISOString(),
+           args.termsAgreedAt?.toISOString() ?? null, args.termsVersion ?? null, args.consentIp ?? null],
+        )
+      ).rows[0];
+    }
+    await client.query("commit");
+    return row;
+  } catch (e) {
+    await client.query("rollback").catch(() => {});
+    throw e;
+  } finally {
+    client.release();
   }
-  return (await q1<UserRow>(
-    `insert into users (id, email, password_hash, email_verified, verify_token, verify_expires,
-                        terms_agreed_at, terms_version, consent_ip)
-     values ($1, $2, $3, false, $4, $5, $6, $7, $8)
-     returning *`,
-    [args.newUserId, args.email, args.passwordHash, args.verifyToken, args.verifyExpires.toISOString(),
-     args.termsAgreedAt?.toISOString() ?? null, args.termsVersion ?? null, args.consentIp ?? null],
-  ))!;
 }
 
 /** Return a user's role within a company, or null if they are not a member. */
@@ -178,50 +255,53 @@ export async function getMemberRole(userId: string, companyId: string): Promise<
   return row?.role ?? null;
 }
 
-/** Mark a user verified and clear the verify token. */
+/**
+ * Mark a user verified and clear the verify token. Called only from the
+ * pre-auth verify-email and reset-password flows - see q1AsPreAuth().
+ */
 export async function markEmailVerified(userId: string): Promise<UserRow | null> {
-  return q1<UserRow>(
+  return q1AsPreAuth<UserRow>(
     `update users set email_verified = true, verify_token = null, verify_expires = null
        where id = $1 returning *`,
     [userId],
   );
 }
 
-/** Set a fresh verify token (resend-verification). */
+/**
+ * Set a fresh verify token (resend-verification, pre-auth by nature).
+ * rawToken is hashed before storage. See q1AsPreAuth().
+ */
 export async function setVerifyToken(
   userId: string,
-  token: string,
+  rawToken: string,
   expires: Date,
 ): Promise<void> {
-  await q(`update users set verify_token = $2, verify_expires = $3 where id = $1`, [
+  await qAsPreAuth(`update users set verify_token = $2, verify_expires = $3 where id = $1`, [
     userId,
-    token,
+    hashToken(rawToken),
     expires.toISOString(),
   ]);
 }
 
 /**
- * Set a fresh password-reset token. The raw token is SHA-256 hashed before
- * storage so a database breach does not expose usable links. The raw token is
- * sent to the user's inbox and never persisted.
+ * Set a fresh password-reset token (forgot-password, pre-auth by nature).
+ * rawToken is hashed before storage (see hashToken() above and q1AsPreAuth()).
  */
 export async function setResetToken(
   userId: string,
   rawToken: string,
   expires: Date,
 ): Promise<void> {
-  const { createHash } = await import("node:crypto");
-  const hashed = createHash("sha256").update(rawToken).digest("hex");
-  await q(`update users set reset_token = $2, reset_expires = $3 where id = $1`, [
+  await qAsPreAuth(`update users set reset_token = $2, reset_expires = $3 where id = $1`, [
     userId,
-    hashed,
+    hashToken(rawToken),
     expires.toISOString(),
   ]);
 }
 
-/** Apply a new password and clear the reset token. */
+/** Apply a new password and clear the reset token. Pre-auth (the reset link is the credential). */
 export async function applyPasswordReset(userId: string, passwordHash: string): Promise<void> {
-  await q(
+  await qAsPreAuth(
     `update users set password_hash = $2, reset_token = null, reset_expires = null where id = $1`,
     [userId, passwordHash],
   );
@@ -252,9 +332,20 @@ export async function transferCompanyOwnerEmail(args: {
   // The acting user must be a member (owner) of the company.
   await assertMemberOfCompany(args.actingUserId, args.companyId);
 
+  const hashedVerifyToken = hashToken(args.verifyToken);
   const client = await pool.connect();
   try {
     await client.query("begin");
+    // This function reads/writes a users row for the TARGET email, which is
+    // never the acting user's own identity, and reassigns company_members
+    // rows the acting user doesn't own either - both legitimate only
+    // because assertMemberOfCompany() above already confirmed the acting
+    // user is this company's owner (or an app-level admin) before this
+    // transaction began. Escalate to admin-equivalent for just this one
+    // transaction (auto-reverts at commit/rollback, per setRlsContext) so
+    // the RLS layer doesn't re-block an operation the app layer already
+    // authorized.
+    await client.query(`select set_config('app.is_admin', 't', true)`);
 
     // Find or create the target user by email. A brand-new target is created
     // unverified with a fresh verify/claim token; an existing user is reused
@@ -268,7 +359,7 @@ export async function transferCompanyOwnerEmail(args: {
         await client.query<UserRow>(
           `insert into users (id, email, email_verified, verify_token, verify_expires)
            values ($1, $2, false, $3, $4) returning *`,
-          [args.newUserId, args.newEmail, args.verifyToken, args.verifyExpires.toISOString()],
+          [args.newUserId, args.newEmail, hashedVerifyToken, args.verifyExpires.toISOString()],
         )
       ).rows[0];
       created = true;
@@ -276,7 +367,7 @@ export async function transferCompanyOwnerEmail(args: {
       target = (
         await client.query<UserRow>(
           `update users set verify_token = $2, verify_expires = $3 where id = $1 returning *`,
-          [target.id, args.verifyToken, args.verifyExpires.toISOString()],
+          [target.id, hashedVerifyToken, args.verifyExpires.toISOString()],
         )
       ).rows[0];
     }
@@ -353,6 +444,33 @@ export async function getMyCompany(userId: string) {
   );
 }
 
+// Bump when the Vendor Agreement text in Onboarding.tsx materially changes
+// (matches the plain hardcoded-string pattern already used for
+// termsVersion in routes/auth-native.ts, rather than a new versioning
+// system this one call site doesn't need).
+const VENDOR_AGREEMENT_VERSION = "2026-08";
+
+/**
+ * Append-only acceptance record (see db/schema-consent-and-audit.sql).
+ * Never throws into the caller's transaction failing silently - callers
+ * that need this inside an existing transaction (createCompanyForUser)
+ * use client.query directly instead; this standalone helper is for call
+ * sites with no transaction of their own (registration).
+ */
+export async function recordLegalAcceptance(
+  userId: string,
+  documentType: string,
+  version: string,
+  source: string,
+  ipAddress: string | null,
+): Promise<void> {
+  await q(
+    `insert into user_legal_acceptances (user_id, document_type, version, source, ip_address)
+     values ($1, $2, $3, $4, $5)`,
+    [userId, documentType, version, source, ipAddress],
+  );
+}
+
 /** createCompanyForUser - creates company, owner membership, vendor profile.
  *  Backward compatible: the original buyer/vendor + contact fields still work;
  *  the richer real-estate-developer profile fields are all optional. */
@@ -383,11 +501,14 @@ export async function createCompanyForUser(
     capabilities?: string[];
     focus_areas?: string[];
     geographies?: string[];
+    vendorAgreementAccepted?: boolean;
   },
+  consent?: { userId: string; consentIp: string | null },
 ) {
   const client = await pool.connect();
   try {
     await client.query("begin");
+    await setRlsContext(client);
     const company = (
       await client.query(
         `insert into companies
@@ -432,6 +553,13 @@ export async function createCompanyForUser(
          values ($1, 70, 'pending', $2)`,
         [company.id, payload.services ?? []],
       );
+      if (payload.vendorAgreementAccepted && consent) {
+        await client.query(
+          `insert into user_legal_acceptances (user_id, document_type, version, source, ip_address)
+           values ($1, 'vendor_agreement', $2, 'onboarding', $3)`,
+          [consent.userId, VENDOR_AGREEMENT_VERSION, consent.consentIp],
+        );
+      }
     }
     await client.query("commit");
     return company;
@@ -529,6 +657,24 @@ export async function deleteMyAccount(userId: string): Promise<void> {
   const client = await pool.connect();
   try {
     await client.query("begin");
+    // Admin-equivalent escalation (same pattern as upsertUserForRegistration/
+    // transferCompanyOwnerEmail), REQUIRED for correctness here, not just
+    // convenience: company_members_select only allows seeing your own
+    // membership row (see db/schema-rls.sql's comment on why - avoiding the
+    // current_user_company_ids() self-recursion). Under the acting user's
+    // own (non-escalated) identity, the "does this company have any OTHER
+    // members left" check below would only ever see rows the departing user
+    // themselves owns - i.e. none, since their own row is deleted first -
+    // making EVERY company look orphaned regardless of real membership.
+    // Reproduced live: a second real member's company, building, and
+    // uploaded documents were all wrongly cascade-deleted the moment the
+    // first member deleted their own account, before this escalation was
+    // added. This function is already fully authorized to act here (it
+    // only ever operates on the caller's own userId, enforced at the route
+    // layer - never a different target user), so this is not a privilege
+    // escalation, only a correctness fix for a query RLS cannot answer
+    // truthfully from a single member's own restricted view.
+    await client.query(`select set_config('app.is_admin', 't', true)`);
     const companies = (
       await client.query(`select company_id from company_members where user_id = $1`, [userId])
     ).rows.map((r) => r.company_id);
@@ -668,14 +814,31 @@ export async function getPackages(_userId: string, buildingId: string) {
   return q(`select * from packages where building_id = $1 order by created_at`, [buildingId]);
 }
 
-export async function getOpenPackages(_userId: string, categories?: string[]) {
+export async function getOpenPackages(userId: string, categories?: string[], isAdmin = false) {
   const params: any[] = [];
+  // Status is the master gate on whether a package is listed at all.
+  // visibility (see db/schema-marketplace-publication.sql) further narrows
+  // the general public/discoverable browse to only the tiers meant to be
+  // reachable that way - organization-only, invite-only, selected-team,
+  // preferred-vendor, and private-group listings are distributed through
+  // their own explicit channel (bid_invites / "My Invites"), never surfaced
+  // here regardless of status.
+  //
+  // Phase 0 fix: which of the three browsable tiers the CALLER actually
+  // sees is no longer hardcoded - allowedBrowseVisibilities() checks the
+  // caller's own vendor verification status, so 'qualified_vendors' and
+  // 'divini_verified' listings are no longer shown to every signed-in
+  // user regardless of whether they actually qualify (see
+  // lib/marketplace-visibility.ts).
+  const allowed = await allowedBrowseVisibilities({ userId, isAdmin });
+  params.push(allowed);
   let sql = `select p.*, to_jsonb(b) - 'id' as _b, b.name as _bname, b.location as _bloc, b.developer as _bdev
              from packages p join buildings b on b.id = p.building_id
-             where p.status in ('open','shortlisting')`;
+             where p.status in ('open','shortlisting')
+               and p.visibility = any($1::text[])`;
   if (categories && categories.length) {
     params.push(categories);
-    sql += ` and p.category = any($1)`;
+    sql += ` and p.category = any($${params.length})`;
   }
   sql += ` order by p.deadline`;
   const rows = await q<any>(sql, params);
@@ -685,7 +848,7 @@ export async function getOpenPackages(_userId: string, categories?: string[]) {
   });
 }
 
-export async function getPackage(_userId: string, id: string) {
+export async function getPackage(userId: string, id: string, isAdmin = false) {
   const r = await q1<any>(
     `select p.*, b.id as _bid, b.name as _bname, b.location as _bloc, b.developer as _bdev, b.company_id as _bcompany
        from packages p join buildings b on b.id = p.building_id
@@ -693,6 +856,16 @@ export async function getPackage(_userId: string, id: string) {
     [id],
   );
   if (!r) return null;
+  // Phase 0 fix: this previously had NO visibility/ownership check at all -
+  // any authenticated user could read any package by id regardless of its
+  // visibility, including 'private_draft'. Mirrors the same not-found
+  // response as a missing row (no existence oracle for a package you are
+  // not entitled to see) rather than a 403.
+  const canView = await canViewPackage(
+    { userId, isAdmin },
+    { visibility: r.visibility, buildingCompanyId: r._bcompany, id: r.id },
+  );
+  if (!canView) return null;
   const { _bid, _bname, _bloc, _bdev, _bcompany, ...pkg } = r;
   return {
     ...pkg,
@@ -821,6 +994,7 @@ export async function submitPricedBid(
   const client = await pool.connect();
   try {
     await client.query("begin");
+    await setRlsContext(client);
     const bid = (
       await client.query(
         `insert into bids (package_id, vendor_company_id, price, days, note, status, docs_ok)
@@ -921,23 +1095,37 @@ export async function setFeatureFlagAudience(key: string, audience: string) {
 // DOCUMENTS (metadata; file bytes handled by storage.ts)
 // ===========================================================================
 
-export async function getDocuments(userId: string, opts: { packageId?: string; buildingId?: string }) {
+export async function getDocuments(userId: string, opts: { packageId?: string; buildingId?: string }, isAdmin = false) {
   if (opts.packageId) {
-    // IDOR fix: verify the user is a member of the company that owns the package.
-    const pkg = await q1<{ company_id: string }>(
-      `select b.company_id
+    // Package-scoped documents (specs/drawings/CAD - the "plan room")
+    // follow the PACKAGE's own visibility, the same canViewPackage() rule
+    // GET /packages/:id already uses - not a separate "must be the owning
+    // company" restriction. That older restriction (still correct for the
+    // buildingId and no-filter branches below) silently blocked every
+    // bidding vendor from ever seeing a developer's own package
+    // documents, contradicting this file's own top-of-file documented
+    // intent ("documents: read any") and getDocumentByPath's docstring -
+    // a real, pre-existing gap, not a new design decision.
+    const pkg = await q1<{ id: string; visibility: string | null; company_id: string }>(
+      `select p.id, p.visibility, b.company_id
          from packages p
          join buildings b on b.id = p.building_id
         where p.id = $1`,
       [opts.packageId],
     );
     if (!pkg) return [];
-    const member = await q1(
-      `select 1 from company_members where user_id = $1 and company_id = $2`,
-      [userId, pkg.company_id],
+    const canView = await canViewPackage(
+      { userId, isAdmin },
+      { visibility: pkg.visibility, buildingCompanyId: pkg.company_id, id: pkg.id },
     );
-    if (!member) throw new ForbiddenError("not a member of the company that owns this package");
-    return q(`select * from documents where package_id = $1 order by created_at desc`, [opts.packageId]);
+    if (!canView) throw new ForbiddenError("not authorized to view this package's documents");
+    // documents' own RLS is intentionally conservative (owner company or
+    // admin only - the same table also holds private company-level
+    // onboarding documents like insurance/W9s, see routes/onboarding.ts),
+    // so a genuinely authorized outside vendor's own RLS context would
+    // still see zero rows here. This read runs admin-equivalent AFTER the
+    // real authorization decision immediately above, never instead of it.
+    return runAsAdmin(() => q(`select * from documents where package_id = $1 order by created_at desc`, [opts.packageId]));
   }
   if (opts.buildingId) {
     // IDOR fix: verify the user is a member of the company that owns the building.

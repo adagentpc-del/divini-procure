@@ -13,6 +13,12 @@ import assert from "node:assert/strict";
 import {
   DEFAULT_STANDARD_FEE_PERCENTAGE,
   GRANDFATHERED_FEE_PERCENTAGE,
+  PROCURE_STANDARD_SUCCESS_PCT_DEFAULT,
+  PROCURE_STANDARD_SUCCESS_CAP_CENTS_DEFAULT,
+  PROCURE_GRANDFATHERED_SUCCESS_PCT_DEFAULT,
+  PROCURE_GRANDFATHERED_CAP_CENTS_DEFAULT,
+  PROCURE_SERVICE_BUFFER_PCT_DEFAULT,
+  PROCURE_SERVICE_BUFFER_CAP_CENTS_DEFAULT,
   feeCentsFromPercentage,
   resolveFeeRule,
   successFeeCents,
@@ -42,6 +48,80 @@ test("success fee: zero/negative award yields zero; no cap when cap<=0", () => {
 test("constants: defaults are 10% standard and 2% grandfathered", () => {
   assert.equal(DEFAULT_STANDARD_FEE_PERCENTAGE, 10.0);
   assert.equal(GRANDFATHERED_FEE_PERCENTAGE, 2.0);
+});
+
+// ---------------------------------------------------------------------------
+// Current platform fee model (single source of truth, resolved from the
+// fee_rules database table; these are the config.ts fallback defaults):
+//   standard: 5% capped $25,000
+//   existing relationship: 2% capped $10,000
+//   platform infrastructure fee (separate line item): 0.1% capped $1,500
+// ---------------------------------------------------------------------------
+test("constants: platform fee defaults are 5% capped $25,000", () => {
+  assert.equal(PROCURE_STANDARD_SUCCESS_PCT_DEFAULT, 5.0);
+  assert.equal(PROCURE_STANDARD_SUCCESS_CAP_CENTS_DEFAULT, 2_500_000);
+});
+
+test("constants: existing-relationship fee defaults are 2% capped $10,000", () => {
+  assert.equal(PROCURE_GRANDFATHERED_SUCCESS_PCT_DEFAULT, 2.0);
+  assert.equal(PROCURE_GRANDFATHERED_CAP_CENTS_DEFAULT, 1_000_000);
+});
+
+test("constants: platform infrastructure fee defaults are 0.1% capped $1,500", () => {
+  assert.equal(PROCURE_SERVICE_BUFFER_PCT_DEFAULT, 0.1);
+  assert.equal(PROCURE_SERVICE_BUFFER_CAP_CENTS_DEFAULT, 150_000);
+});
+
+test("platform fee: 5% under the cap is the full percentage", () => {
+  // $100,000 award, 5%, cap $25,000 -> $5,000 (under cap)
+  assert.equal(
+    successFeeCents(10_000_000, PROCURE_STANDARD_SUCCESS_PCT_DEFAULT, PROCURE_STANDARD_SUCCESS_CAP_CENTS_DEFAULT),
+    500_000,
+  );
+});
+
+test("platform fee: a large award is capped at $25,000", () => {
+  // $1,000,000 award, 5% = $50,000, capped at $25,000
+  assert.equal(
+    successFeeCents(100_000_000, PROCURE_STANDARD_SUCCESS_PCT_DEFAULT, PROCURE_STANDARD_SUCCESS_CAP_CENTS_DEFAULT),
+    2_500_000,
+  );
+  // $10,000,000 award still capped at $25,000
+  assert.equal(
+    successFeeCents(1_000_000_000, PROCURE_STANDARD_SUCCESS_PCT_DEFAULT, PROCURE_STANDARD_SUCCESS_CAP_CENTS_DEFAULT),
+    2_500_000,
+  );
+});
+
+test("existing-relationship fee: 2% capped $10,000", () => {
+  // $200,000 award, 2% = $4,000 (under cap)
+  assert.equal(
+    successFeeCents(20_000_000, PROCURE_GRANDFATHERED_SUCCESS_PCT_DEFAULT, PROCURE_GRANDFATHERED_CAP_CENTS_DEFAULT),
+    400_000,
+  );
+  // $1,000,000 award, 2% = $20,000, capped at $10,000
+  assert.equal(
+    successFeeCents(100_000_000, PROCURE_GRANDFATHERED_SUCCESS_PCT_DEFAULT, PROCURE_GRANDFATHERED_CAP_CENTS_DEFAULT),
+    1_000_000,
+  );
+  // $10,000,000 award, 2% = $200,000, capped at $10,000
+  assert.equal(
+    successFeeCents(1_000_000_000, PROCURE_GRANDFATHERED_SUCCESS_PCT_DEFAULT, PROCURE_GRANDFATHERED_CAP_CENTS_DEFAULT),
+    1_000_000,
+  );
+});
+
+test("platform infrastructure fee: 0.1% capped $1,500, always computed regardless of grandfathered status", () => {
+  // $100,000 award, 0.1% = $100 (under cap)
+  assert.equal(
+    successFeeCents(10_000_000, PROCURE_SERVICE_BUFFER_PCT_DEFAULT, PROCURE_SERVICE_BUFFER_CAP_CENTS_DEFAULT),
+    10_000,
+  );
+  // $10,000,000 award, 0.1% = $10,000, capped at $1,500
+  assert.equal(
+    successFeeCents(1_000_000_000, PROCURE_SERVICE_BUFFER_PCT_DEFAULT, PROCURE_SERVICE_BUFFER_CAP_CENTS_DEFAULT),
+    150_000,
+  );
 });
 
 test("feeCentsFromPercentage: 10% platform fee on exact amounts", () => {

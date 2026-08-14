@@ -118,6 +118,12 @@ export async function llmComplete(prompt: string, opts: LlmOptions = {}): Promis
 /** Plain-text completion, or "" on any failure (caller falls back). */
 export async function llmText(prompt: string, opts: LlmOptions = {}): Promise<string> {
   const r = await llmComplete(prompt, opts);
+  if (!r.ok) {
+    // The deterministic-fallback contract (caller proceeds with "") is
+    // unchanged - this only makes an otherwise-invisible LLM failure
+    // (misconfiguration, provider outage, timeout) show up somewhere.
+    console.error("[llm] llmText call failed, falling back to empty string", { error: r.error });
+  }
   return r.ok ? r.text : "";
 }
 
@@ -135,10 +141,16 @@ function extractJson(text: string): string {
 /** Completion that returns parsed JSON, or null on any failure (caller falls back). */
 export async function llmJson<T = unknown>(prompt: string, opts: LlmOptions = {}): Promise<T | null> {
   const r = await llmComplete(prompt, { ...opts, json: true });
-  if (!r.ok || !r.text) return null;
+  if (!r.ok || !r.text) {
+    if (!r.ok) console.error("[llm] llmJson call failed, falling back to null", { error: r.error });
+    return null;
+  }
   try {
     return JSON.parse(extractJson(r.text)) as T;
-  } catch {
+  } catch (e) {
+    console.error("[llm] llmJson: model response was not valid JSON, falling back to null", {
+      error: e instanceof Error ? e.message : String(e),
+    });
     return null;
   }
 }

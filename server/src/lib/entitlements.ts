@@ -31,7 +31,8 @@ export interface Tier {
   key: string;
   name: string;
   audience: "developer" | "vendor" | "investor";
-  price_cents: number;
+  /** null = custom/contact-us pricing, distinct from a real $0 free tier. */
+  price_cents: number | null;
   active_project_limit: number | null;
   bid_package_limit: number | null;
   vendor_invite_limit: number | null;
@@ -49,7 +50,7 @@ export interface Entitlement {
   tier_key: string | null;
   audience: "developer" | "vendor" | "investor";
   name: string;
-  price_cents: number;
+  price_cents: number | null;
   ai_features: boolean;
   reporting_access: boolean;
   white_glove: boolean;
@@ -90,14 +91,16 @@ const LIMIT_KEYS: LimitKey[] = [
 ];
 
 /** Map the company.kind onto the tier audience namespace. */
-function kindToAudience(kind: string | null | undefined): "developer" | "vendor" {
-  return kind === "vendor" ? "vendor" : "developer";
+function kindToAudience(kind: string | null | undefined): "developer" | "vendor" | "investor" {
+  if (kind === "vendor") return "vendor";
+  if (kind === "investor") return "investor";
+  return "developer";
 }
 
 /** The fallback free tier key for a given audience. */
 function defaultTierKey(audience: "developer" | "vendor" | "investor"): string {
   if (audience === "vendor") return "vendor_free";
-  if (audience === "investor") return "investor_basic";
+  if (audience === "investor") return "capital_partner_free";
   return "developer_free";
 }
 
@@ -146,7 +149,7 @@ export async function getEntitlement(companyId: string): Promise<Entitlement> {
       tier_key: tier?.key ?? null,
       audience: tierAudience,
       name: tier?.name ?? "Free",
-      price_cents: tier?.price_cents ?? 0,
+      price_cents: tier ? tier.price_cents : 0,
       ai_features: tier?.ai_features ?? false,
       reporting_access: tier?.reporting_access ?? false,
       white_glove: tier?.white_glove ?? false,
@@ -165,7 +168,7 @@ export async function getEntitlement(companyId: string): Promise<Entitlement> {
     tier_key: tier?.key ?? ent.tier_key ?? null,
     audience: tierAudience,
     name: tier?.name ?? "Custom",
-    price_cents: tier?.price_cents ?? 0,
+    price_cents: tier ? tier.price_cents : 0,
     ai_features: ent.ai_features ?? tier?.ai_features ?? false,
     reporting_access: ent.reporting_access ?? tier?.reporting_access ?? false,
     white_glove: ent.white_glove ?? tier?.white_glove ?? false,
@@ -291,6 +294,59 @@ export async function isVendorPro(companyId: string): Promise<boolean> {
 export async function isVerifiedPlus(companyId: string): Promise<boolean> {
   const ent = await getEntitlement(companyId);
   return ent.tier_key === "verified_plus";
+}
+
+/**
+ * Urgent-listing monthly limit for a company (Divini Blueprint / marketplace
+ * publication - see db/schema-marketplace-publication.sql). Same
+ * override-wins-else-tier-default resolution as every other limit in this
+ * file, just not folded into the generic LimitKey/allLimits() machinery
+ * because it is a MONTHLY-windowed count, not an all-time one - usedFor()
+ * and allLimits() assume all-time usage, and widening LimitKey would change
+ * the shape every existing caller of allLimits() (e.g. the subscription
+ * page) already renders. NULL means unlimited, matching the convention used
+ * everywhere else in this engine.
+ */
+export async function urgentListingMonthlyLimit(companyId: string): Promise<number | null> {
+  const ent = await q1<{ tier_key: string | null; urgent_listing_monthly_limit: number | null }>(
+    "select tier_key, urgent_listing_monthly_limit from subscription_entitlements where company_id = $1",
+    [companyId],
+  );
+  if (ent && ent.urgent_listing_monthly_limit !== null) return ent.urgent_listing_monthly_limit;
+
+  const company = await q1<{ kind: string | null }>("select kind from companies where id = $1", [companyId]);
+  const tierKey = ent?.tier_key || defaultTierKey(kindToAudience(company?.kind));
+  const tier = await q1<{ urgent_listing_monthly_limit: number | null }>(
+    "select urgent_listing_monthly_limit from subscription_tiers where key = $1",
+    [tierKey],
+  );
+  return tier?.urgent_listing_monthly_limit ?? null;
+}
+
+/**
+ * Urgent/priority/emergency packages this company has PUBLISHED (not merely
+ * created or marked) since the start of the current calendar month - the
+ * limit is about how many urgent listings actually go live, not how many
+ * are sitting flagged in a draft.
+ */
+export async function urgentListingsUsedThisMonth(companyId: string): Promise<number> {
+  return safeCount(
+    `select count(*)::int as n
+       from packages p join buildings b on b.id = p.building_id
+      where b.company_id = $1
+        and p.urgency in ('priority', 'urgent', 'emergency')
+        and p.published_at >= date_trunc('month', now())`,
+    [companyId],
+  );
+}
+
+export type UrgentListingLimitCheck = { limit: number | null; used: number; remaining: number | null; allowed: boolean };
+
+/** Combined check: is this company allowed to mark one more listing urgent this month? */
+export async function checkUrgentListingLimit(companyId: string): Promise<UrgentListingLimitCheck> {
+  const [limit, used] = await Promise.all([urgentListingMonthlyLimit(companyId), urgentListingsUsedThisMonth(companyId)]);
+  if (limit === null) return { limit: null, used, remaining: null, allowed: true };
+  return { limit, used, remaining: Math.max(0, limit - used), allowed: used < limit };
 }
 
 /**

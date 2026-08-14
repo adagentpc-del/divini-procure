@@ -19,6 +19,12 @@ import { getAuth, requireUser } from "../auth.js";
 import { q, q1 } from "../pool.js";
 import { extractProfileFromUrl } from "../lib/extract.js";
 import { buildStorageKey, writeFile } from "../storage.js";
+import { llmRateLimit } from "../lib/rateLimit.js";
+
+// Each call fetches an external URL AND runs an LLM completion - real cost
+// and time per request (ALFY2 Section 08). intel.ts already rate-limits its
+// own LLM route the same way; this one and blueprint.ts's /analyze did not.
+const extractLlmLimit = llmRateLimit({ max: 20, windowMs: 60 * 60_000 });
 
 // 25 MB cap for brand media (logos/images/decks).
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
@@ -69,6 +75,7 @@ async function isMemberOfCompany(userId: string, companyId: string): Promise<boo
 router.post(
   "/onboarding/extract",
   requireUser,
+  extractLlmLimit,
   h(async (req, res) => {
     const url = String(req.body?.url || "").trim();
     if (!url) return res.status(400).json({ error: "url required" });

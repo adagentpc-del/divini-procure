@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import VendorBadges from '../components/VendorBadges';
 import LanguageSwitcher from '../components/LanguageSwitcher';
 
@@ -96,7 +96,7 @@ export default function Landing() {
         .lp .mline.s{width:55%}.lp .mline.m{width:80%}.lp .mline.g{background:var(--emerald);opacity:.85}.lp .mline.c{background:var(--champagne)}
         .lp .mrow{display:flex;justify-content:space-between;align-items:center;gap:10px}
         .lp .pill{font-size:11px;font-weight:700;padding:3px 9px;border-radius:20px;background:#e7f3ec;color:#1f7a4d}
-        .lp .pill.amber{background:#fbf2dc;color:#8a6d1a}
+        .lp .pill.amber{background:#fbf2dc;color:#7a5f14}
         .lp .bars{display:flex;align-items:flex-end;gap:8px;height:90px;margin-top:8px}
         .lp .bars div{flex:1;background:var(--emerald);border-radius:6px 6px 0 0;opacity:.85}
         .lp .tl{display:flex;gap:0;margin-top:14px}
@@ -132,7 +132,7 @@ export default function Landing() {
         @keyframes show5{0%{opacity:0;transform:translateY(10px)}3%{opacity:1;transform:none}18%{opacity:1;transform:none}21%{opacity:0;transform:translateY(-10px)}100%{opacity:0}}
         @keyframes hl5{0%,21%,100%{background:transparent;color:var(--muted)}3%,18%{background:var(--ivory);color:var(--emerald-deep)}}
         @keyframes show4{0%{opacity:0;transform:translateY(10px)}4%{opacity:1;transform:none}22%{opacity:1;transform:none}26%{opacity:0;transform:translateY(-10px)}100%{opacity:0}}
-        @keyframes hl4{0%,26%,100%{background:transparent;color:var(--muted)}4%,22%{background:rgba(217,204,176,.18);color:#fff}}
+        @keyframes hl4{0%,26%,100%{background:transparent;color:var(--muted)}4%,22%{background:var(--ivory);color:var(--emerald-deep)}}
         .lp .demo.builder .dstep.on b{background:var(--emerald);color:#fff}
 
         /* ---------- FOUNDING OFFER ---------- */
@@ -164,6 +164,13 @@ export default function Landing() {
         .lp .scale .sr .pct{font-family:'Cormorant Garamond',serif;font-size:26px;font-weight:700;color:var(--emerald)}
         .lp .scale-note{text-align:center;font-size:12.5px;color:var(--muted);margin-top:14px}
 
+        /* ---------- DIVINI TOOLS ---------- */
+        .lp .tools{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px}
+        .lp .tool{background:#fff;border:1px solid var(--line);border-radius:16px;padding:22px 20px;text-align:left}
+        .lp .tool .ic{width:38px;height:38px;border-radius:10px;background:#e7f3ec;color:var(--emerald);display:grid;place-items:center;font-size:17px;margin-bottom:12px}
+        .lp .tool h4{font-size:16px;color:var(--emerald-deep);margin-bottom:6px}
+        .lp .tool p{font-size:13px;color:var(--muted);line-height:1.55;margin:0}
+
         @media(max-width:780px){.lp .pains,.lp .offers,.lp .demo{grid-template-columns:1fr}.lp .demo.flip .demo-stage{order:0}}
 
         .lp .closer{background:var(--emerald-deep);border-radius:22px;padding:56px 28px;text-align:center;color:#fff}
@@ -186,12 +193,13 @@ export default function Landing() {
             </div>
           </div>
           <div className="navlinks">
-            <a className="hidelink" onClick={() => document.getElementById('why')?.scrollIntoView({behavior:'smooth'})}>Why Divini</a>
-            <a className="hidelink" onClick={() => document.getElementById('how')?.scrollIntoView({behavior:'smooth'})}>How it works</a>
-            <a onClick={() => nav('/opportunities')}>Browse deals</a>
-            <a onClick={() => nav('/pricing')}>Pricing</a>
+            <a className="hidelink" href="#why" onClick={(e) => { e.preventDefault(); document.getElementById('why')?.scrollIntoView({behavior:'smooth'}); }}>Why Divini</a>
+            <a className="hidelink" href="#how" onClick={(e) => { e.preventDefault(); document.getElementById('how')?.scrollIntoView({behavior:'smooth'}); }}>How it works</a>
+            <a className="hidelink" href="#tools" onClick={(e) => { e.preventDefault(); document.getElementById('tools')?.scrollIntoView({behavior:'smooth'}); }}>Tools</a>
+            <Link to="/opportunities">Browse deals</Link>
+            <Link to="/pricing">Pricing</Link>
             <LanguageSwitcher />
-            <a onClick={go}>Log in</a>
+            <Link to="/login">Log in</Link>
             <button className="btn primary" onClick={go}>Get started</button>
           </div>
         </div>
@@ -384,6 +392,42 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* ---------------- DIVINI TOOLS ---------------- */}
+      <section id="tools" style={{background:'var(--ivory)'}}>
+        <div className="wrap">
+          <div className="kicker">Deterministic, not a black box</div>
+          <h2>The Divini toolset</h2>
+          <p className="sectsub">Purpose-built tools that run your procurement workflow end to end - every score, suggestion, and status is computed from your own project data, and every AI-assisted step is optional, labeled, and requires your review.</p>
+          <div className="tools">
+            <div className="tool">
+              <div className="ic">☰</div>
+              <h4>Divini Pipeline</h4>
+              <p>Track every opportunity from first contact to close, with a deterministic score explaining exactly why.</p>
+            </div>
+            <div className="tool">
+              <div className="ic">▧</div>
+              <h4>Divini Scope Builder</h4>
+              <p>Build complete, versioned scopes of work with a completeness score so nothing critical gets missed.</p>
+            </div>
+            <div className="tool">
+              <div className="ic">▤</div>
+              <h4>Divini Bid Studio</h4>
+              <p>Draft, compare, and finalize bids with transparent line-item totals and draft-until-submitted safety.</p>
+            </div>
+            <div className="tool">
+              <div className="ic">⏰</div>
+              <h4>Divini Follow-Up Desk</h4>
+              <p>Automatic reminders for stale opportunities, unfinished drafts, and expiring credentials - never a missed deadline.</p>
+            </div>
+            <div className="tool">
+              <div className="ic">⌂</div>
+              <h4>Divini Blueprint</h4>
+              <p>Upload plans, CAD, and specs; get real document classification, trade suggestions, and a preliminary project summary - always labeled by confidence, always reviewed by you before anything is created.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* ---------------- TRUST / VERIFICATION ---------------- */}
       <section>
         <div className="wrap">
@@ -404,6 +448,9 @@ export default function Landing() {
               </div>
             </div>
             <div className="seats">Featured vendors earn top placement once verified.</div>
+            <p className="sub" style={{fontSize:13,opacity:0.75,marginTop:10}}>
+              Verification is based on the license, insurance, and other documents a vendor submits and our team's review of them - it is not an independent government-registry check or a guarantee. Always confirm current licensing and insurance directly with a vendor before you award work.
+            </p>
             <div className="cta" style={{marginTop:24}}>
               <button className="btn gold lg" onClick={go}>Join as a verified vendor</button>
             </div>
@@ -421,9 +468,12 @@ export default function Landing() {
             <div className="fstep"><div className="ic">$</div><h4>Developers</h4><p>Free. Post projects and receive bids from verified vendors.</p></div>
             <div className="fstep"><div className="ic">◷</div><h4>Vendors</h4><p>Free. Build a profile and submit up to 5 bids per quarter.</p></div>
             <div className="fstep"><div className="ic">★</div><h4>Vendor Pro</h4><p>$149 per month. Unlimited bids, project alerts, and priority matching.</p></div>
-            <div className="fstep"><div className="ic">✓</div><h4>You only pay when you win</h4><p>A 2 percent success fee on the awarded contract, capped at $2,500.</p></div>
+            <div className="fstep"><div className="ic">✓</div><h4>You only pay when you win</h4><p>A 5 percent platform fee on the awarded contract, capped at $25,000, plus a separate 0.1 percent infrastructure fee capped at $1,500.</p></div>
           </div>
-          <div className="scale-note">No fees to browse, bid, or post. <a onClick={() => nav('/pricing')} style={{color:'var(--emerald)',fontWeight:600,cursor:'pointer'}}>See full pricing</a>.</div>
+          <div className="scale-note">No fees to browse, bid, or post. <Link to="/pricing" style={{color:'var(--emerald)',fontWeight:600}}>See full pricing</Link>.</div>
+          <div className="scale-note" style={{marginTop:6}}>
+            Sourcing capital for a project? <Link to="/pricing" style={{color:'var(--emerald)',fontWeight:600}}>Capital Partner plans</Link> connect developers with passive capital for introductions only - Divini Procure never brokers, structures, or executes an investment.
+          </div>
         </div>
       </section>
 
@@ -435,11 +485,13 @@ export default function Landing() {
           <div style={{maxWidth:680,margin:'0 auto',display:'grid',gap:20,textAlign:'left'}}>
             {[
               { q: 'Is Divini Procure free for developers?', a: 'Yes. Developers post projects, receive bids, and award contracts at no cost. There are no monthly fees or per-project charges for developers.' },
-              { q: 'How does the success fee work?', a: 'When a vendor wins an awarded contract through Divini Procure, a 2% success fee applies to the award amount, capped at $2,500. There is no fee to browse, bid, or post.' },
-              { q: 'How are vendors verified?', a: 'We confirm license, insurance, and certifications before a vendor can submit bids. Vendors who go further with bonding, financials, and references earn a Verified+ badge.' },
+              { q: 'How does the platform fee work?', a: 'When a vendor wins an awarded contract through Divini Procure, a 5% platform fee applies to the award amount, capped at $25,000 (2% capped at $10,000 for an existing relationship), plus a separate 0.1% platform infrastructure fee capped at $1,500, always shown as its own line item. There is no fee to browse, bid, or post.' },
+              { q: 'How are vendors verified?', a: 'Our team reviews the license, insurance, and certification documents a vendor submits before they can bid - this is a document review, not an independent government-registry check, so always confirm current licensing and insurance directly with a vendor before you award work. Vendors who go further with bonding, financials, and references earn a Verified+ badge.' },
               { q: 'Can vendors bid for free?', a: 'Yes. Vendors can build a profile and submit up to 5 bids per quarter at no cost. Vendor Pro ($149/month) unlocks unlimited bids, project alerts, and priority matching.' },
-              { q: 'Is my data secure?', a: 'Yes. All data is encrypted in transit and at rest. Role-based access controls ensure developers only see their own projects, and vendors only see their own bids.' },
+              { q: 'Is my data secure?', a: 'Yes. All data is encrypted in transit (HTTPS/TLS), passwords are hashed, and role-based access controls ensure developers only see their own projects and vendors only see their own bids. See our Privacy Policy for full details.' },
               { q: 'What markets does Divini Procure serve?', a: 'Divini Procure currently focuses on real estate development and construction projects. We match developers with verified trade vendors, specialty contractors, and suppliers.' },
+              { q: 'What are the Divini tools (Pipeline, Scope Builder, Bid Studio, Follow-Up Desk, Blueprint)?', a: 'Purpose-built tools included with your account that run procurement end to end: track opportunities, build complete scopes of work, compare and finalize bids, get automatic follow-up reminders, and turn uploaded plans and documents into a preliminary project summary. Every score and suggestion is computed deterministically from your own data, and any AI-assisted step is optional, clearly labeled, and requires your review before anything is created.' },
+              { q: 'Is Divini Procure an investment platform?', a: 'No. Divini Procure facilitates introductions between developers and Capital Partners only. We do not broker, structure, underwrite, or execute investments, and we are not a securities intermediary.' },
             ].map(({ q: fq, a }) => (
               <div key={fq} style={{borderBottom:'1px solid rgba(255,255,255,.08)',paddingBottom:16}}>
                 <h3 style={{fontSize:15,fontWeight:600,marginBottom:6}}>{fq}</h3>

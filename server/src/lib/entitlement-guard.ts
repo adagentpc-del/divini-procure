@@ -13,7 +13,7 @@
  * Reuses the single source of truth in entitlements.ts (checkLimit). Integer
  * counts only. Zero em dashes by convention.
  */
-import { ForbiddenError } from "../db.js";
+import { ForbiddenError } from "./errors.js";
 import { checkLimit, type LimitKey } from "./entitlements.js";
 
 /** Friendly noun for each limit key, used in the upgrade message. */

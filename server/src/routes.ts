@@ -51,6 +51,8 @@ import {
   readPath,
   fileExists,
 } from "./storage.js";
+import { logPackageView, logDocumentDownload, getPackageActivitySummary } from "./lib/package-activity.js";
+import { runAsAdmin } from "./lib/requestContext.js";
 import adminExtraRouter from "./routes/admin-extra.js";
 import publicCaptureRouter from "./routes/public-capture.js";
 import referralPartnerOnboardingRouter from "./routes/referral-partner-onboarding.js";
@@ -82,6 +84,13 @@ import projectRolesRouter from "./routes/project-roles.js";
 import projectTemplatesRouter from "./routes/project-templates.js";
 import onboardingSamplesRouter from "./routes/onboarding-samples.js";
 import investmentGovernanceRouter from "./routes/investment-governance.js";
+import pipelineRouter from "./routes/pipeline.js";
+import scopeBuilderRouter from "./routes/scope-builder.js";
+import bidStudioRouter from "./routes/bid-studio.js";
+import followUpRouter from "./routes/follow-up.js";
+import blueprintRouter from "./routes/blueprint.js";
+import blueprintPhase2Router from "./routes/blueprint-phase2.js";
+import marketplacePublicationRouter from "./routes/marketplace-publication.js";
 import teasersProfilesRouter from "./routes/teasers-profiles.js";
 import incentivesRouter from "./routes/incentives.js";
 import profileCollateralRouter from "./routes/profile-collateral.js";
@@ -104,9 +113,26 @@ import watchlistRouter from "./routes/watchlist.js";
 import projectHealthRouter from "./routes/project-health.js";
 import progressPhotosRouter from "./routes/progress-photos.js";
 import paymentEtaRouter from "./routes/payment-eta.js";
+import notificationsRouter from "./routes/notifications.js";
+import jobsAdminRouter from "./routes/jobs-admin.js";
+import reviewsRouter from "./routes/reviews.js";
+import marketplaceSearchRouter from "./routes/marketplace-search.js";
+// ---- Phase 1: canonical procurement + financial spine ------------------------
+import budgetRouter from "./routes/budget.js";
+import bidRevisionsRouter from "./routes/bid-revisions.js";
+import invoicesRouter from "./routes/invoices.js";
+import paymentsRouter from "./routes/payments.js";
+import financialSummaryRouter from "./routes/financial-summary.js";
+import vendorSignalsRouter from "./routes/vendor-signals.js";
+import askDiviniRouter from "./routes/ask-divini.js";
+import licensesRouter from "./routes/licenses.js";
+import prequalificationRouter from "./routes/prequalification.js";
+import paymentReputationRouter from "./routes/payment-reputation.js";
+import apiKeysRouter from "./routes/api-keys.js";
 // ---- Monetization V2 (flag-gated): bid credits + verification gate -----------
 import { PROCURE_MONETIZATION_V2 } from "./config.js";
 import { getBidCredits, consumeBidCredit } from "./lib/bidCredits.js";
+import { validateCompanyCreation } from "./lib/company-validation.js";
 import { assertVendorVerified, getVerificationDetail } from "./lib/verificationGate.js";
 import { isVendorPro } from "./lib/entitlements.js";
 
@@ -169,7 +195,7 @@ router.use(feeMatrixRouter);
 router.use(vendorPricingRouter);
 router.use(featuredRouter);
 // ---- Wave B: award->PO->payment-auth, change orders, products, vendor import
-router.use(awardWorkflowRouter);
+router.use("/award", awardWorkflowRouter);
 router.use(changeOrdersRouter);
 router.use(productsRouter);
 router.use(vendorImportRouter);
@@ -178,6 +204,20 @@ router.use(projectRolesRouter);
 router.use(projectTemplatesRouter);
 router.use(onboardingSamplesRouter);
 router.use(investmentGovernanceRouter);
+// ---- Divini Pipeline: user-facing sales/procurement CRM (not crm_records) ---
+router.use("/pipeline", pipelineRouter);
+// ---- Divini Scope Builder: structured procurement requirement definitions --
+router.use("/scope", scopeBuilderRouter);
+// ---- Divini Bid Studio: structured vendor bid draft-build workflow ---------
+router.use("/bid-studio", bidStudioRouter);
+// ---- Divini Follow-Up Desk: rules-based reminder/workflow engine ----------
+router.use("/follow-up", followUpRouter);
+// ---- Divini Blueprint: document classification + trade suggestions -------
+router.use("/blueprint", blueprintRouter);
+// ---- Divini Blueprint Phase 2: CSI divisions, budget import, quantities --
+router.use("/blueprint", blueprintPhase2Router);
+// ---- Marketplace publication: visibility, scheduling, urgency on packages -
+router.use("/marketplace", marketplacePublicationRouter);
 router.use(teasersProfilesRouter);
 router.use("/incentives", incentivesRouter);
 router.use(profileCollateralRouter);
@@ -200,6 +240,22 @@ router.use(watchlistRouter);
 router.use(projectHealthRouter);
 router.use(progressPhotosRouter);
 router.use(paymentEtaRouter);
+router.use(notificationsRouter);
+router.use(jobsAdminRouter);
+router.use(reviewsRouter);
+router.use(marketplaceSearchRouter);
+// ---- Phase 1: canonical procurement + financial spine -----------------------
+router.use(budgetRouter);
+router.use(bidRevisionsRouter);
+router.use(invoicesRouter);
+router.use(paymentsRouter);
+router.use(financialSummaryRouter);
+router.use(vendorSignalsRouter);
+router.use(askDiviniRouter);
+router.use(licensesRouter);
+router.use(prequalificationRouter);
+router.use(paymentReputationRouter);
+router.use(apiKeysRouter);
 
 // ---- health ----------------------------------------------------------------
 router.get("/healthz", async (_req, res) => {
@@ -236,7 +292,12 @@ router.post(
   h(async (req, res) => {
     const auth = getAuth(req);
     await db.ensureUser(auth.userId!, auth.email);
-    const company = await db.createCompanyForUser(auth.userId!, req.body);
+    const companyValidation = validateCompanyCreation(req.body ?? {});
+    if (!companyValidation.ok) {
+      return res.status(400).json({ error: companyValidation.error });
+    }
+    const consentIp = req.ip ?? req.socket?.remoteAddress ?? null;
+    const company = await db.createCompanyForUser(auth.userId!, req.body, { userId: auth.userId!, consentIp });
     res.status(201).json(company);
   }),
 );
@@ -267,6 +328,22 @@ router.post(
       );
     }
     await db.deleteMyAccount(auth.userId!);
+    res.json({ ok: true });
+  }),
+);
+
+// Sign out of all devices: revokes every session for this account, including
+// the one making this request - the caller gets a fresh 200 response, but the
+// session cookie it's holding stops working on the very next request (the
+// jti is gone from user_sessions). This was previously only a side effect of
+// password reset; there was no direct way for a user who suspects a stolen
+// session to kill it without also changing their password.
+router.post(
+  "/account/sessions/revoke-all",
+  requireUser,
+  h(async (req, res) => {
+    const auth = getAuth(req);
+    await db.revokeAllSessions(auth.userId!);
     res.json({ ok: true });
   }),
 );
@@ -346,7 +423,7 @@ router.get(
     const cats = req.query.categories
       ? String(req.query.categories).split(",").filter(Boolean)
       : undefined;
-    res.json(await db.getOpenPackages(auth.userId!, cats));
+    res.json(await db.getOpenPackages(auth.userId!, cats, auth.isAdmin));
   }),
 );
 
@@ -355,7 +432,44 @@ router.get(
   requireUser,
   h(async (req, res) => {
     const auth = getAuth(req);
-    res.json((await db.getPackage(auth.userId!, req.params.id)) ?? null);
+    const pkg = await db.getPackage(auth.userId!, req.params.id, auth.isAdmin);
+    if (pkg) {
+      const developerCompanyId = pkg.building?.company_id as string | undefined;
+      // Plan room activity tracking (competitive gap closure): log a
+      // 'viewed' event only when a genuinely different company (a
+      // prospective vendor, not the package's own developer, and never
+      // admin) is looking at it - the developer's own repeated visits to
+      // their own package are not "vendor engagement."
+      if (developerCompanyId && auth.userId && !auth.isAdmin) {
+        const ids = await db.userCompanyIds(auth.userId);
+        const viewerCompanyId = ids.find((cid) => cid !== developerCompanyId);
+        if (viewerCompanyId) {
+          void logPackageView({ packageId: pkg.id, buildingId: pkg.building.id, developerCompanyId, viewerCompanyId });
+        }
+      }
+    }
+    res.json(pkg ?? null);
+  }),
+);
+
+// Plan room activity summary (competitive gap closure): developer-only
+// ("this is the developer's engagement intelligence, not the viewing
+// vendor's" - see schema-package-activity.sql). RLS on
+// package_activity_events independently enforces the same restriction.
+router.get(
+  "/packages/:id/activity",
+  requireUser,
+  h(async (req, res) => {
+    const auth = getAuth(req);
+    const pkg = await db.getPackage(auth.userId!, req.params.id, auth.isAdmin);
+    if (!pkg) throw new NotFoundError("package not found");
+    const developerCompanyId = pkg.building?.company_id as string | undefined;
+    if (!auth.isAdmin) {
+      if (!developerCompanyId) throw new ForbiddenError("not authorized to view this package's activity");
+      const ids = await db.userCompanyIds(auth.userId!);
+      if (!ids.includes(developerCompanyId)) throw new ForbiddenError("not authorized to view this package's activity");
+    }
+    res.json(await getPackageActivitySummary(pkg.id));
   }),
 );
 
@@ -575,7 +689,7 @@ router.get(
     const auth = getAuth(req);
     const packageId = req.query.packageId ? String(req.query.packageId) : undefined;
     const buildingId = req.query.buildingId ? String(req.query.buildingId) : undefined;
-    res.json(await db.getDocuments(auth.userId!, { packageId, buildingId }));
+    res.json(await db.getDocuments(auth.userId!, { packageId, buildingId }, auth.isAdmin));
   }),
 );
 
@@ -656,15 +770,58 @@ router.get(
     const auth = getAuth(req);
     const path = String(req.query.path || "");
     if (!path) return res.status(400).json({ error: "path required" });
-    const doc = await db.getDocumentByPath(path);
+    // documents' own RLS restricts SELECT to the owning company or admin
+    // (see schema-rls.sql) - so a genuinely authorized outside vendor's
+    // own request context would see nothing here even after the real
+    // authorization check below passes. Escalate the lookup itself; the
+    // checks that follow are the actual authorization decision.
+    const doc = await runAsAdmin(() => db.getDocumentByPath(path));
     if (!doc) throw new NotFoundError("document not found");
-    // Verify the requesting user is a member of the document's company.
-    // Without this check any authenticated user could obtain a signed URL for
-    // any document by knowing (or guessing) its storage path (IDOR).
-    if (doc.company_id && auth.userId) {
+    // Authorized if: admin, a member of the document's own company (the
+    // original "your own upload" rule, still correct for company-level
+    // documents like onboarding insurance/W9s - routes/onboarding.ts), OR
+    // the document belongs to a package the caller can legitimately view
+    // (public marketplace, qualified tier, or a real invite - the same
+    // canViewPackage() rule GET /packages/:id uses). Without that last
+    // clause, no bidding vendor could ever open a developer's own package
+    // specs/drawings - see db.ts's getDocuments() for the matching fix on
+    // the list side.
+    let authorized = auth.isAdmin;
+    if (!authorized && doc.company_id && auth.userId) {
       const ids = await db.userCompanyIds(auth.userId);
-      if (!ids.includes(doc.company_id) && !auth.isAdmin) {
-        return res.status(403).json({ error: "access denied" });
+      if (ids.includes(doc.company_id)) authorized = true;
+    }
+    if (!authorized && doc.package_id && auth.userId) {
+      const viewablePkg = await db.getPackage(auth.userId, doc.package_id, auth.isAdmin);
+      if (viewablePkg) authorized = true;
+    }
+    if (!authorized) {
+      return res.status(403).json({ error: "access denied" });
+    }
+    // Plan room activity tracking (competitive gap closure): log a
+    // 'document_downloaded' event when this document belongs to a
+    // package and the downloader is a genuinely different company than
+    // the package's own developer (not the developer re-opening its own
+    // upload, and never admin).
+    if (doc.package_id && auth.userId && !auth.isAdmin) {
+      const pkgRow = await q1<{ id: string; building_id: string; company_id: string }>(
+        `select p.id, p.building_id, b.company_id
+           from packages p join buildings b on b.id = p.building_id
+          where p.id = $1`,
+        [doc.package_id],
+      );
+      if (pkgRow) {
+        const ids = await db.userCompanyIds(auth.userId);
+        const viewerCompanyId = ids.find((cid) => cid !== pkgRow.company_id);
+        if (viewerCompanyId) {
+          void logDocumentDownload({
+            packageId: pkgRow.id,
+            buildingId: pkgRow.building_id,
+            developerCompanyId: pkgRow.company_id,
+            viewerCompanyId,
+            documentId: doc.id,
+          });
+        }
       }
     }
     res.json({ signedUrl: signDownloadUrl(path) });
@@ -704,6 +861,14 @@ router.get(
 export function errorHandler(err: any, req: Request, res: Response, _next: NextFunction) {
   if (err instanceof ForbiddenError) return res.status(403).json({ error: err.message });
   if (err instanceof NotFoundError) return res.status(404).json({ error: err.message });
+  // ValidationError (lib/errors.ts) and any ad-hoc `{status: <4xx>}` thrown
+  // from inside a withTransaction() callback (pool.ts) - a plain object/Error
+  // cannot `return res.status(...)` directly mid-transaction, since the
+  // rollback must still happen via the thrown error reaching withTransaction's
+  // catch block first.
+  if (typeof err?.status === "number" && err.status >= 400 && err.status < 500) {
+    return res.status(err.status).json({ error: err.message || "invalid request" });
+  }
   // Log the full stack trace (never returned to the client) for debugging.
   // eslint-disable-next-line no-console
   console.error(
@@ -716,7 +881,11 @@ export function errorHandler(err: any, req: Request, res: Response, _next: NextF
       stack: err?.stack,
     }),
   );
-  res.status(500).json({ error: "internal error" });
+  // Include the correlation id in the response (already returned as the
+  // X-Request-Id header on every response - see app.ts) so a user who
+  // screenshots or reports this error gives support something to search
+  // the server logs by, without exposing any actual error detail.
+  res.status(500).json({ error: "internal error", requestId: (req as any).correlationId });
 }
 
 export default router;

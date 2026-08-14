@@ -5,11 +5,13 @@ import { useFeatures } from '../lib/features';
 import {
   getPackage, getLineItems, addLineItem, deleteLineItem,
   getBidsForPackage, submitPricedBid, getQuestions, askQuestion, answerQuestion,
+  getPackageFinancialSummary,
 } from '../lib/db';
 import DocumentPanel from '../components/DocumentPanel';
 import FeeBadge from '../components/FeeBadge';
+import { PackageFinancialSummaryPanel } from '../components/FinancialSummaryPanel';
 import ExistingRelationshipCheckbox from '../components/ExistingRelationshipCheckbox';
-import { apiGet } from '../lib/api';
+import { apiGet, apiSend } from '../lib/api';
 import {
   getBidCredits, getVerification, subscribeToTier,
   canBid, isVerified, bidsLeftLabel, verificationLabel,
@@ -17,12 +19,39 @@ import {
   type BidCredits, type Verification,
 } from '../lib/monetization';
 
+function ComplianceBadge({ snap }: { snap: { compliant: boolean; coi: { missingTypes: string[]; expiredRequiredTypes: string[] }; licenses: { missingTypes: string[]; expiredRequiredTypes: string[] } } | null | undefined }) {
+  if (!snap) return <span className="note">-</span>;
+  if (snap.compliant) return <span className="badge b-green">Compliant</span>;
+  const gaps = [
+    ...snap.coi.missingTypes.map(t => `missing ${t.replace(/_/g, ' ')}`),
+    ...snap.coi.expiredRequiredTypes.map(t => `expired ${t.replace(/_/g, ' ')}`),
+    ...snap.licenses.missingTypes.map(t => `missing ${t}`),
+    ...snap.licenses.expiredRequiredTypes.map(t => `expired ${t}`),
+  ];
+  return (
+    <span className="badge b-amber" title={gaps.join(', ')}>
+      {gaps.length === 1 ? gaps[0] : `${gaps.length} gaps`}
+    </span>
+  );
+}
+
+function ReviewBadge({ stats }: { stats: { averageStars: number | null; count: number; reviews: Array<{ id: string; stars: number; body: string | null }> } | null | undefined }) {
+  if (!stats || stats.count === 0) return <span className="note">No reviews yet</span>;
+  const snippets = stats.reviews.filter(r => r.body).slice(0, 3).map(r => `${r.stars}★ "${r.body}"`).join(' | ');
+  return (
+    <span className="badge b-neutral" title={snippets || undefined}>
+      {'★'} {stats.averageStars?.toFixed(1)} ({stats.count})
+    </span>
+  );
+}
+
 export default function PackageDetail() {
   const { id } = useParams();
   const nav = useNavigate();
   const { company } = useAuth();
   const { isOn } = useFeatures();
   const [p, setP] = useState<any>(null);
+  const [financials, setFinancials] = useState<any>(null);
   const [items, setItems] = useState<any[]>([]);
   const [bids, setBids] = useState<any[]>([]);
   const [questions, setQuestions] = useState<any[]>([]);
@@ -37,11 +66,38 @@ export default function PackageDetail() {
   // grandfathered existing-relationship fee state (keyed by vendor_company_id)
   const [rels, setRels] = useState<Record<string, any>>({});
   const [relOpen, setRelOpen] = useState<string | null>(null);
+  const [reviewOpen, setReviewOpen] = useState<string | null>(null);
+  // vendor prequalification (competitive gap closure): per-vendor compliance
+  // snapshot against this building's COI/license requirements, owner view only
+  const [compliance, setCompliance] = useState<Record<string, { compliant: boolean; coi: { missingTypes: string[]; expiredRequiredTypes: string[] }; licenses: { missingTypes: string[]; expiredRequiredTypes: string[] } } | null>>({});
+  // bidirectional payment-behavior reputation (competitive gap closure):
+  // vendor-facing view of this developer's real payment timing, public and
+  // aggregate-only - see lib/payment-reputation.ts
+  const [paymentRep, setPaymentRep] = useState<{ paidInvoiceCount: number; averageDaysToPayment: number | null } | null>(null);
+  // plan room activity tracking (competitive gap closure): developer-only
+  // "who's engaging with this package" - see lib/package-activity.ts
+  const [activity, setActivity] = useState<{ totalViews: number; distinctViewerCompanies: number; totalDownloads: number; perVendor: Array<{ viewerCompanyId: string; viewerCompanyName: string | null; viewCount: number; downloadCount: number; lastActivityAt: string }> } | null>(null);
+  // vendor review history (P0-19's reviews system had no frontend at all
+  // until now) - per-vendor average+count, public, shown to the developer
+  // evaluating bids. reviewForm/reviewBusy/reviewMsg drive the owner-only
+  // "rate this vendor" flow on an awarded bid.
+  const [reviewStats, setReviewStats] = useState<Record<string, { averageStars: number | null; count: number; reviews: Array<{ id: string; stars: number; body: string | null }> } | null>>({});
+  const [myReviews, setMyReviews] = useState<Record<string, { id: string; stars: number; body: string | null }>>({});
+  const [reviewForm, setReviewForm] = useState<Record<string, { stars: string; body: string } | null>>({});
+  const [reviewBusy, setReviewBusy] = useState<Record<string, boolean>>({});
+  const [reviewMsg, setReviewMsg] = useState<Record<string, string>>({});
   // monetization V2: bid credits + verification gating (null = gate off)
   const [credits, setCredits] = useState<BidCredits | null>(null);
   const [verif, setVerif] = useState<Verification | null>(null);
   const [upgrading, setUpgrading] = useState(false);
   const [upgradeMsg, setUpgradeMsg] = useState('');
+
+  // Marketplace publication (owner only): visibility, scheduling, urgency.
+  const [pubForm, setPubForm] = useState<any>({});
+  const [readiness, setReadiness] = useState<{ ready: boolean; errors: string[]; warnings: string[] } | null>(null);
+  const [urgentLimit, setUrgentLimit] = useState<{ limit: number | null; used: number; remaining: number | null; allowed: boolean } | null>(null);
+  const [pubBusy, setPubBusy] = useState(false);
+  const [pubMsg, setPubMsg] = useState('');
 
   const isOwner = company && p && p.building?.company_id === company.id;
   const isVendor = company?.kind === 'vendor';
@@ -52,7 +108,8 @@ export default function PackageDetail() {
     const pk = await getPackage(id); setP(pk);
     setItems(await getLineItems(id));
     if (pk) {
-      setBids(await getBidsForPackage(id));
+      const loadedBids = await getBidsForPackage(id);
+      setBids(loadedBids);
       setQuestions(await getQuestions(id));
       // developer (owner) view: load grandfathered relationship/fee status per vendor
       const devCompanyId = pk.building?.company_id;
@@ -63,15 +120,132 @@ export default function PackageDetail() {
           (d.relationships ?? []).forEach((r) => { map[r.vendor_company_id] = r; });
           setRels(map);
         } catch { /* non-fatal */ }
+        // Vendor prequalification: for each distinct bidding vendor, fetch
+        // their compliance status against this building's COI/license
+        // requirements. Non-fatal per-vendor - a fetch failure just leaves
+        // that vendor without a badge rather than breaking the bid list.
+        const buildingId = pk.building?.id;
+        if (buildingId) {
+          const vendorIds = Array.from(new Set(loadedBids.map((b: any) => b.vendor_company_id)));
+          const entries = await Promise.all(vendorIds.map(async (vendorCompanyId) => {
+            try {
+              const snap = await apiGet<{ compliant: boolean; coi: { missingTypes: string[]; expiredRequiredTypes: string[] }; licenses: { missingTypes: string[]; expiredRequiredTypes: string[] } }>(
+                `/prequalification?vendorCompanyId=${vendorCompanyId}&buildingId=${buildingId}`,
+              );
+              return [vendorCompanyId, snap] as const;
+            } catch {
+              return [vendorCompanyId, null] as const;
+            }
+          }));
+          setCompliance(Object.fromEntries(entries));
+
+          // Vendor review history (P0-19's reviews system, no frontend
+          // until now): public average+count per bidding vendor, plus
+          // this developer's own review (if any) so the rate form can
+          // switch into edit mode instead of duplicating a POST.
+          const reviewEntries = await Promise.all(vendorIds.map(async (vendorCompanyId) => {
+            try {
+              const stats = await apiGet<{ reviews: Array<{ id: string; stars: number; body: string | null; rater_company_id: string; package_id: string }>; averageStars: number | null; count: number }>(
+                `/reviews?vendorCompanyId=${vendorCompanyId}`,
+              );
+              return [vendorCompanyId, stats] as const;
+            } catch {
+              return [vendorCompanyId, null] as const;
+            }
+          }));
+          setReviewStats(Object.fromEntries(reviewEntries.map(([id, s]) => [id, s ? { averageStars: s.averageStars, count: s.count, reviews: s.reviews } : null])));
+          const mine: Record<string, { id: string; stars: number; body: string | null }> = {};
+          for (const [vendorCompanyId, stats] of reviewEntries) {
+            const own = stats?.reviews.find((r) => r.rater_company_id === devCompanyId && r.package_id === pk.id);
+            if (own) mine[vendorCompanyId] = { id: own.id, stars: own.stars, body: own.body };
+          }
+          setMyReviews(mine);
+        }
+        try {
+          setActivity(await apiGet(`/packages/${pk.id}/activity`));
+        } catch {
+          setActivity(null);
+        }
+        setPubForm({
+          visibility: pk.visibility ?? 'public_marketplace',
+          bidDueDate: pk.deadline ? String(pk.deadline).slice(0, 10) : '',
+          questionDeadline: pk.question_deadline ? String(pk.question_deadline).slice(0, 10) : '',
+          siteVisitAt: pk.site_visit_at ? String(pk.site_visit_at).slice(0, 10) : '',
+          ndaRequired: !!pk.nda_required,
+          urgency: pk.urgency ?? 'standard',
+          urgencyReason: pk.urgency_reason ?? '',
+          publishAt: pk.publish_at ? String(pk.publish_at).slice(0, 10) : '',
+          termsAcknowledged: !!pk.terms_acknowledged_at,
+        });
+        loadPublicationExtras(pk.id, devCompanyId);
       }
     }
   }
   useEffect(() => { load(); }, [id]);
 
+  // Payment reputation: vendor-facing, public aggregate of how this
+  // developer has actually paid in the past. Fetched independently of
+  // load() since it has nothing to do with this package's own state.
+  useEffect(() => {
+    const devCompanyId = p?.building?.company_id;
+    if (!devCompanyId || !isVendor || isOwner) { setPaymentRep(null); return; }
+    apiGet<{ paidInvoiceCount: number; averageDaysToPayment: number | null }>(`/payment-reputation/${devCompanyId}`)
+      .then(setPaymentRep)
+      .catch(() => setPaymentRep(null));
+  }, [p?.building?.company_id, isVendor, isOwner]);
+
+  // Financial summary is developer-only (matches the API's own
+  // authorization) and re-fetched whenever the package or ownership
+  // resolves - the backend is the source of truth, never computed here.
+  useEffect(() => {
+    if (!id || !isOwner) { setFinancials(null); return; }
+    getPackageFinancialSummary(id).then(setFinancials).catch(() => setFinancials(null));
+  }, [id, isOwner]);
+
+  async function loadPublicationExtras(packageId: string, ownerCompanyId: string) {
+    try {
+      const [r, u] = await Promise.all([
+        apiGet<{ ready: boolean; errors: string[]; warnings: string[] }>(`/marketplace/packages/${packageId}/readiness`),
+        apiGet<{ limit: number | null; used: number; remaining: number | null; allowed: boolean }>(`/marketplace/urgent-limit?companyId=${ownerCompanyId}`),
+      ]);
+      setReadiness(r);
+      setUrgentLimit(u);
+    } catch { /* non-fatal */ }
+  }
+
+  async function savePublication() {
+    if (!id) return;
+    setPubBusy(true); setPubMsg('');
+    try {
+      await apiSend('PATCH', `/marketplace/packages/${id}/publication`, pubForm);
+      setPubMsg('Saved.');
+      await load();
+    } catch (e: any) {
+      setPubMsg(e.message ?? 'Could not save.');
+    } finally {
+      setPubBusy(false);
+    }
+  }
+
+  async function publishPackage() {
+    if (!id) return;
+    setPubBusy(true); setPubMsg('');
+    try {
+      await apiSend('PATCH', `/marketplace/packages/${id}/publication`, pubForm);
+      const r = await apiSend<{ package: any; scheduled: boolean }>('POST', `/marketplace/packages/${id}/publish`, {});
+      setPubMsg(r.scheduled ? `Scheduled to publish on ${pubForm.publishAt}.` : 'Published to the marketplace.');
+      await load();
+    } catch (e: any) {
+      setPubMsg(e.message ?? 'Could not publish - see the readiness checklist above.');
+    } finally {
+      setPubBusy(false);
+    }
+  }
+
   // Vendor-only: load bid credits + verification status (tolerate absence).
   async function loadEntitlements() {
-    if (company?.kind !== 'vendor') return;
-    const [c, v] = await Promise.all([getBidCredits(), getVerification()]);
+    if (company?.kind !== 'vendor' || !company.id) return;
+    const [c, v] = await Promise.all([getBidCredits(company.id), getVerification(company.id)]);
     setCredits(c);
     setVerif(v);
   }
@@ -120,6 +294,37 @@ export default function PackageDetail() {
     const a = window.prompt('Your answer:'); if (a) { await answerQuestion(qid, a); setQuestions(await getQuestions(id!)); }
   }
 
+  async function submitReview(vendorCompanyId: string) {
+    const form = reviewForm[vendorCompanyId];
+    const starsNum = form ? Number(form.stars) : NaN;
+    if (!form || !Number.isInteger(starsNum) || starsNum < 1 || starsNum > 5) {
+      setReviewMsg(prev => ({ ...prev, [vendorCompanyId]: 'Pick a star rating from 1 to 5.' }));
+      return;
+    }
+    setReviewBusy(prev => ({ ...prev, [vendorCompanyId]: true }));
+    setReviewMsg(prev => ({ ...prev, [vendorCompanyId]: '' }));
+    try {
+      const existing = myReviews[vendorCompanyId];
+      const payload = { packageId: id, vendorCompanyId, stars: starsNum, body: form.body || undefined };
+      const res = existing
+        ? await apiSend('PATCH', `/reviews/${existing.id}`, { stars: starsNum, body: form.body || undefined })
+        : await apiSend('POST', '/reviews', payload);
+      const review = (res as any).review;
+      setMyReviews(prev => ({ ...prev, [vendorCompanyId]: { id: review.id, stars: review.stars, body: review.body } }));
+      setReviewForm(prev => ({ ...prev, [vendorCompanyId]: null }));
+      setReviewMsg(prev => ({ ...prev, [vendorCompanyId]: existing ? 'Review updated.' : 'Review submitted.' }));
+      // Refresh this vendor's public average so it's correct without a full reload.
+      try {
+        const stats = await apiGet<{ reviews: any[]; averageStars: number | null; count: number }>(`/reviews?vendorCompanyId=${vendorCompanyId}`);
+        setReviewStats(prev => ({ ...prev, [vendorCompanyId]: stats }));
+      } catch { /* non-fatal */ }
+    } catch (e: any) {
+      setReviewMsg(prev => ({ ...prev, [vendorCompanyId]: e?.message ?? 'Could not submit review - the purchase order for this vendor may not be fulfilled yet.' }));
+    } finally {
+      setReviewBusy(prev => ({ ...prev, [vendorCompanyId]: false }));
+    }
+  }
+
   if (!p) return <div className="note">Loading…</div>;
 
   return (
@@ -128,7 +333,7 @@ export default function PackageDetail() {
         <div>
           <a className="note" style={{ cursor: 'pointer' }} onClick={() => nav(isOwner ? '/building/' + p.building.id : '/search')}>← Back</a>
           <h1>{p.category}</h1>
-          <div className="sub">{p.building?.name} · {p.building?.location ?? ''} · <span className="badge b-neutral">{p.status}</span>{p.deadline ? ` · due ${p.deadline}` : ''}</div>
+          <div className="sub">{p.building?.name} · {p.building?.location ?? ''} · <span className="badge b-neutral">{p.status}</span>{p.deadline ? ` · due ${new Date(p.deadline).toLocaleDateString()}` : ''}</div>
         </div>
         {isOwner && (
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -140,6 +345,105 @@ export default function PackageDetail() {
           </div>
         )}
       </div>
+
+      {isOwner && financials && <PackageFinancialSummaryPanel summary={financials} />}
+
+      {/* Marketplace publication (owner only) */}
+      {isOwner && (
+        <>
+          <div className="sectitle">Marketplace publication</div>
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+              <span className="badge b-neutral">{p.status}</span>
+              <span className="badge b-neutral">{(p.visibility ?? 'public_marketplace').replace(/_/g, ' ')}</span>
+              {p.urgency && p.urgency !== 'standard' && <span className="badge b-amber">{p.urgency}</span>}
+              {p.published_at && <span className="badge b-green">Published {new Date(p.published_at).toLocaleDateString()}</span>}
+              {!p.published_at && p.publish_at && <span className="badge b-amber">Scheduled {new Date(p.publish_at).toLocaleDateString()}</span>}
+            </div>
+
+            {readiness && (
+              <div style={{ marginBottom: 10 }}>
+                {readiness.errors.length > 0 && (
+                  <div className="err" style={{ marginBottom: 6 }}>
+                    <strong>Not ready to publish:</strong>
+                    <ul style={{ margin: '4px 0 0 18px' }}>{readiness.errors.map((e, i) => <li key={i}>{e}</li>)}</ul>
+                  </div>
+                )}
+                {readiness.warnings.length > 0 && (
+                  <div className="note" style={{ marginBottom: 6 }}>
+                    <strong>Warnings:</strong>
+                    <ul style={{ margin: '4px 0 0 18px' }}>{readiness.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="two">
+              <div className="field"><label>Visibility</label>
+                <select value={pubForm.visibility ?? ''} onChange={(e) => setPubForm({ ...pubForm, visibility: e.target.value })}>
+                  {['private_draft', 'organization_only', 'selected_team', 'invite_only', 'preferred_vendors',
+                    'qualified_vendors', 'divini_verified', 'public_marketplace', 'private_group'].map((v) => (
+                    <option key={v} value={v}>{v.replace(/_/g, ' ')}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="field"><label>Urgency</label>
+                <select value={pubForm.urgency ?? 'standard'} onChange={(e) => setPubForm({ ...pubForm, urgency: e.target.value })}>
+                  {['standard', 'priority', 'urgent', 'emergency'].map((u) => <option key={u} value={u}>{u}</option>)}
+                </select>
+              </div>
+            </div>
+            {pubForm.urgency && pubForm.urgency !== 'standard' && (
+              <div className="field"><label>Reason for urgency</label>
+                <input value={pubForm.urgencyReason ?? ''} onChange={(e) => setPubForm({ ...pubForm, urgencyReason: e.target.value })} />
+              </div>
+            )}
+            {urgentLimit && (
+              <div className="note" style={{ marginBottom: 10 }}>
+                Urgent listings this month: {urgentLimit.used}{urgentLimit.limit === null ? ' (unlimited)' : ` / ${urgentLimit.limit}`}
+                {!urgentLimit.allowed && <span style={{ color: 'var(--red)' }}> - limit reached, upgrade your plan or wait until next month</span>}
+              </div>
+            )}
+
+            <div className="two">
+              <div className="field"><label>Bid due date</label>
+                <input type="date" value={pubForm.bidDueDate ?? ''} onChange={(e) => setPubForm({ ...pubForm, bidDueDate: e.target.value })} />
+              </div>
+              <div className="field"><label>Question deadline</label>
+                <input type="date" value={pubForm.questionDeadline ?? ''} onChange={(e) => setPubForm({ ...pubForm, questionDeadline: e.target.value })} />
+              </div>
+            </div>
+            <div className="two">
+              <div className="field"><label>Site visit date</label>
+                <input type="date" value={pubForm.siteVisitAt ?? ''} onChange={(e) => setPubForm({ ...pubForm, siteVisitAt: e.target.value })} />
+              </div>
+              <div className="field"><label>Schedule publication for (optional)</label>
+                <input type="date" value={pubForm.publishAt ?? ''} onChange={(e) => setPubForm({ ...pubForm, publishAt: e.target.value })} />
+              </div>
+            </div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+              <input type="checkbox" checked={!!pubForm.ndaRequired} onChange={(e) => setPubForm({ ...pubForm, ndaRequired: e.target.checked })} />
+              <span className="note">Require an NDA before vendors can access full details</span>
+            </label>
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginBottom: 10 }}>
+              <input type="checkbox" checked={!!pubForm.termsAcknowledged} onChange={(e) => setPubForm({ ...pubForm, termsAcknowledged: e.target.checked })} />
+              <span className="note">
+                I have reviewed the project information, bid scope, attached documents, dates, budget visibility,
+                and vendor requirements. I understand that AI-generated information may be incomplete or inaccurate
+                and that I am responsible for confirming the bidding information.
+              </span>
+            </label>
+
+            {pubMsg && <div className="note" style={{ marginBottom: 10 }}>{pubMsg}</div>}
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button className="btn" disabled={pubBusy} onClick={savePublication}>Save</button>
+              <button className="btn primary" disabled={pubBusy} onClick={publishPackage}>
+                {pubForm.publishAt ? 'Save & schedule publication' : 'Publish to marketplace'}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* Documents / CAD */}
       {isOn('cad_documents') && (
@@ -183,6 +487,15 @@ export default function PackageDetail() {
             </form>
           )}
         </>
+      )}
+
+      {/* Vendor: payment reputation of this developer, public and factual */}
+      {isVendor && !isOwner && paymentRep && (
+        <div className="note" style={{ marginBottom: 14 }}>
+          {paymentRep.paidInvoiceCount > 0 && paymentRep.averageDaysToPayment != null
+            ? `This developer has paid ${paymentRep.paidInvoiceCount} invoice${paymentRep.paidInvoiceCount === 1 ? '' : 's'} on Divini, averaging ${paymentRep.averageDaysToPayment} day${paymentRep.averageDaysToPayment === 1 ? '' : 's'} from invoice submission to payment.`
+            : 'This developer has no paid-invoice history on Divini yet.'}
+        </div>
       )}
 
       {/* Vendor: submit bid */}
@@ -250,17 +563,40 @@ export default function PackageDetail() {
         </>
       )}
 
+      {/* Owner: plan room activity - who's engaging with this package */}
+      {isOwner && activity && activity.distinctViewerCompanies > 0 && (
+        <>
+          <div className="sectitle">Plan room activity</div>
+          <div className="card" style={{ padding: 0, marginBottom: 18 }}>
+            <table>
+              <thead><tr><th>Vendor</th><th>Views</th><th>Downloads</th><th>Last activity</th></tr></thead>
+              <tbody>
+                {activity.perVendor.map(v => (
+                  <tr key={v.viewerCompanyId}>
+                    <td><strong>{v.viewerCompanyName ?? v.viewerCompanyId}</strong></td>
+                    <td>{v.viewCount}</td>
+                    <td>{v.downloadCount}</td>
+                    <td>{new Date(v.lastActivityAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
       {/* Owner: bids received */}
       {isOwner && (
         <>
           <div className="sectitle">Bids received ({bids.length})</div>
           <div className="card" style={{ padding: 0 }}>
             <table>
-              <thead><tr><th>Vendor</th><th>Price</th><th>Timeline</th><th>Status</th><th>Fee rule</th><th></th></tr></thead>
+              <thead><tr><th>Vendor</th><th>Price</th><th>Timeline</th><th>Status</th><th>Compliance</th><th>Reviews</th><th>Fee rule</th><th></th></tr></thead>
               <tbody>
-                {bids.length === 0 ? <tr><td colSpan={6} className="note" style={{ padding: 14 }}>No bids yet.</td></tr>
+                {bids.length === 0 ? <tr><td colSpan={8} className="note" style={{ padding: 14 }}>No bids yet.</td></tr>
                   : bids.map(b => {
                     const rel = rels[b.vendor_company_id];
+                    const myReview = myReviews[b.vendor_company_id];
                     return (
                       <>
                         <tr key={b.id}>
@@ -268,19 +604,32 @@ export default function PackageDetail() {
                           <td>${Number(b.price).toLocaleString()}</td>
                           <td>{b.days} days</td>
                           <td><span className="badge b-neutral">{b.status}</span></td>
+                          <td><ComplianceBadge snap={compliance[b.vendor_company_id]} /></td>
+                          <td><ReviewBadge stats={reviewStats[b.vendor_company_id]} /></td>
                           <td><FeeBadge fee={rel?.fee} relationship={rel} audience="developer" /></td>
-                          <td>
+                          <td style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                             {!rel && (
                               <a className="note" style={{ cursor: 'pointer', color: 'var(--emerald)' }}
                                  onClick={() => setRelOpen(relOpen === b.vendor_company_id ? null : b.vendor_company_id)}>
                                 {relOpen === b.vendor_company_id ? 'Cancel' : 'Mark existing relationship'}
                               </a>
                             )}
+                            {b.awarded && (
+                              <a className="note" style={{ cursor: 'pointer', color: 'var(--emerald)' }}
+                                 onClick={() => {
+                                   setReviewOpen(reviewOpen === b.vendor_company_id ? null : b.vendor_company_id);
+                                   if (!reviewForm[b.vendor_company_id]) {
+                                     setReviewForm(prev => ({ ...prev, [b.vendor_company_id]: { stars: String(myReview?.stars ?? 5), body: myReview?.body ?? '' } }));
+                                   }
+                                 }}>
+                                {reviewOpen === b.vendor_company_id ? 'Cancel' : myReview ? 'Edit review' : 'Rate vendor'}
+                              </a>
+                            )}
                           </td>
                         </tr>
                         {relOpen === b.vendor_company_id && !rel && (
                           <tr key={b.id + '-rel'}>
-                            <td colSpan={6}>
+                            <td colSpan={8}>
                               <ExistingRelationshipCheckbox
                                 developerCompanyId={p.building.company_id}
                                 vendorCompanyId={b.vendor_company_id}
@@ -288,6 +637,39 @@ export default function PackageDetail() {
                                 projectId={p.building.id}
                                 onConfirmed={() => { setRelOpen(null); load(); }}
                               />
+                            </td>
+                          </tr>
+                        )}
+                        {reviewOpen === b.vendor_company_id && b.awarded && (
+                          <tr key={b.id + '-review'}>
+                            <td colSpan={8}>
+                              <div className="card" style={{ background: 'var(--ivory)' }}>
+                                <div className="note" style={{ marginBottom: 8, fontWeight: 600 }}>
+                                  {myReview ? 'Edit your review of' : 'Rate'} {b.vendor?.name ?? 'this vendor'}
+                                </div>
+                                <div className="field" style={{ maxWidth: 160 }}>
+                                  <label>Stars (1-5)</label>
+                                  <select
+                                    value={reviewForm[b.vendor_company_id]?.stars ?? '5'}
+                                    onChange={e => setReviewForm(prev => ({ ...prev, [b.vendor_company_id]: { ...prev[b.vendor_company_id]!, stars: e.target.value } }))}
+                                  >
+                                    {[5, 4, 3, 2, 1].map(n => <option key={n} value={n}>{n} star{n === 1 ? '' : 's'}</option>)}
+                                  </select>
+                                </div>
+                                <div className="field">
+                                  <label>Comments (optional)</label>
+                                  <textarea
+                                    rows={3}
+                                    value={reviewForm[b.vendor_company_id]?.body ?? ''}
+                                    onChange={e => setReviewForm(prev => ({ ...prev, [b.vendor_company_id]: { ...prev[b.vendor_company_id]!, body: e.target.value } }))}
+                                    placeholder="How did this vendor perform on this project?"
+                                  />
+                                </div>
+                                {reviewMsg[b.vendor_company_id] && <div className="note" style={{ marginBottom: 8 }}>{reviewMsg[b.vendor_company_id]}</div>}
+                                <button className="btn primary" disabled={!!reviewBusy[b.vendor_company_id]} onClick={() => submitReview(b.vendor_company_id)}>
+                                  {reviewBusy[b.vendor_company_id] ? 'Saving...' : myReview ? 'Save changes' : 'Submit review'}
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         )}

@@ -8,10 +8,13 @@
  * revenue collected by hand.
  *
  *   resolveAndRecordFee()        -> resolve the correct fee via resolveContextFee
- *                                   (grandfathered 2% > matrix > standard), then
- *                                   insert/update one platform_revenue row at
- *                                   status 'accrued'. Idempotent per payment
- *                                   authorization id.
+ *                                   (grandfathered 2% > matrix > standard), CAP
+ *                                   it, then insert/update one platform_revenue
+ *                                   row at status 'accrued'. Idempotent per
+ *                                   (payment authorization id, source type), so
+ *                                   the platform fee and the platform
+ *                                   infrastructure fee on the same authorization
+ *                                   each get their own row.
  *   maybeRecordReferralCommission() -> if the referred (developer) company was
  *                                   brought in by an active referral partner,
  *                                   record a pending profit-based commission
@@ -20,10 +23,14 @@
  *
  * Reuses resolveContextFee (fee-matrix.ts), which itself reuses getByPair +
  * resolveFee, so the protected grandfathered rate is honored automatically.
+ * This is the ONLY place that writes a fee amount to the revenue ledger: no
+ * fee percentage or cap is hard-coded here, everything comes from
+ * resolveContextFee (database-driven, with a config fallback).
  * Zero em dashes by convention. Integer cents throughout.
  */
-import { q, q1 } from "../pool.js";
+import { q1 } from "../pool.js";
 import { resolveContextFee } from "./fee-matrix.js";
+import { runAsAdmin } from "./requestContext.js";
 
 function num(v: number | string | null | undefined, fallback = 0): number {
   if (v == null) return fallback;
@@ -39,7 +46,7 @@ export interface ResolveAndRecordFeeInput {
   paymentAuthorizationId?: string | null;
   programId?: string | null;
   ruleType?: string | null;
-  /** 'procurement_fee' (default) | 'capital_introduction' | 'subscription' | 'manual' */
+  /** 'procurement_fee' (default) | 'infrastructure_fee' | 'subscription' | 'manual' */
   sourceType?: string | null;
   actorUserId?: string | null;
   actorEmail?: string | null;
@@ -48,6 +55,9 @@ export interface ResolveAndRecordFeeInput {
 export interface ResolveAndRecordFeeResult {
   feePercentage: number | null;
   feeCents: number;
+  capCents: number | null;
+  capped: boolean;
+  grandfathered: boolean;
   feeSource: string;
   payerType: string;
   revenueId: string | null;
@@ -55,7 +65,7 @@ export interface ResolveAndRecordFeeResult {
 
 const SOURCE_TYPES = new Set([
   "procurement_fee",
-  "capital_introduction",
+  "infrastructure_fee",
   "subscription",
   "manual",
 ]);
@@ -63,11 +73,15 @@ const SOURCE_TYPES = new Set([
 /**
  * Resolve the correct fee for a developer/vendor/base context and RECORD it as
  * an accrued platform_revenue row. The fee is whatever resolveContextFee
- * returns (grandfathered 2% pair wins, else the most specific matrix rule, else
- * the platform standard). fee_cents is round(base * pct/100), or flatCents when
- * the resolved rule is a flat fee. Idempotent per paymentAuthorizationId: if a
- * row already exists for that authorization, it is UPDATED in place rather than
- * duplicated. Never moves money; status is always 'accrued' on write.
+ * returns (grandfathered 2% pair wins for standard_platform, else the most
+ * specific matrix rule, else the config fallback). fee_cents is
+ * round(base * pct/100) CAPPED at capCents (when set), or flatCents when the
+ * resolved rule is a flat fee. Idempotent per (paymentAuthorizationId,
+ * sourceType): if a row already exists for that authorization + fee type, it
+ * is UPDATED in place rather than duplicated - this lets the platform fee
+ * (source 'procurement_fee') and the platform infrastructure fee (source
+ * 'infrastructure_fee') coexist as two rows on the same authorization. Never
+ * moves money; status is always 'accrued' on write.
  */
 export async function resolveAndRecordFee(
   input: ResolveAndRecordFeeInput,
@@ -85,27 +99,36 @@ export async function resolveAndRecordFee(
 
   const pct = resolved.percentage;
   const flatCents = resolved.flatCents;
+  const capCents = resolved.capCents != null && resolved.capCents > 0 ? resolved.capCents : null;
+  const isFlat = flatCents != null && (pct == null || flatCents > 0);
   let feeCents: number;
-  if (flatCents != null && (pct == null || flatCents > 0)) {
-    // Flat-fee rule: accrue the flat amount.
+  let capped = false;
+  if (isFlat) {
+    // Flat-fee rule: accrue the flat amount (caps do not apply to flat fees).
     feeCents = Math.max(0, Math.round(num(flatCents)));
   } else {
-    feeCents = Math.max(0, Math.round((baseCents * num(pct)) / 100));
+    const uncapped = Math.max(0, Math.round((baseCents * num(pct)) / 100));
+    feeCents = capCents != null ? Math.min(uncapped, capCents) : uncapped;
+    capped = capCents != null && uncapped > capCents;
   }
 
   const result: ResolveAndRecordFeeResult = {
     feePercentage: pct,
     feeCents,
+    capCents,
+    capped,
+    grandfathered: resolved.source === "grandfathered_2_percent",
     feeSource: resolved.source,
     payerType: resolved.payer_type,
     revenueId: null,
   };
 
-  // Idempotent per payment authorization: update the existing accrual if any.
+  // Idempotent per (payment authorization, fee type): update the existing
+  // accrual if any, so the platform fee and infrastructure fee never collide.
   if (input.paymentAuthorizationId) {
     const existing = await q1<{ id: string; status: string }>(
-      `select id, status from platform_revenue where payment_authorization_id = $1`,
-      [input.paymentAuthorizationId],
+      `select id, status from platform_revenue where payment_authorization_id = $1 and source_type = $2`,
+      [input.paymentAuthorizationId, sourceType],
     );
     if (existing) {
       // Only refresh the fee math + context while the row is still 'accrued'.
@@ -113,20 +136,18 @@ export async function resolveAndRecordFee(
       if (existing.status === "accrued") {
         const updated = await q1<{ id: string }>(
           `update platform_revenue set
-             source_type = $1,
-             developer_company_id = $2,
-             vendor_company_id = $3,
-             purchase_order_id = $4,
-             program_id = $5,
-             base_cents = $6,
-             fee_percentage = $7,
-             fee_cents = $8,
-             fee_source = $9,
-             payer_type = $10,
+             developer_company_id = $1,
+             vendor_company_id = $2,
+             purchase_order_id = $3,
+             program_id = $4,
+             base_cents = $5,
+             fee_percentage = $6,
+             fee_cents = $7,
+             fee_source = $8,
+             payer_type = $9,
              updated_at = now()
-           where id = $11 returning id`,
+           where id = $10 returning id`,
           [
-            sourceType,
             input.developerCompanyId ?? null,
             input.vendorCompanyId ?? null,
             input.purchaseOrderId ?? null,
@@ -181,6 +202,17 @@ export interface MaybeReferralInput {
   /** partner_commissions.source: subscription | transaction | setup | enterprise | manual_adjustment */
   source?: string | null;
   actorEmail?: string | null;
+  /**
+   * The platform_revenue row this commission is attributable to, when known
+   * (award-workflow.ts's resolveAndRecordFee() call already returns one).
+   * Recorded on partner_commissions.platform_revenue_id and enforced unique
+   * (see schema-referral-commission-dedup.sql) so calling this twice for the
+   * same revenue event can never create two commission rows, and so the
+   * Stripe-rail payout_instructions (which key off the same platform_revenue
+   * row via source_revenue_id) can be cross-checked against this one before
+   * either rail is marked paid - see payouts.ts / partner-rev.ts.
+   */
+  platformRevenueId?: string | null;
 }
 
 export interface MaybeReferralResult {
@@ -225,30 +257,39 @@ export async function maybeRecordReferralCommission(
     // via a user_referrals row whose code matches a partner referral_code and
     // whose referred_email belongs to a member of this company. Prefer a direct
     // company link; fall back to the email-based attribution.
-    const partner = await q1<{
-      id: string;
-      commission_type: string | null;
-      revenue_share_pct: number | string | null;
-      flat_fee_cents: number | string | null;
-      status: string | null;
-    }>(
-      `select rp.id, rp.commission_type, rp.revenue_share_pct, rp.flat_fee_cents, rp.status
-         from referral_partners rp
-        where rp.status = 'active'
-          and (
-            rp.company_id = $1
-            or exists (
-              select 1
-                from user_referrals ur
-                join company_members cm on lower(cm_user.email) = lower(ur.referred_email)
-                join users cm_user on cm_user.id = cm.user_id
-               where ur.code = rp.referral_code
-                 and cm.company_id = $1
+    // Runs admin-equivalent: this attribution lookup must see every member of
+    // referredCompanyId, not just the acting user's own row - company_members'
+    // RLS policy only allows "your own row" (see db/schema-rls.sql's comment
+    // on why), which would silently zero out referral attribution for any
+    // award made by a non-admin buyer (the normal case - this route is
+    // requireUser, not requireAdmin). Attribution is a revenue-accounting
+    // read, not a data exposure - it never returns member rows to the caller.
+    const partner = await runAsAdmin(() =>
+      q1<{
+        id: string;
+        commission_type: string | null;
+        revenue_share_pct: number | string | null;
+        flat_fee_cents: number | string | null;
+        status: string | null;
+      }>(
+        `select rp.id, rp.commission_type, rp.revenue_share_pct, rp.flat_fee_cents, rp.status
+           from referral_partners rp
+          where rp.status = 'active'
+            and (
+              rp.company_id = $1
+              or exists (
+                select 1
+                  from user_referrals ur
+                  join company_members cm on cm.company_id = $1
+                  join users cm_user on cm_user.id = cm.user_id
+                 where ur.code = rp.referral_code
+                   and lower(cm_user.email) = lower(ur.referred_email)
+              )
             )
-          )
-        order by case when rp.company_id = $1 then 0 else 1 end
-        limit 1`,
-      [referredCompanyId],
+          order by case when rp.company_id = $1 then 0 else 1 end
+          limit 1`,
+        [referredCompanyId],
+      ),
     );
 
     if (!partner) return { created: false, commissionCents: 0, reason: "no_partner" };
@@ -260,30 +301,74 @@ export async function maybeRecordReferralCommission(
     const commissionCents =
       type === "flat" ? flat : Math.max(0, Math.round((netProfit * sharePct) / 100));
 
-    const row = await q1<{ id: string }>(
-      `insert into partner_commissions
-         (partner_id, referred_company_id, source, gross_cents, platform_fee_cents,
-          processing_cost_cents, net_profit_cents, commission_cents, status)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,'pending') returning id`,
-      [
-        partner.id,
-        referredCompanyId,
-        source,
-        platformFee, // gross reference: the platform fee that triggered this
-        platformFee,
-        processingCost,
-        netProfit,
-        commissionCents,
-      ],
-    );
+    const platformRevenueId = input.platformRevenueId ?? null;
+
+    // Idempotent when the caller knows the platform_revenue row this
+    // commission is for: a second call for the same revenue event (e.g. a
+    // retried request) hits the partial unique index and creates nothing
+    // new, rather than a second, duplicate commission.
+    const row = platformRevenueId
+      ? await q1<{ id: string }>(
+          `insert into partner_commissions
+             (partner_id, referred_company_id, source, gross_cents, platform_fee_cents,
+              processing_cost_cents, net_profit_cents, commission_cents, status, platform_revenue_id)
+           values ($1,$2,$3,$4,$5,$6,$7,$8,'pending',$9)
+           on conflict (platform_revenue_id) where platform_revenue_id is not null do nothing
+           returning id`,
+          [
+            partner.id,
+            referredCompanyId,
+            source,
+            platformFee,
+            platformFee,
+            processingCost,
+            netProfit,
+            commissionCents,
+            platformRevenueId,
+          ],
+        )
+      : await q1<{ id: string }>(
+          `insert into partner_commissions
+             (partner_id, referred_company_id, source, gross_cents, platform_fee_cents,
+              processing_cost_cents, net_profit_cents, commission_cents, status)
+           values ($1,$2,$3,$4,$5,$6,$7,$8,'pending') returning id`,
+          [
+            partner.id,
+            referredCompanyId,
+            source,
+            platformFee, // gross reference: the platform fee that triggered this
+            platformFee,
+            processingCost,
+            netProfit,
+            commissionCents,
+          ],
+        );
+
+    if (!row && platformRevenueId) {
+      return { created: false, commissionCents: 0, partnerId: partner.id, reason: "already_recorded" };
+    }
 
     return {
       created: !!row,
       commissionCents,
       partnerId: partner.id,
     };
-  } catch {
-    // Best effort: never throw into the caller.
+  } catch (e) {
+    // Best effort: never throw into the caller (the award/payment flow
+    // this is called from must never fail because referral attribution
+    // did). But this exact silence is what hid a real bug for a long time
+    // - the email-attribution fallback query's join order was broken
+    // (missing FROM-clause entry) and threw on EVERY invocation for a
+    // referral partner with no direct company_id link, silently zeroing
+    // out that partner's commissions with no trace anywhere. Discovered
+    // only by temporarily adding debug logging during Phase 0 testing.
+    // Never again: this is a revenue-integrity failure, not a routine
+    // best-effort miss, and it now always leaves a structured diagnostic.
+    console.error("[monetization] maybeRecordReferralCommission failed, no commission recorded", {
+      referredCompanyId: input.referredCompanyId ?? null,
+      source: input.source ?? null,
+      error: e instanceof Error ? e.message : String(e),
+    });
     return { created: false, commissionCents: 0, reason: "error" };
   }
 }

@@ -10,10 +10,10 @@ import morgan from "morgan";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { authMiddleware } from "./auth.js";
+import { authMiddleware, requireApiKeyWriteScope } from "./auth.js";
 import router, { errorHandler } from "./routes.js";
 import { getAllowedOrigins, IS_PROD, PUBLIC_APP_URL } from "./config.js";
-import { authRateLimit } from "./lib/rateLimit.js";
+import { authRateLimit, apiRateLimit, apiKeyRateLimit } from "./lib/rateLimit.js";
 
 const app: Express = express();
 app.set("trust proxy", 1);
@@ -30,11 +30,18 @@ declare global {
     }
   }
 }
-app.use((req: Request, _res: Response, next: NextFunction) => {
+app.use((req: Request, res: Response, next: NextFunction) => {
   req.correlationId =
     (req.headers["x-request-id"] as string | undefined) ||
     (req.headers["x-correlation-id"] as string | undefined) ||
     randomUUID();
+  // ALFY2 Section 14 (observability/support): until this pass, the
+  // correlation ID only ever reached the server's own logs - a user
+  // reporting "the app broke" via email/support had nothing to give
+  // support that could be searched against the actual log entry.
+  // Echoing it back as a response header on every request lets support
+  // (or a browser devtools Network tab) recover it after the fact.
+  res.setHeader("X-Request-Id", req.correlationId);
   next();
 });
 
@@ -55,20 +62,14 @@ app.use(
         defaultSrc: ["'self'"],
         // Stripe.js must be loaded from js.stripe.com (their CDN requirement).
         scriptSrc: ["'self'", "https://js.stripe.com"],
-        styleSrc: ["'self'", "'unsafe-inline'"], // allow CSS-in-JS / inline styles from React
+        // 'unsafe-inline' for CSS-in-JS / inline styles from React; the Google
+        // Fonts stylesheet (index.html) is loaded from googleapis.com, and its
+        // @font-face rules point at gstatic.com for the actual font files.
+        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
         imgSrc: ["'self'", "data:", "blob:"],
-        fontSrc: ["'self'"],
-        // Allow calls to the Supabase project URL (auth, storage, realtime).
-        // VITE_SUPABASE_URL is available server-side only as SUPABASE_URL.
-        // Without this the browser blocks all fetch() to *.supabase.co.
+        fontSrc: ["'self'", "https://fonts.gstatic.com"],
         connectSrc: [
           "'self'",
-          ...(process.env.VITE_SUPABASE_URL ? [process.env.VITE_SUPABASE_URL] : []),
-          ...(process.env.SUPABASE_URL ? [process.env.SUPABASE_URL] : []),
-          // Allow wss:// for Supabase Realtime (same host, different scheme).
-          ...(process.env.VITE_SUPABASE_URL
-            ? [process.env.VITE_SUPABASE_URL.replace(/^https?:/, "wss:")]
-            : []),
           // Stripe.js makes XHR/fetch calls to api.stripe.com for payment
           // tokenisation and 3DS challenges.
           "https://api.stripe.com",
@@ -126,13 +127,30 @@ app.use(
 app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 
-// Native session verification - stashes verified claims on req.
+// Native session verification - stashes verified claims on req. Also
+// authenticates developer-platform API keys (Authorization: Bearer
+// dvp_live_...) as their creating user - see auth.ts's authMiddleware().
 app.use(authMiddleware());
+
+// Developer API platform: a read-only API key may only make safe
+// (GET/HEAD/OPTIONS) requests platform-wide - see auth.ts's
+// requireApiKeyWriteScope() doc comment. No-op for session-cookie
+// requests (apiKey is only ever set when a key authenticated the call).
+app.use(requireApiKeyWriteScope);
 
 // Tight per-IP rate limit on the auth surface (login/register/forgot/resend/
 // verify) to blunt credential-stuffing and email-bomb abuse. Mounted before the
 // router so it covers every /api/auth/* route.
 app.use("/api/auth", authRateLimit);
+
+// General backstop for every other /api route (ALFY2 Section 07) - see
+// apiRateLimit's own doc comment. Mounted after the tighter auth-specific
+// limiter above so /api/auth/* is still governed by its own stricter rule.
+app.use("/api", apiRateLimit);
+
+// Developer API platform: additional per-key limit, on top of the
+// general backstop above - see apiKeyRateLimit's own doc comment.
+app.use("/api", apiKeyRateLimit());
 
 // API
 app.use("/api", router);

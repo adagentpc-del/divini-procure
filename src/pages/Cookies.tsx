@@ -11,12 +11,12 @@ export default function Cookies() {
       </div>
 
       <h1 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 36, color: '#1f3d31', marginBottom: 6 }}>Cookie Policy</h1>
-      <div style={{ color: '#6b7a72', marginBottom: 28 }}>Effective July 1, 2026</div>
+      <div style={{ color: '#5c6b62', marginBottom: 28 }}>Effective July 1, 2026</div>
 
       <p>
         This Cookie Policy explains how Divini Group ("Divini Procure," "we," "us") uses cookies and
         similar technologies on the Divini Procure websites and applications. It should be read
-        together with our <Link to="/privacy" style={{ color: '#1f6f50' }}>Privacy Policy</Link>.
+        together with our <Link to="/privacy" style={{ color: '#1f6f50', textDecoration: 'underline' }}>Privacy Policy</Link>.
       </p>
 
       <h2 style={h2}>What these technologies are</h2>
@@ -50,9 +50,9 @@ export default function Cookies() {
       </p>
 
       <h2 style={h2}>Contact</h2>
-      <p>Questions about this policy: <a href="mailto:support@diviniprocure.com" style={{ color: '#1f6f50' }}>support@diviniprocure.com</a>.</p>
+      <p>Questions about this policy: <a href="mailto:support@diviniprocure.com" style={{ color: '#1f6f50', textDecoration: 'underline' }}>support@diviniprocure.com</a>.</p>
 
-      <p style={{ marginTop: 28 }}><Link to="/" style={{ color: '#1f6f50' }}>&larr; Back to Divini Procure</Link></p>
+      <p style={{ marginTop: 28 }}><Link to="/" style={{ color: '#1f6f50', textDecoration: 'underline' }}>&larr; Back to Divini Procure</Link></p>
     </main>
   );
 }
