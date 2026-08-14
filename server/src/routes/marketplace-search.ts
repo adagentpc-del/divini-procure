@@ -17,6 +17,7 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { getAuth, requireUser } from "../auth.js";
 import { q, q1 } from "../pool.js";
 import { allowedBrowseVisibilities } from "../lib/marketplace-visibility.js";
+import { TtlCache, hashInput } from "../lib/cache.js";
 
 const h =
   (fn: (req: Request, res: Response) => Promise<unknown>) =>
@@ -24,6 +25,25 @@ const h =
     fn(req, res).catch(next);
 
 const router = Router();
+
+interface SearchResult {
+  results: unknown[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+// Short TTL cache: absorbs repeated/duplicate identical searches under load
+// (a debounced search box firing more than once, several users searching
+// the same common term at the same time) without risking meaningfully
+// stale listings - 30 seconds is short enough that a package closing or a
+// new one publishing is never hidden/shown wrong for long. The cache key
+// MUST include `allowed` (the caller's own visibility scope from
+// allowedBrowseVisibilities()), not just the raw query params - two users
+// with different visibility permissions must never share a cache entry, or
+// this would become a cross-tenant data leak.
+const searchCache = new TtlCache<SearchResult>();
+const SEARCH_TTL_MS = 30_000;
 
 router.get(
   "/marketplace/search",
@@ -59,35 +79,34 @@ router.get(
 
     const where = conditions.join(" and ");
 
-    const countRow = await q1<{ total: string }>(
-      `select count(*) as total
-         from packages p join buildings b on b.id = p.building_id
-        where ${where}`,
-      params,
-    );
+    const cacheKey = `marketplace-search:${hashInput({ where, params, limit, offset, allowed })}`;
+    const payload = await searchCache.getOrCompute(cacheKey, SEARCH_TTL_MS, async () => {
+      const countRow = await q1<{ total: string }>(
+        `select count(*) as total
+           from packages p join buildings b on b.id = p.building_id
+          where ${where}`,
+        params,
+      );
 
-    params.push(limit);
-    params.push(offset);
-    const rows = await q<any>(
-      `select p.*, b.name as _bname, b.location as _bloc, b.developer as _bdev
-         from packages p join buildings b on b.id = p.building_id
-        where ${where}
-        order by p.deadline asc nulls last
-        limit $${params.length - 1} offset $${params.length}`,
-      params,
-    );
+      const rowParams = [...params, limit, offset];
+      const rows = await q<any>(
+        `select p.*, b.name as _bname, b.location as _bloc, b.developer as _bdev
+           from packages p join buildings b on b.id = p.building_id
+          where ${where}
+          order by p.deadline asc nulls last
+          limit $${rowParams.length - 1} offset $${rowParams.length}`,
+        rowParams,
+      );
 
-    const results = rows.map((r) => {
-      const { _bname, _bloc, _bdev, ...pkg } = r;
-      return { ...pkg, building: { name: _bname, location: _bloc, developer: _bdev } };
+      const results = rows.map((r) => {
+        const { _bname, _bloc, _bdev, ...pkg } = r;
+        return { ...pkg, building: { name: _bname, location: _bloc, developer: _bdev } };
+      });
+
+      return { results, total: Number(countRow?.total ?? 0), limit, offset };
     });
 
-    res.json({
-      results,
-      total: Number(countRow?.total ?? 0),
-      limit,
-      offset,
-    });
+    res.json(payload);
   }),
 );
 
