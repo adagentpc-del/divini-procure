@@ -159,28 +159,43 @@ jobs:
           psql -h localhost -U divini -d divini_test -v ON_ERROR_STOP=1 -f db/apply-all.sql
           psql -h localhost -U divini -d divini_test -v ON_ERROR_STOP=1 -f db/apply-all.sql
 
-      - name: Revoke superuser from the app role (RLS must be enforced under test)
-        # The official postgres Docker image makes POSTGRES_USER the
-        # initdb-time superuser - and Postgres superusers ALWAYS bypass Row-
-        # Level Security, regardless of FORCE ROW LEVEL SECURITY (that only
-        # covers the table owner, a separate, narrower exemption). Every
-        # local dev/test Postgres in this repo's history has `divini` as an
-        # ordinary non-superuser role, so RLS was always correctly enforced
-        # there - this CI service container is the one place it silently
-        # wasn't, meaning this integration-tests job has never actually
-        # verified RLS at all until now. Live-reproduced: every "an outsider/
-        # unrelated company cannot see X" test (which expects a 404 from RLS
-        # making the row invisible) instead got a 200/403 from an app-level
-        # check finding the row anyway - by temporarily granting `divini`
-        # superuser on a local database and reproducing the identical
-        # failures, then confirming they clear again after revoking it.
+      - name: Create a non-superuser app role (RLS must be enforced under test)
+        # The official postgres Docker image makes POSTGRES_USER (divini)
+        # the initdb-time bootstrap superuser - and Postgres superusers
+        # ALWAYS bypass Row-Level Security, regardless of FORCE ROW LEVEL
+        # SECURITY (that only exempts the table owner, a separate, narrower
+        # carve-out). Every local dev/test Postgres in this repo's history
+        # has `divini` as an ordinary non-superuser role, so RLS was always
+        # correctly enforced there - this CI service container is the one
+        # place it silently wasn't, meaning this integration-tests job has
+        # never actually verified RLS at all until now. Live-reproduced:
+        # every "an outsider/unrelated company cannot see X" test (which
+        # expects a 404 from RLS making the row invisible) instead got a
+        # 200/403 from an app-level check finding the row anyway - by
+        # temporarily granting a local role superuser and reproducing the
+        # identical failures.
+        #
+        # `alter role divini nosuperuser` does NOT work here - Postgres
+        # refuses to let the cluster's bootstrap superuser strip its own
+        # SUPERUSER attribute ("permission denied to alter role... The
+        # bootstrap user must have the SUPERUSER attribute"), confirmed
+        # live against this same CI setup. Instead, create a second,
+        # ordinary role with explicit grants and point the app at THAT role
+        # for the actual test run; divini (still superuser) keeps owning
+        # the schema, which is fine - RLS applies to any non-owner,
+        # non-superuser querier regardless of FORCE, and non-owner is
+        # exactly what this new role is.
         env:
           PGPASSWORD: ci-only-password
-        run: psql -h localhost -U divini -d divini_test -v ON_ERROR_STOP=1 -c "alter role divini nosuperuser;"
+        run: |
+          psql -h localhost -U divini -d divini_test -v ON_ERROR_STOP=1 -c "create role divini_app with login password 'ci-only-password' nosuperuser;"
+          psql -h localhost -U divini -d divini_test -v ON_ERROR_STOP=1 -c "grant usage on schema public to divini_app;"
+          psql -h localhost -U divini -d divini_test -v ON_ERROR_STOP=1 -c "grant all privileges on all tables in schema public to divini_app;"
+          psql -h localhost -U divini -d divini_test -v ON_ERROR_STOP=1 -c "grant all privileges on all sequences in schema public to divini_app;"
 
       - name: Run integration tests
         env:
-          DATABASE_URL: postgres://divini:ci-only-password@localhost:5432/divini_test
+          DATABASE_URL: postgres://divini_app:ci-only-password@localhost:5432/divini_test
           SESSION_SECRET: ci-only-session-secret-not-for-prod
           # FILE_STORAGE_DIR defaults to /data/procure-files (config.ts), an
           # absolute root-level path the unprivileged `runner` user on
