@@ -136,6 +136,70 @@ router.get(
 );
 
 // ===========================================================================
+// INVOICES CSV (generic AP export). Member of the project's developer or
+// vendor company, or admin - same shape as GET /invoices, filtered through
+// RLS by the caller's own session, not assertMember (a vendor with no
+// company_members row on the building's owning company still needs to see
+// their own invoices against it). This is a generic column-mapped export
+// for import into any accounting system's own generic bill/journal CSV
+// importer (QuickBooks Online, Xero, Sage all support one) - NOT a
+// certified/tested integration with any specific product, since doing that
+// honestly requires OAuth credentials and a real account this environment
+// does not have. See docs/accounting-export.md.
+// ===========================================================================
+router.get(
+  "/reports/invoices/:buildingId.csv",
+  requireUser,
+  h(async (req, res) => {
+    const buildingId = req.params.buildingId;
+    const building = await q1<{ id: string }>(`select id from buildings where id = $1`, [buildingId]);
+    if (!building) throw new NotFoundError("project not found");
+
+    const rows = await q<any>(
+      `select i.invoice_number, i.invoice_date, i.gross_amount_cents, i.retainage_cents,
+              i.approved_amount_cents, i.net_payable_cents, i.status,
+              vc.name as vendor_name, po.po_number,
+              (select string_agg(distinct li.cost_code, '; ')
+                 from invoice_line_items li
+                where li.invoice_id = i.id and li.cost_code is not null) as cost_codes
+         from invoices i
+         join companies vc on vc.id = i.vendor_company_id
+         left join purchase_orders po on po.id = i.purchase_order_id
+        where i.building_id = $1
+        order by coalesce(i.invoice_date, i.created_at::date), i.created_at`,
+      [buildingId],
+    );
+
+    const centsToDollars = (c: unknown) => (c == null ? "" : (Number(c) / 100).toFixed(2));
+    const mapped = rows.map((r) => ({
+      "Vendor Name": r.vendor_name ?? "",
+      "Invoice Number": r.invoice_number ?? "",
+      "Invoice Date": r.invoice_date ? String(r.invoice_date).slice(0, 10) : "",
+      "PO Number": r.po_number ?? "",
+      "Cost Code": r.cost_codes ?? "",
+      "Gross Amount": centsToDollars(r.gross_amount_cents),
+      Retainage: centsToDollars(r.retainage_cents),
+      "Approved Amount": centsToDollars(r.approved_amount_cents),
+      "Net Payable": centsToDollars(r.net_payable_cents),
+      Status: r.status ?? "",
+    }));
+    const csv = toCsv(mapped, [
+      "Vendor Name",
+      "Invoice Number",
+      "Invoice Date",
+      "PO Number",
+      "Cost Code",
+      "Gross Amount",
+      "Retainage",
+      "Approved Amount",
+      "Net Payable",
+      "Status",
+    ]);
+    sendCsv(res, `invoices-${buildingId}.csv`, csv);
+  }),
+);
+
+// ===========================================================================
 // 3. PROCUREMENT BUDGET (JSON). Member of companyId.
 //    Per project: package count + total of awarded bids (dollars -> cents).
 // ===========================================================================

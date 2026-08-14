@@ -206,3 +206,24 @@ test("invoices: an outsider vendor cannot even see another vendor's invoice", as
   const read = await outsiderVendor.client.get(`/api/invoices/${invoiceId}`);
   assert.equal(read.status, 404, JSON.stringify(read.body));
 });
+
+test("invoices: GET /invoices with no filter returns 'my invoices' - every invoice where the caller's company is a party", async () => {
+  const { poId } = await awardedPo(70_000);
+  const submit = await vendor.client.post("/api/invoices", {
+    buildingId, vendorCompanyId, purchaseOrderId: poId, grossAmountCents: 15_000_00, invoiceNumber: "INV-NOFILTER",
+  });
+  assert.equal(submit.status, 201, JSON.stringify(submit.body));
+  const invoiceId = submit.body.invoice.id;
+
+  const asDeveloper = await developer.client.get("/api/invoices");
+  assert.equal(asDeveloper.status, 200, JSON.stringify(asDeveloper.body));
+  assert.ok(asDeveloper.body.invoices.some((i: any) => i.id === invoiceId));
+
+  const asVendor = await vendor.client.get("/api/invoices");
+  assert.equal(asVendor.status, 200, JSON.stringify(asVendor.body));
+  assert.ok(asVendor.body.invoices.some((i: any) => i.id === invoiceId));
+
+  const asOutsider = await outsiderVendor.client.get("/api/invoices");
+  assert.equal(asOutsider.status, 200, JSON.stringify(asOutsider.body));
+  assert.ok(!asOutsider.body.invoices.some((i: any) => i.id === invoiceId));
+});

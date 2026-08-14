@@ -163,4 +163,12 @@ jobs:
         env:
           DATABASE_URL: postgres://divini:ci-only-password@localhost:5432/divini_test
           SESSION_SECRET: ci-only-session-secret-not-for-prod
+          # FILE_STORAGE_DIR defaults to /data/procure-files (config.ts), an
+          # absolute root-level path the unprivileged `runner` user on
+          # GitHub-hosted runners cannot mkdir (EACCES). Document-upload
+          # integration tests need somewhere writable; point it at the
+          # workspace instead. This was never caught before because this job
+          # always failed earlier (missing server/node_modules, then a
+          # pnpm-not-found step) before ever reaching a real upload test.
+          FILE_STORAGE_DIR: ${{ github.workspace }}/tmp-test-storage
         run: npm run test:integration

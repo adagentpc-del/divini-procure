@@ -16,6 +16,8 @@
  *
  * Endpoints (all requireUser):
  *   GET   /invoices?buildingId=|packageId=|purchaseOrderId=  -> { invoices: [...] }
+ *         (no filter = every invoice where the caller's own company is a
+ *         party, developer or vendor, across all their projects)
  *   GET   /invoices/:id                                       -> { invoice, lineItems }
  *   POST  /invoices                                           -> { invoice, overCommitment }
  *   PATCH /invoices/:id/status                                -> { invoice }
@@ -88,6 +90,16 @@ async function cumulativeInvoicedGrossCents(poId: string, excludeInvoiceId?: str
   return num(rows[0]?.sum);
 }
 
+/** Mirrors the same per-file helper in retainage.ts/reviews.ts/etc: the user's first company by join order. */
+async function getCompanyId(userId: string | null | undefined): Promise<string | null> {
+  if (!userId) return null;
+  const row = await q1<{ company_id: string }>(
+    `select company_id from company_members where user_id = $1 order by created_at asc limit 1`,
+    [userId],
+  );
+  return row?.company_id ?? null;
+}
+
 async function role(
   userId: string,
   isAdmin: boolean,
@@ -109,9 +121,6 @@ router.get(
     const buildingId = req.query.buildingId ? String(req.query.buildingId) : null;
     const packageId = req.query.packageId ? String(req.query.packageId) : null;
     const purchaseOrderId = req.query.purchaseOrderId ? String(req.query.purchaseOrderId) : null;
-    if (!buildingId && !packageId && !purchaseOrderId) {
-      return res.status(400).json({ error: "buildingId, packageId, or purchaseOrderId required" });
-    }
 
     const where: string[] = [];
     const params: unknown[] = [];
@@ -119,10 +128,25 @@ router.get(
     if (packageId) { params.push(packageId); where.push(`package_id = $${params.length}`); }
     if (purchaseOrderId) { params.push(purchaseOrderId); where.push(`purchase_order_id = $${params.length}`); }
 
+    // With no filter, "my invoices" across every project - every invoice
+    // where the caller's own company is a party. RLS already restricts to
+    // this same set; the explicit filter bounds the no-filter case for a
+    // non-admin caller rather than relying on RLS alone.
+    if (where.length === 0) {
+      const companyId = await getCompanyId(auth.userId);
+      if (!companyId && !auth.isAdmin) {
+        return res.status(400).json({ error: "buildingId, packageId, or purchaseOrderId required" });
+      }
+      if (companyId) {
+        params.push(companyId);
+        where.push(`(developer_company_id = $${params.length} or vendor_company_id = $${params.length})`);
+      }
+    }
+
     // RLS already restricts rows to the caller's own developer/vendor
     // relationship (or admin); this just filters within what they can see.
     const invoices = await q<any>(
-      `select * from invoices where ${where.join(" and ")} order by created_at desc`,
+      `select * from invoices ${where.length ? `where ${where.join(" and ")}` : ""} order by created_at desc limit 500`,
       params,
     );
     res.json({ invoices });

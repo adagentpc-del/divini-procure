@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { apiGet, apiSend } from '../lib/api';
+import { apiBlob, apiGet, apiSend } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useToast } from '../lib/toast';
 
@@ -56,18 +56,42 @@ type AwardDoc = {
   created_by: string | null;
   created_at: string;
 };
+type Invoice = {
+  id: string;
+  purchase_order_id: string | null;
+  invoice_number: string | null;
+  invoice_date: string | null;
+  gross_amount_cents: number;
+  retainage_cents: number;
+  approved_amount_cents: number | null;
+  net_payable_cents: number | null;
+  status: string;
+  over_commitment: boolean;
+};
 type DetailResp = { purchaseOrder: PurchaseOrder; payments: PaymentAuth[]; documents: AwardDoc[] };
 
 const PO_STATUSES = ['draft', 'issued', 'acknowledged', 'in_production', 'fulfilled', 'cancelled'];
 const PAY_STATUSES = ['pending', 'authorized', 'released', 'void'];
+// Mirrors server/src/routes/invoices.ts's TRANSITIONS exactly (developer-driven
+// moves only; partially_paid/paid are system-derived and never offered here).
+const INVOICE_TRANSITIONS: Record<string, string[]> = {
+  draft: ['submitted', 'void'],
+  submitted: ['under_review', 'approved', 'rejected', 'void'],
+  under_review: ['approved', 'rejected', 'void'],
+  approved: ['void'],
+  rejected: ['void'],
+  partially_paid: ['void'],
+  paid: [],
+  void: [],
+};
 
 const pretty = (s: string | null | undefined) => (s || '').replace(/_/g, ' ');
 const money = (cents: number | null | undefined) =>
   cents == null ? '-' : `$${(Number(cents) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const statusBadge = (s: string) => {
-  if (s === 'fulfilled' || s === 'released' || s === 'authorized') return 'b-green';
-  if (s === 'cancelled' || s === 'void') return 'b-red';
+  if (s === 'fulfilled' || s === 'released' || s === 'authorized' || s === 'approved' || s === 'paid') return 'b-green';
+  if (s === 'cancelled' || s === 'void' || s === 'rejected') return 'b-red';
   if (s === 'draft' || s === 'pending') return 'b-neutral';
   return 'b-amber';
 };
@@ -92,6 +116,12 @@ export default function AwardWorkflow() {
   const [poNumber, setPoNumber] = useState('');
   const [terms, setTerms] = useState('');
   const [poNotes, setPoNotes] = useState('');
+
+  // invoices
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [invNumber, setInvNumber] = useState('');
+  const [invDate, setInvDate] = useState('');
+  const [invAmount, setInvAmount] = useState('');
 
   // payment auth form
   const [payAmount, setPayAmount] = useState('');
@@ -134,6 +164,12 @@ export default function AwardWorkflow() {
       const next = new URLSearchParams(params);
       next.set('po', id);
       setParams(next, { replace: true });
+      try {
+        const invRes = await apiGet<{ invoices: Invoice[] }>(`/invoices?purchaseOrderId=${encodeURIComponent(id)}`);
+        setInvoices(invRes.invoices);
+      } catch {
+        setInvoices([]);
+      }
     } catch (e: any) {
       setErr(e?.message || 'Failed to load purchase order.');
     }
@@ -172,6 +208,67 @@ export default function AwardWorkflow() {
       setErr(e?.message || 'Failed to update purchase order.');
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function createInvoice() {
+    if (!detail?.purchaseOrder.building_id || !detail?.purchaseOrder.vendor_company_id) return;
+    const grossAmountCents = invAmount.trim() ? Math.round(Number(invAmount) * 100) : NaN;
+    if (!Number.isFinite(grossAmountCents) || grossAmountCents < 0) {
+      setErr('Enter a valid invoice amount.');
+      return;
+    }
+    setBusy(true); setErr(''); setOk('');
+    try {
+      await apiSend('POST', '/invoices', {
+        buildingId: detail.purchaseOrder.building_id,
+        vendorCompanyId: detail.purchaseOrder.vendor_company_id,
+        purchaseOrderId: detail.purchaseOrder.id,
+        invoiceNumber: invNumber.trim() || undefined,
+        invoiceDate: invDate || undefined,
+        grossAmountCents,
+      });
+      setInvNumber(''); setInvDate(''); setInvAmount('');
+      setOk('Invoice submitted.');
+      toast('Invoice submitted.', 'success');
+      await openPo(detail.purchaseOrder.id);
+    } catch (e: any) {
+      const msg = e?.message || 'Failed to submit invoice.';
+      setErr(msg);
+      toast(msg, 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function setInvoiceStatus(invId: string, status: string) {
+    setBusy(true); setErr(''); setOk('');
+    try {
+      await apiSend('PATCH', `/invoices/${encodeURIComponent(invId)}/status`, { status });
+      if (detail) await openPo(detail.purchaseOrder.id);
+    } catch (e: any) {
+      setErr(e?.message || 'Failed to update invoice.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function downloadInvoicesCsv() {
+    const buildingId = detail?.purchaseOrder.building_id;
+    if (!buildingId) return;
+    setErr('');
+    try {
+      const blob = await apiBlob(`/reports/invoices/${encodeURIComponent(buildingId)}.csv`);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `invoices-${buildingId}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      setErr(e?.message || 'Failed to download invoices CSV.');
     }
   }
 
@@ -361,6 +458,68 @@ export default function AwardWorkflow() {
             <div className="note" style={{ fontSize: 11.5 }}>
               {po.issued_at ? `Issued ${new Date(po.issued_at).toLocaleString()}` : 'Not yet issued. Set status to issued to stamp the issue date.'}
             </div>
+          </div>
+
+          {/* ---- invoices ---- */}
+          <div className="sectitle">Invoices</div>
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div className="two">
+              <div className="field">
+                <label>Invoice number</label>
+                <input value={invNumber} onChange={(e) => setInvNumber(e.target.value)} placeholder="e.g. INV-1042" />
+              </div>
+              <div className="field">
+                <label>Invoice date</label>
+                <input type="date" value={invDate} onChange={(e) => setInvDate(e.target.value)} />
+              </div>
+            </div>
+            <div className="two">
+              <div className="field">
+                <label>Amount ($)</label>
+                <input value={invAmount} onChange={(e) => setInvAmount(e.target.value)} placeholder="0.00" />
+              </div>
+              <div className="field" style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
+                <button className="btn primary" onClick={createInvoice} disabled={busy || !invAmount.trim()}>
+                  Submit invoice
+                </button>
+                {po.building_id && (
+                  <button className="btn" onClick={downloadInvoicesCsv}>Download invoices.csv</button>
+                )}
+              </div>
+            </div>
+
+            {invoices.length === 0 ? (
+              <div className="note" style={{ marginTop: 12 }}>No invoices yet.</div>
+            ) : (
+              <table style={{ marginTop: 12 }}>
+                <thead>
+                  <tr><th>Number</th><th>Date</th><th>Gross</th><th>Retainage</th><th>Net payable</th><th>Status</th><th>Actions</th></tr>
+                </thead>
+                <tbody>
+                  {invoices.map((inv) => (
+                    <tr key={inv.id}>
+                      <td>{inv.invoice_number || '-'}</td>
+                      <td className="note">{inv.invoice_date ? new Date(inv.invoice_date).toLocaleDateString() : '-'}</td>
+                      <td>{money(inv.gross_amount_cents)}</td>
+                      <td className="note">{money(inv.retainage_cents)}</td>
+                      <td>{inv.net_payable_cents != null ? money(inv.net_payable_cents) : '-'}</td>
+                      <td>
+                        <span className={`badge ${statusBadge(inv.status)}`}>{pretty(inv.status)}</span>
+                        {inv.over_commitment && <span className="badge b-red" style={{ marginLeft: 4 }}>over commitment</span>}
+                      </td>
+                      <td>
+                        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                          {(INVOICE_TRANSITIONS[inv.status] ?? []).map((s) => (
+                            <button key={s} className="btn" style={{ padding: '2px 8px', fontSize: 12 }}
+                              onClick={() => setInvoiceStatus(inv.id, s)} disabled={busy}>{pretty(s)}</button>
+                          ))}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
 
           {/* ---- payment authorizations (record only) ---- */}
