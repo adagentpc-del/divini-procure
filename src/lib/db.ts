@@ -102,6 +102,11 @@ export async function getBuildingFinancialSummary(buildingId: string) {
 export async function getPackageFinancialSummary(packageId: string) {
   return apiGet<any>(`/packages/${encodeURIComponent(packageId)}/financial-summary`);
 }
+export async function askDiviniAboutProject(buildingId: string, question: string) {
+  return apiSend<{ ok: boolean; answer: string | null; reason?: string; disclosure: string }>(
+    'POST', `/ask-divini/project/${encodeURIComponent(buildingId)}`, { question },
+  );
+}
 export async function getPackage(id: string) {
   return apiGet<any>(`/packages/${encodeURIComponent(id)}`);
 }

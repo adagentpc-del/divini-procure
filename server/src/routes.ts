@@ -122,6 +122,7 @@ import invoicesRouter from "./routes/invoices.js";
 import paymentsRouter from "./routes/payments.js";
 import financialSummaryRouter from "./routes/financial-summary.js";
 import vendorSignalsRouter from "./routes/vendor-signals.js";
+import askDiviniRouter from "./routes/ask-divini.js";
 // ---- Monetization V2 (flag-gated): bid credits + verification gate -----------
 import { PROCURE_MONETIZATION_V2 } from "./config.js";
 import { getBidCredits, consumeBidCredit } from "./lib/bidCredits.js";
@@ -244,6 +245,7 @@ router.use(invoicesRouter);
 router.use(paymentsRouter);
 router.use(financialSummaryRouter);
 router.use(vendorSignalsRouter);
+router.use(askDiviniRouter);
 
 // ---- health ----------------------------------------------------------------
 router.get("/healthz", async (_req, res) => {

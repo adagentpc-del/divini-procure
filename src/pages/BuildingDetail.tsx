@@ -5,6 +5,7 @@ import { useFeatures } from '../lib/features';
 import { getBuilding, getPackages, createPackage, getBuildingFinancialSummary } from '../lib/db';
 import DocumentPanel from '../components/DocumentPanel';
 import { ProjectFinancialSummaryPanel } from '../components/FinancialSummaryPanel';
+import AskDiviniPanel from '../components/AskDiviniPanel';
 
 const CATEGORIES = ['Concrete', 'Steel', 'Electrical', 'Plumbing', 'HVAC', 'Millwork', 'Cabinetry', 'Doors', 'Drapery', 'Flooring', 'Windows', 'Glazing', 'Lighting', 'Furniture', 'Signage', 'Security', 'Landscaping', 'Roofing', 'Elevators', 'Fire Protection'];
 
@@ -63,6 +64,8 @@ export default function BuildingDetail() {
       </div>
 
       {isOwner && financials && <ProjectFinancialSummaryPanel summary={financials} />}
+
+      {isOwner && <AskDiviniPanel buildingId={b.id} />}
 
       {adding && (
         <div className="card" style={{ marginBottom: 14 }}>
