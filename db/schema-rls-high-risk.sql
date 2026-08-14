@@ -3,8 +3,18 @@
 --
 -- db/schema-rls.sql already covers the core tenancy tables (users,
 -- companies, company_members, buildings, packages, bids, documents,
--- subscriptions, vendor_profiles, package_line_items, bid_items,
--- rfq_questions, feature_flags). This file adds the same defense-in-depth
+-- subscription_entitlements, subscription_tiers, vendor_profiles,
+-- package_line_items, bid_items, rfq_questions, feature_flags). Note: the
+-- billing/plan table `subscriptions` itself (as opposed to
+-- subscription_entitlements/subscription_tiers) is NOT among these and has
+-- no DB-level RLS as of this writing - a compliance-completion pass
+-- (2026-08-14, docs/platform-standard/release-readiness.md) found this
+-- comment previously named it in error. It relies on app-layer
+-- authorization only, same as most of this schema; flagged as a candidate
+-- for a future scoped RLS extension, not fixed here (see that doc's
+-- "What remains open" section for why a broad RLS retrofit across the
+-- ~130 tables without it is deliberately not attempted in one pass).
+-- This file adds the same defense-in-depth
 -- layer to the tables this phase's audit flagged as high-risk and
 -- previously had NO row-level security at all: purchase orders, payment
 -- authorizations, platform revenue, payout instructions, agreements +
