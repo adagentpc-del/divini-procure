@@ -159,6 +159,25 @@ jobs:
           psql -h localhost -U divini -d divini_test -v ON_ERROR_STOP=1 -f db/apply-all.sql
           psql -h localhost -U divini -d divini_test -v ON_ERROR_STOP=1 -f db/apply-all.sql
 
+      - name: Revoke superuser from the app role (RLS must be enforced under test)
+        # The official postgres Docker image makes POSTGRES_USER the
+        # initdb-time superuser - and Postgres superusers ALWAYS bypass Row-
+        # Level Security, regardless of FORCE ROW LEVEL SECURITY (that only
+        # covers the table owner, a separate, narrower exemption). Every
+        # local dev/test Postgres in this repo's history has `divini` as an
+        # ordinary non-superuser role, so RLS was always correctly enforced
+        # there - this CI service container is the one place it silently
+        # wasn't, meaning this integration-tests job has never actually
+        # verified RLS at all until now. Live-reproduced: every "an outsider/
+        # unrelated company cannot see X" test (which expects a 404 from RLS
+        # making the row invisible) instead got a 200/403 from an app-level
+        # check finding the row anyway - by temporarily granting `divini`
+        # superuser on a local database and reproducing the identical
+        # failures, then confirming they clear again after revoking it.
+        env:
+          PGPASSWORD: ci-only-password
+        run: psql -h localhost -U divini -d divini_test -v ON_ERROR_STOP=1 -c "alter role divini nosuperuser;"
+
       - name: Run integration tests
         env:
           DATABASE_URL: postgres://divini:ci-only-password@localhost:5432/divini_test
