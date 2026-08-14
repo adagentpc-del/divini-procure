@@ -4847,3 +4847,7 @@ COMMIT;
 -- bid_versions, bid_templates, bid_template_line_items) - see the file's
 -- own header for how this was found and the policy source of truth.
 \i db/schema-rls-bid-studio.sql
+
+-- Lien waiver e-signature + invoice linkage (competitive gap closure) -
+-- see the file's own header for the escrow-vs-payment-status distinction.
+\i db/schema-lien-waiver-signatures.sql
