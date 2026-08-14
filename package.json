@@ -8,9 +8,9 @@
   "scripts": {
     "dev": "vite",
     "test": "node --experimental-strip-types --test \"tests/*.test.ts\"",
-    "test:integration": "pnpm --dir server run build && DATABASE_URL=\"${DATABASE_URL:-postgres://divini:devpass@localhost:5432/divini_test}\" SESSION_SECRET=\"${SESSION_SECRET:-dev-only-session-secret-change-me}\" node --experimental-strip-types --test \"tests/integration/**/*.test.ts\"",
+    "test:integration": "npm --prefix server install && npm --prefix server run build && DATABASE_URL=\"${DATABASE_URL:-postgres://divini:devpass@localhost:5432/divini_test}\" SESSION_SECRET=\"${SESSION_SECRET:-dev-only-session-secret-change-me}\" node --experimental-strip-types --test \"tests/integration/**/*.test.ts\"",
     "build": "tsc && vite build",
-    "build:server": "pnpm --dir server install --no-frozen-lockfile && pnpm --dir server run build",
+    "build:server": "npm --prefix server install && npm --prefix server run build",
     "build:all": "pnpm run build && pnpm run build:server && rm -rf server/dist/public && cp -r dist server/dist/public",
     "start": "node --enable-source-maps server/dist/index.js",
     "preview": "vite preview",

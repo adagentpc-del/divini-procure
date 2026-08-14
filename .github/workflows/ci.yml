@@ -20,6 +20,17 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Install server dependencies
+        # server/ is a fully separate npm project (its own package.json +
+        # package-lock.json, not an npm workspace member) - the root
+        # `npm install` above never touches it. Every step below that
+        # touches server/ (typecheck, the vuln gate, and npm run
+        # test:integration in the integration-tests job further down)
+        # needs server/node_modules to actually exist first; without this
+        # step "Typecheck server" fails with "Cannot find module 'express'"
+        # for every server dependency, not a real type error.
+        run: npm install --prefix server
+
       - name: Typecheck server
         run: npx tsc -p server/tsconfig.json --noEmit
 
