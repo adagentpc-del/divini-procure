@@ -326,10 +326,14 @@ export default function PackageDetail() {
     setReviewMsg(prev => ({ ...prev, [vendorCompanyId]: '' }));
     try {
       const existing = myReviews[vendorCompanyId];
+      // Send an explicit value (never `undefined`) for body/lessonsLearned:
+      // JSON.stringify drops `undefined` keys entirely, so on an edit that
+      // clears previously-set text, the PATCH handler's `!== undefined`
+      // check would see no field at all and leave the stale text in place.
       const shared = {
-        stars: starsNum, body: form.body || undefined,
+        stars: starsNum, body: form.body,
         wouldRehire: form.wouldRehire, onTime: form.onTime, onBudget: form.onBudget,
-        lessonsLearned: form.lessonsLearned || undefined,
+        lessonsLearned: form.lessonsLearned,
       };
       const res = existing
         ? await apiSend('PATCH', `/reviews/${existing.id}`, shared)
