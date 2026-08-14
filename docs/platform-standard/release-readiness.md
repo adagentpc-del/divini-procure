@@ -65,7 +65,7 @@ belong to a section not yet reached (R-03 → 14, R-08 → 06, R-05 → 03).
 - **R-09** — **CLOSED.** Referral-partner onboarding endpoints were completely broken (unconditional 500); fixed.
 - **R-10** — **CLOSED.** CI now has real build + fresh-database schema gates, verified to actually catch the failure class they target.
 - **R-11** (P1): no branch protection / CODEOWNERS / release tagging — owned by Owner (process decisions).
-- **R-12** (P2): no SAST/license/SBOM tooling — owned by a future maturity pass.
+- **R-12** — **PARTIALLY CLOSED** (2026-08-14). A real CI gate (fails the build) on high/critical production-dependency vulnerabilities now exists for both the SPA and server (`.github/workflows/ci.yml`), in addition to the pre-existing report-only full scan. SAST/license/SBOM *tool selection* remains open — genuinely an Owner + Engineering decision, not something to pick unilaterally.
 - **R-13** — **CLOSED.** Dead Supabase CSP code removed, verified no CSP violations.
 - **R-14** — **CLOSED.** `verify_token` now hashed at rest, matching `reset_token`.
 - **R-15** — **CLOSED.** "Sign out of all devices" now exists and is verified live.
@@ -160,9 +160,9 @@ by writing code.
 | R-06 | Register a real, monitored DMCA designated-agent inbox with the U.S. Copyright Office (the statutory notice text itself is already live in `Terms.tsx`) | Owner | `OA-12` |
 | R-07 | Cookie-consent enforcement - correctly low severity today; nothing exists yet to gate | Engineering (future, if a tracking SDK is ever added) | — |
 | R-08 | Automated data-retention/purge job - needs an owner policy decision (retention periods, legal-hold rules) before it can be built | Owner, then Engineering | `OA-08` |
-| R-12 | SAST/license/SBOM tooling selection | Owner + Engineering | `OA-11` |
+| R-12 | SAST/license/SBOM **tool selection** (dependency-vulnerability CI gate itself now closed, see below) | Owner + Engineering | `OA-11` |
 | R-16 / R-20 / R-26 | Live Stripe test-mode smoke tests (subscription cancellation, webhook RLS path, payout Idempotency-Key behavior) - all verified by code review, none live-tested; this sandbox has no Stripe test credentials | Owner (provision credentials) + Engineering | `OA-13`, `OA-15` |
-| R-18 (residual note) | `bid_line_items`/`bid_payment_milestones` remain outside DB-level RLS, real today via app-layer checks only | Engineering (future, scoped increment) | — |
+| R-18 (residual note) | **CLOSED** (2026-08-14) — see the Compliance Completion Pass section below | — | — |
 | R-29 | Automated accessibility regression testing in CI | Engineering (future pass) | — |
 | S15-05 | Load/soak testing | Owner + Engineering (needs a staging environment) | — |
 
@@ -177,7 +177,100 @@ without re-checking. It is an engineering readiness certification, not a
 substitute for the counsel/owner reviews it explicitly names as still
 required.
 
+## Compliance completion pass (2026-08-14)
+
+The Section 18 certification above is dated 2026-08-09. Between that date
+and this pass, a full Phase 0 design/implementation increment and a full
+Phase 1 implementation shipped — most significantly, the entire canonical
+procurement + financial spine (project budgets, package allowances, awards,
+purchase orders, contracts, change orders, invoices, payments, retainage,
+financial summaries; see `docs/phase1-financial-spine-implementation.md`).
+None of that had been checked against this compliance framework, since it
+postdates the certification. This pass's job was to (1) re-verify that new
+surface area against the same standard Sections 01-18 already established,
+and (2) close what's genuinely closeable from the open-item inventory above
+without overreaching into owner/counsel-only decisions.
+
+### What was re-verified against the Phase 0/1 financial spine (all clean, no fix needed)
+
+- **FK-to-`users` `ON DELETE NO ACTION` bug class** (the same class Section
+  06 found and fixed 34+ instances of): every actor-attribution column added
+  in Phase 1 (`awards.created_by`/`cancelled_by`, `packages.
+  financially_closed_by`, `external_payment_records.recorded_by`,
+  `building_budget_revisions.actor_user_id`/`actor_email`, `package_
+  allowance_revisions.actor_user_id`/`actor_email`) is stored as plain
+  `text`, never a hard FK to `users(id)` - this bug class cannot recur here
+  by construction.
+- **Rate limiting** (Section 07's `apiRateLimit` global backstop): confirmed
+  `app.use("/api", apiRateLimit)` mounts before the router in
+  `server/src/app.ts`, so every Phase 1 endpoint (budget, bid-revisions,
+  award-workflow, agreements, change-orders, invoices, payments,
+  financial-summary, vendor-signals) inherits it automatically. None of
+  Phase 1 calls an LLM, so no dedicated tighter limit (the Section 08
+  pattern) is needed.
+- **Banking/financial PII at rest** (Section 02's R-01 pattern): `external_
+  payment_records` stores only `method_detail` (free text, e.g. "ACH check
+  #1204"), `paid_date`, and `amount_cents` - no account/routing numbers, no
+  new field-level-encryption need.
+- **CAN-SPAM / transactional email compliance** (Section 10): the one real
+  email Phase 1 sends (award notification, `award-workflow.ts`) goes
+  through the same shared `sendEmail()`/`wrapHtml()` pipeline Section 10
+  already verified includes the sender's physical postal address on every
+  message - no separate, unverified email path was introduced.
+
+### What was found and closed
+
+- **R-18, fully closed, wider than the residual note described.**
+  Re-checking the note ("`bid_line_items`/`bid_payment_milestones` remain
+  outside DB-level RLS") found it was stale in two ways: `bid_line_items`
+  had already been closed in an earlier pass (`schema-rls-high-risk.sql`),
+  but **three more tables** from the same `db/schema-bid-studio.sql`
+  migration - `bid_versions`, `bid_templates`, `bid_template_line_items` -
+  had never had RLS at all, confirmed live (`relrowsecurity = false` on all
+  four as found). All four now have RLS enabled and forced, with policies
+  mirroring `bid-studio.ts`'s own single-owner authorization model exactly.
+  See `db/schema-rls-bid-studio.sql` and
+  `tests/integration/compliance-rls-bid-studio.test.ts`.
+- **Two live-reproduced, pre-existing bugs, unrelated to RLS, found while
+  writing that test's behavioral coverage**: `bid_line_items` has no `unit`
+  column despite `POST`/`PATCH .../line-items`, save-as-template, and
+  template-apply all reading/writing one (every real line-item creation
+  call 500'd); and `loadLineItems()` ordered by a `created_at` column that
+  table has never had (breaking `GET /drafts/:id` and save-as-template for
+  any bid with line items). Both fixed - see the C-01 commit.
+- **R-12, partially closed.** A real (build-failing) CI gate on high/
+  critical production-dependency vulnerabilities now exists for both the
+  SPA and server workspaces, verified clean locally before being added.
+  SAST/license/SBOM *tool selection* is correctly left open - the item
+  itself designates that as an Owner + Engineering decision, and no SAST
+  tool could be cleanly verified end-to-end in this environment to justify
+  adding one unilaterally.
+
+### What remains open (unchanged, correctly not re-litigated here)
+
+R-02 (securities counsel), R-04 (state privacy thresholds), R-05/R-11
+(branch protection/CODEOWNERS/release tagging), R-06 (DMCA designated-agent
+registration), R-07 (cookie-consent enforcement, still nothing to enforce),
+R-08 (data-retention job, needs an owner policy decision first), R-12's
+tool-selection half, R-16/R-20/R-26 (live Stripe smoke tests, no test
+credentials in this sandbox), R-29 (automated accessibility regression
+testing - notably more feasible now than when Section 11 declined it, since
+Playwright has since been confirmed working in this environment for live UI
+verification during Phase 1's P1-15; a good candidate for a future,
+separately-scoped pass), S15-05 (load/soak testing). None of these were
+re-derived or re-litigated - each still has the same named owner as the
+Section 18 inventory.
+
+### Full suite, re-run clean after this pass
+
+225/225 unit tests, 125/125 integration tests (121 from the Section 18
+baseline area + 4 new RLS/behavioral tests this pass), two-pass fresh-
+database bootstrap clean.
+
 ## Next section
 
-None — Section 18 was the last section in the ALFY2 pack. This engagement
-is complete.
+None from the original ALFY2 pack (Section 18 remains its last section).
+This compliance-completion pass is a standalone re-verification triggered
+by the Phase 0/1 financial-spine work landing after the original
+certification date, not a new numbered section - treat the open-item table
+above as the current source of truth for what remains.
