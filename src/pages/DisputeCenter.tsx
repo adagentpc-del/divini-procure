@@ -193,7 +193,7 @@ export default function DisputeCenter() {
   const resolvedCount = disputes.filter(d => d.status === 'resolved').length;
   const totalDisputed = disputes.reduce((sum, d) => sum + (Number(d.amount_in_dispute_cents) || 0), 0);
 
-  const myCompanyId = me?.companyId;
+  const myCompanyId = me?.company?.id;
 
   return (
     <div>

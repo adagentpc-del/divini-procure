@@ -106,8 +106,9 @@ export default function LenderPortal() {
     fetch('/api/me')
       .then(r => r.json())
       .then(d => {
-        setCompanyId(d.companyId ?? '');
-        return fetch(`/api/buildings?companyId=${d.companyId ?? ''}`);
+        const cid = d.company?.id ?? '';
+        setCompanyId(cid);
+        return fetch(`/api/buildings?companyId=${cid}`);
       })
       .then(r => r.json())
       .then(d => setBuildings(d.buildings ?? []))

@@ -37,6 +37,7 @@ interface RetainageRecord {
 interface LienWaiver {
   id: string;
   retainage_id: string | null;
+  invoice_id: string | null;
   building_id: string;
   vendor_company_id: string;
   developer_company_id: string;
@@ -49,11 +50,15 @@ interface LienWaiver {
   requested_by: string | null;
   notes: string | null;
   created_at: string;
+  invoice_status: string | null;
+  invoice_number: string | null;
+  paymentConfirmed: boolean;
+  signature_signer_name: string | null;
+  signature_signed_at: string | null;
 }
 
 interface MeResponse {
-  companyId: string;
-  email: string;
+  company: { id: string } | null;
 }
 
 const dollars = (cents: number | null | undefined) =>
@@ -130,10 +135,14 @@ export default function RetainageDashboard() {
   // Lien waiver form
   const [waiverForm, setWaiverForm] = useState<Record<string, { waiverType: string; throughDate: string; paymentAmount: string; notes: string } | null>>({});
 
+  // Lien waiver e-signature
+  const [signForm, setSignForm] = useState<Record<string, { signerName: string; signatureText: string; affirm: boolean } | null>>({});
+  const [signLoading, setSignLoading] = useState<Record<string, boolean>>({});
+
   useEffect(() => {
     fetch('/api/me', { credentials: 'include' })
       .then(r => r.json())
-      .then((d: MeResponse) => setMyCompanyId(d.companyId ?? ''))
+      .then((d: MeResponse) => setMyCompanyId(d.company?.id ?? ''))
       .catch(() => {});
 
     fetch('/api/me/retainage-summary', { credentials: 'include' })
@@ -230,6 +239,32 @@ export default function RetainageDashboard() {
       setActionMsg('Lien waiver requested.');
     } catch (e: any) {
       setErr(e.message);
+    }
+  }
+
+  async function signWaiver(waiverId: string) {
+    const form = signForm[waiverId];
+    if (!form || !form.signerName.trim() || !form.signatureText.trim() || !form.affirm) {
+      setErr('Enter your name, type your signature, and check the affirmation box.');
+      return;
+    }
+    setSignLoading(prev => ({ ...prev, [waiverId]: true }));
+    try {
+      const res = await fetch(`/api/lien-waivers/${waiverId}/sign`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ signerName: form.signerName.trim(), signatureText: form.signatureText.trim(), affirm: true }),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error ?? 'Failed to sign');
+      setVendorWaivers(prev => prev.map(w => w.id === waiverId ? { ...w, ...d.waiver, signature_signer_name: d.signature.signer_name, signature_signed_at: d.signature.signed_at } : w));
+      setSignForm(prev => { const n = { ...prev }; delete n[waiverId]; return n; });
+      setActionMsg('Lien waiver signed.');
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setSignLoading(prev => ({ ...prev, [waiverId]: false }));
     }
   }
 
@@ -388,13 +423,80 @@ export default function RetainageDashboard() {
                   <div style={{ fontSize: 13.5, fontWeight: 600, textTransform: 'capitalize' }}>{w.waiver_type.replace(/_/g, ' ')}</div>
                   <div className="note">Building: {w.building_id}</div>
                 </div>
-                <StatusBadge status={w.status} />
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  {w.invoice_id && (
+                    <span className={w.paymentConfirmed ? 'badge b-green' : 'badge b-neutral'}>
+                      {w.paymentConfirmed ? 'Payment confirmed' : 'Payment not yet confirmed'}
+                    </span>
+                  )}
+                  <StatusBadge status={w.status} />
+                </div>
               </div>
-              <div className="note" style={{ display: 'flex', gap: 14 }}>
+              <div className="note" style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
                 {w.through_date && <span>Through: {w.through_date}</span>}
                 {w.payment_amount_cents != null && <span>Amount: {dollars(w.payment_amount_cents)}</span>}
+                {w.invoice_number && <span>Invoice: {w.invoice_number}</span>}
               </div>
               <div className="note" style={{ marginTop: 4 }}>Requested {fmtDate(w.created_at)}</div>
+
+              {w.status === 'submitted' || w.status === 'accepted' ? (
+                w.signature_signer_name && (
+                  <div className="note" style={{ marginTop: 8, color: 'var(--green)' }}>
+                    Signed by {w.signature_signer_name}{w.signature_signed_at ? ` on ${fmtDate(w.signature_signed_at)}` : ''}.
+                  </div>
+                )
+              ) : w.status === 'requested' ? (
+                signForm[w.id] ? (
+                  <div className="card" style={{ background: 'var(--ivory)', marginTop: 10 }}>
+                    <div className="note" style={{ marginBottom: 8, fontWeight: 600 }}>Sign Lien Waiver</div>
+                    <div className="two">
+                      <div className="field">
+                        <label>Your Full Name</label>
+                        <input
+                          type="text"
+                          value={signForm[w.id]?.signerName ?? ''}
+                          onChange={e => setSignForm(prev => ({ ...prev, [w.id]: { ...prev[w.id]!, signerName: e.target.value } }))}
+                        />
+                      </div>
+                      <div className="field">
+                        <label>Type Your Signature</label>
+                        <input
+                          type="text"
+                          value={signForm[w.id]?.signatureText ?? ''}
+                          onChange={e => setSignForm(prev => ({ ...prev, [w.id]: { ...prev[w.id]!, signatureText: e.target.value } }))}
+                        />
+                      </div>
+                    </div>
+                    <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, marginBottom: 10 }}>
+                      <input
+                        type="checkbox"
+                        checked={signForm[w.id]?.affirm ?? false}
+                        onChange={e => setSignForm(prev => ({ ...prev, [w.id]: { ...prev[w.id]!, affirm: e.target.checked } }))}
+                      />
+                      I affirm this signature is legally binding and this waiver is accurate.
+                    </label>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button onClick={() => signWaiver(w.id)} disabled={!!signLoading[w.id]} className="btn primary">
+                        {signLoading[w.id] ? 'Signing...' : 'Sign & Submit'}
+                      </button>
+                      <button
+                        onClick={() => setSignForm(prev => { const n = { ...prev }; delete n[w.id]; return n; })}
+                        className="btn"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setSignForm(prev => ({ ...prev, [w.id]: { signerName: '', signatureText: '', affirm: false } }))}
+                    className="btn primary"
+                    style={{ marginTop: 8 }}
+                  >
+                    Sign Waiver
+                  </button>
+                )
+              ) : null}
             </div>
           ))}
         </div>
