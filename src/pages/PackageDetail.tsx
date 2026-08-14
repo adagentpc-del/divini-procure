@@ -35,12 +35,35 @@ function ComplianceBadge({ snap }: { snap: { compliant: boolean; coi: { missingT
   );
 }
 
-function ReviewBadge({ stats }: { stats: { averageStars: number | null; count: number; reviews: Array<{ id: string; stars: number; body: string | null }> } | null | undefined }) {
+type ReviewRow = {
+  id: string; stars: number; body: string | null; package_category?: string | null;
+  would_rehire?: boolean | null; on_time?: boolean | null; on_budget?: boolean | null;
+  lessons_learned?: string | null; rater_company_id?: string; package_id?: string;
+};
+type ReviewStats = {
+  averageStars: number | null; count: number; reviews: ReviewRow[];
+  wouldRehireYes?: number; wouldRehireNo?: number;
+};
+
+// M-01 gap #12 ("lessons-learned vendor knowledge base"): surfaces the
+// rehire rate and, when this package's own trade category matches a past
+// review, that review's guided lessons_learned text first - the actual
+// point of a knowledge base is showing the developer the notes that are
+// relevant to THIS bid, not just an aggregate star average.
+function ReviewBadge({ stats, currentCategory }: { stats: ReviewStats | null | undefined; currentCategory?: string }) {
   if (!stats || stats.count === 0) return <span className="note">No reviews yet</span>;
-  const snippets = stats.reviews.filter(r => r.body).slice(0, 3).map(r => `${r.stars}★ "${r.body}"`).join(' | ');
+  const sameCategoryLessons = stats.reviews
+    .filter(r => currentCategory && r.package_category === currentCategory && r.lessons_learned)
+    .slice(0, 2)
+    .map(r => `[${r.package_category}] ${r.lessons_learned}`);
+  const otherSnippets = stats.reviews.filter(r => r.body).slice(0, 2).map(r => `${r.stars}★ "${r.body}"`);
+  const title = [...sameCategoryLessons, ...otherSnippets].join(' | ') || undefined;
+  const rehireTotal = (stats.wouldRehireYes ?? 0) + (stats.wouldRehireNo ?? 0);
   return (
-    <span className="badge b-neutral" title={snippets || undefined}>
+    <span className="badge b-neutral" title={title}>
       {'★'} {stats.averageStars?.toFixed(1)} ({stats.count})
+      {rehireTotal > 0 && ` · rehire ${stats.wouldRehireYes}/${rehireTotal}`}
+      {sameCategoryLessons.length > 0 && ' · similar work'}
     </span>
   );
 }
@@ -81,9 +104,9 @@ export default function PackageDetail() {
   // until now) - per-vendor average+count, public, shown to the developer
   // evaluating bids. reviewForm/reviewBusy/reviewMsg drive the owner-only
   // "rate this vendor" flow on an awarded bid.
-  const [reviewStats, setReviewStats] = useState<Record<string, { averageStars: number | null; count: number; reviews: Array<{ id: string; stars: number; body: string | null }> } | null>>({});
-  const [myReviews, setMyReviews] = useState<Record<string, { id: string; stars: number; body: string | null }>>({});
-  const [reviewForm, setReviewForm] = useState<Record<string, { stars: string; body: string } | null>>({});
+  const [reviewStats, setReviewStats] = useState<Record<string, ReviewStats | null>>({});
+  const [myReviews, setMyReviews] = useState<Record<string, ReviewRow>>({});
+  const [reviewForm, setReviewForm] = useState<Record<string, { stars: string; body: string; wouldRehire: boolean | null; onTime: boolean | null; onBudget: boolean | null; lessonsLearned: string } | null>>({});
   const [reviewBusy, setReviewBusy] = useState<Record<string, boolean>>({});
   const [reviewMsg, setReviewMsg] = useState<Record<string, string>>({});
   // monetization V2: bid credits + verification gating (null = gate off)
@@ -145,19 +168,17 @@ export default function PackageDetail() {
           // switch into edit mode instead of duplicating a POST.
           const reviewEntries = await Promise.all(vendorIds.map(async (vendorCompanyId) => {
             try {
-              const stats = await apiGet<{ reviews: Array<{ id: string; stars: number; body: string | null; rater_company_id: string; package_id: string }>; averageStars: number | null; count: number }>(
-                `/reviews?vendorCompanyId=${vendorCompanyId}`,
-              );
+              const stats = await apiGet<ReviewStats>(`/reviews?vendorCompanyId=${vendorCompanyId}`);
               return [vendorCompanyId, stats] as const;
             } catch {
               return [vendorCompanyId, null] as const;
             }
           }));
-          setReviewStats(Object.fromEntries(reviewEntries.map(([id, s]) => [id, s ? { averageStars: s.averageStars, count: s.count, reviews: s.reviews } : null])));
-          const mine: Record<string, { id: string; stars: number; body: string | null }> = {};
+          setReviewStats(Object.fromEntries(reviewEntries));
+          const mine: Record<string, ReviewRow> = {};
           for (const [vendorCompanyId, stats] of reviewEntries) {
             const own = stats?.reviews.find((r) => r.rater_company_id === devCompanyId && r.package_id === pk.id);
-            if (own) mine[vendorCompanyId] = { id: own.id, stars: own.stars, body: own.body };
+            if (own) mine[vendorCompanyId] = own;
           }
           setMyReviews(mine);
         }
@@ -305,17 +326,25 @@ export default function PackageDetail() {
     setReviewMsg(prev => ({ ...prev, [vendorCompanyId]: '' }));
     try {
       const existing = myReviews[vendorCompanyId];
-      const payload = { packageId: id, vendorCompanyId, stars: starsNum, body: form.body || undefined };
+      // Send an explicit value (never `undefined`) for body/lessonsLearned:
+      // JSON.stringify drops `undefined` keys entirely, so on an edit that
+      // clears previously-set text, the PATCH handler's `!== undefined`
+      // check would see no field at all and leave the stale text in place.
+      const shared = {
+        stars: starsNum, body: form.body,
+        wouldRehire: form.wouldRehire, onTime: form.onTime, onBudget: form.onBudget,
+        lessonsLearned: form.lessonsLearned,
+      };
       const res = existing
-        ? await apiSend('PATCH', `/reviews/${existing.id}`, { stars: starsNum, body: form.body || undefined })
-        : await apiSend('POST', '/reviews', payload);
+        ? await apiSend('PATCH', `/reviews/${existing.id}`, shared)
+        : await apiSend('POST', '/reviews', { packageId: id, vendorCompanyId, ...shared });
       const review = (res as any).review;
-      setMyReviews(prev => ({ ...prev, [vendorCompanyId]: { id: review.id, stars: review.stars, body: review.body } }));
+      setMyReviews(prev => ({ ...prev, [vendorCompanyId]: review }));
       setReviewForm(prev => ({ ...prev, [vendorCompanyId]: null }));
       setReviewMsg(prev => ({ ...prev, [vendorCompanyId]: existing ? 'Review updated.' : 'Review submitted.' }));
       // Refresh this vendor's public average so it's correct without a full reload.
       try {
-        const stats = await apiGet<{ reviews: any[]; averageStars: number | null; count: number }>(`/reviews?vendorCompanyId=${vendorCompanyId}`);
+        const stats = await apiGet<ReviewStats>(`/reviews?vendorCompanyId=${vendorCompanyId}`);
         setReviewStats(prev => ({ ...prev, [vendorCompanyId]: stats }));
       } catch { /* non-fatal */ }
     } catch (e: any) {
@@ -605,7 +634,7 @@ export default function PackageDetail() {
                           <td>{b.days} days</td>
                           <td><span className="badge b-neutral">{b.status}</span></td>
                           <td><ComplianceBadge snap={compliance[b.vendor_company_id]} /></td>
-                          <td><ReviewBadge stats={reviewStats[b.vendor_company_id]} /></td>
+                          <td><ReviewBadge stats={reviewStats[b.vendor_company_id]} currentCategory={p.category} /></td>
                           <td><FeeBadge fee={rel?.fee} relationship={rel} audience="developer" /></td>
                           <td style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                             {!rel && (
@@ -619,7 +648,11 @@ export default function PackageDetail() {
                                  onClick={() => {
                                    setReviewOpen(reviewOpen === b.vendor_company_id ? null : b.vendor_company_id);
                                    if (!reviewForm[b.vendor_company_id]) {
-                                     setReviewForm(prev => ({ ...prev, [b.vendor_company_id]: { stars: String(myReview?.stars ?? 5), body: myReview?.body ?? '' } }));
+                                     setReviewForm(prev => ({ ...prev, [b.vendor_company_id]: {
+                                       stars: String(myReview?.stars ?? 5), body: myReview?.body ?? '',
+                                       wouldRehire: myReview?.would_rehire ?? null, onTime: myReview?.on_time ?? null, onBudget: myReview?.on_budget ?? null,
+                                       lessonsLearned: myReview?.lessons_learned ?? '',
+                                     } }));
                                    }
                                  }}>
                                 {reviewOpen === b.vendor_company_id ? 'Cancel' : myReview ? 'Edit review' : 'Rate vendor'}
@@ -663,6 +696,42 @@ export default function PackageDetail() {
                                     value={reviewForm[b.vendor_company_id]?.body ?? ''}
                                     onChange={e => setReviewForm(prev => ({ ...prev, [b.vendor_company_id]: { ...prev[b.vendor_company_id]!, body: e.target.value } }))}
                                     placeholder="How did this vendor perform on this project?"
+                                  />
+                                </div>
+                                <div className="two" style={{ gap: 16, marginBottom: 4 }}>
+                                  {([
+                                    ['wouldRehire', 'Would you hire them again?'],
+                                    ['onTime', 'Delivered on time?'],
+                                    ['onBudget', 'Stayed on budget?'],
+                                  ] as const).map(([key, label]) => (
+                                    <div className="field" key={key}>
+                                      <label>{label}</label>
+                                      <div style={{ display: 'flex', gap: 6 }}>
+                                        {([['Yes', true], ['No', false], ['Skip', null]] as const).map(([btnLabel, val]) => (
+                                          <button
+                                            key={btnLabel}
+                                            type="button"
+                                            className="btn"
+                                            style={{
+                                              padding: '3px 10px', fontSize: 12,
+                                              ...(reviewForm[b.vendor_company_id]?.[key] === val ? { background: 'var(--emerald)', color: '#fff' } : {}),
+                                            }}
+                                            onClick={() => setReviewForm(prev => ({ ...prev, [b.vendor_company_id]: { ...prev[b.vendor_company_id]!, [key]: val } }))}
+                                          >
+                                            {btnLabel}
+                                          </button>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                                <div className="field">
+                                  <label>Lessons learned (optional - visible to other developers sourcing similar work)</label>
+                                  <textarea
+                                    rows={2}
+                                    value={reviewForm[b.vendor_company_id]?.lessonsLearned ?? ''}
+                                    onChange={e => setReviewForm(prev => ({ ...prev, [b.vendor_company_id]: { ...prev[b.vendor_company_id]!, lessonsLearned: e.target.value } }))}
+                                    placeholder="What would you tell the next developer hiring this vendor for similar work?"
                                   />
                                 </div>
                                 {reviewMsg[b.vendor_company_id] && <div className="note" style={{ marginBottom: 8 }}>{reviewMsg[b.vendor_company_id]}</div>}

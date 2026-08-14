@@ -58,8 +58,8 @@ test.after(async () => {
   await server.close();
 });
 
-async function awardedPackage(priceDollars: number) {
-  const pkg = await developer.client.post(`/api/buildings/${buildingId}/packages`, { category: "General" });
+async function awardedPackage(priceDollars: number, category = "General") {
+  const pkg = await developer.client.post(`/api/buildings/${buildingId}/packages`, { category });
   assert.equal(pkg.status, 201, JSON.stringify(pkg.body));
   const packageId = pkg.body.id ?? pkg.body.package?.id;
 
@@ -191,4 +191,55 @@ test("reviews: averageStars/count feed the public read, and lib/procure-moat.ts'
     ),
   );
   assert.ok(moatQuery[0].cnt >= 1, "diviniScore()'s own review query must see the newly written row");
+});
+
+// M-01 gap #12: lessons-learned knowledge base fields (would_rehire/on_time/
+// on_budget/lessons_learned), and the package's trade category surfaced on
+// each review row so a developer sourcing similar work can find relevant
+// past notes - never a derived score, just facts plus a guided text field.
+test("reviews: lessons-learned fields round-trip on create, edit, and the public read, with the package's category attached", async () => {
+  const { packageId, poId } = await awardedPackage(6000, "Electrical");
+  await developer.client.patch(`/api/award/purchase-orders/${poId}`, { status: "fulfilled" });
+
+  const create = await developer.client.post("/api/reviews", {
+    packageId, vendorCompanyId, stars: 5, body: "Great crew",
+    wouldRehire: true, onTime: true, onBudget: false,
+    lessonsLearned: "Confirm panel lead times up front - that was our only delay.",
+  });
+  assert.equal(create.status, 201, JSON.stringify(create.body));
+  assert.equal(create.body.review.would_rehire, true);
+  assert.equal(create.body.review.on_time, true);
+  assert.equal(create.body.review.on_budget, false);
+  assert.equal(create.body.review.lessons_learned, "Confirm panel lead times up front - that was our only delay.");
+
+  const publicRead = await outsider.client.get(`/api/reviews?vendorCompanyId=${vendorCompanyId}&packageId=${packageId}`);
+  assert.equal(publicRead.status, 200);
+  const row = publicRead.body.reviews.find((r: any) => r.id === create.body.review.id);
+  assert.ok(row, "the new review must appear in the public read");
+  assert.equal(row.package_category, "Electrical");
+  assert.equal(row.would_rehire, true);
+  assert.equal(row.lessons_learned, "Confirm panel lead times up front - that was our only delay.");
+  assert.equal(publicRead.body.wouldRehireYes, 1);
+  assert.equal(publicRead.body.wouldRehireNo, 0);
+
+  const edit = await developer.client.patch(`/api/reviews/${create.body.review.id}`, { wouldRehire: false, lessonsLearned: "Updated note." });
+  assert.equal(edit.status, 200, JSON.stringify(edit.body));
+  assert.equal(edit.body.review.would_rehire, false);
+  assert.equal(edit.body.review.lessons_learned, "Updated note.");
+
+  const afterEdit = await outsider.client.get(`/api/reviews?vendorCompanyId=${vendorCompanyId}&packageId=${packageId}`);
+  assert.equal(afterEdit.body.wouldRehireYes, 0);
+  assert.equal(afterEdit.body.wouldRehireNo, 1);
+});
+
+test("reviews: lessons-learned fields are all optional - a plain review with none of them still works", async () => {
+  const { packageId, poId } = await awardedPackage(6500, "Plumbing");
+  await developer.client.patch(`/api/award/purchase-orders/${poId}`, { status: "fulfilled" });
+
+  const create = await developer.client.post("/api/reviews", { packageId, vendorCompanyId, stars: 3 });
+  assert.equal(create.status, 201, JSON.stringify(create.body));
+  assert.equal(create.body.review.would_rehire, null);
+  assert.equal(create.body.review.on_time, null);
+  assert.equal(create.body.review.on_budget, null);
+  assert.equal(create.body.review.lessons_learned, null);
 });

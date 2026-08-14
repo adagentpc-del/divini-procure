@@ -27,6 +27,22 @@
 
 alter table reviews add column if not exists updated_at timestamptz not null default now();
 
+-- M-01 gap #12 ("lessons-learned vendor knowledge base tied to past project
+-- performance" - ProcurePro): structured, factual fields alongside the
+-- freeform stars/body a developer already leaves - never a derived score,
+-- matching lib/vendor-signals.ts's "facts only, never a score" rule. Each
+-- is a plain yes/no/unanswered (null) the rater optionally sets, plus one
+-- guided text field distinct from the general `body` comment, specifically
+-- prompting "what would you tell the next developer hiring this vendor for
+-- similar work" - the actual knowledge-base content, not just a rating.
+-- The trade category itself is not duplicated onto reviews - it is read via
+-- reviews.package_id -> packages.category at query time (routes/reviews.ts),
+-- so it can never drift from the package it actually came from.
+alter table reviews add column if not exists would_rehire boolean;
+alter table reviews add column if not exists on_time boolean;
+alter table reviews add column if not exists on_budget boolean;
+alter table reviews add column if not exists lessons_learned text;
+
 -- Anti-duplicate: one review per (rater, ratee, package) triple. An edit
 -- goes through UPDATE, not a second INSERT.
 create unique index if not exists reviews_rater_ratee_package_uidx
