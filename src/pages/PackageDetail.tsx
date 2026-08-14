@@ -59,6 +59,10 @@ export default function PackageDetail() {
   // vendor prequalification (competitive gap closure): per-vendor compliance
   // snapshot against this building's COI/license requirements, owner view only
   const [compliance, setCompliance] = useState<Record<string, { compliant: boolean; coi: { missingTypes: string[]; expiredRequiredTypes: string[] }; licenses: { missingTypes: string[]; expiredRequiredTypes: string[] } } | null>>({});
+  // bidirectional payment-behavior reputation (competitive gap closure):
+  // vendor-facing view of this developer's real payment timing, public and
+  // aggregate-only - see lib/payment-reputation.ts
+  const [paymentRep, setPaymentRep] = useState<{ paidInvoiceCount: number; averageDaysToPayment: number | null } | null>(null);
   // monetization V2: bid credits + verification gating (null = gate off)
   const [credits, setCredits] = useState<BidCredits | null>(null);
   const [verif, setVerif] = useState<Verification | null>(null);
@@ -128,6 +132,17 @@ export default function PackageDetail() {
     }
   }
   useEffect(() => { load(); }, [id]);
+
+  // Payment reputation: vendor-facing, public aggregate of how this
+  // developer has actually paid in the past. Fetched independently of
+  // load() since it has nothing to do with this package's own state.
+  useEffect(() => {
+    const devCompanyId = p?.building?.company_id;
+    if (!devCompanyId || !isVendor || isOwner) { setPaymentRep(null); return; }
+    apiGet<{ paidInvoiceCount: number; averageDaysToPayment: number | null }>(`/payment-reputation/${devCompanyId}`)
+      .then(setPaymentRep)
+      .catch(() => setPaymentRep(null));
+  }, [p?.building?.company_id, isVendor, isOwner]);
 
   // Financial summary is developer-only (matches the API's own
   // authorization) and re-fetched whenever the package or ownership
@@ -391,6 +406,15 @@ export default function PackageDetail() {
             </form>
           )}
         </>
+      )}
+
+      {/* Vendor: payment reputation of this developer, public and factual */}
+      {isVendor && !isOwner && paymentRep && (
+        <div className="note" style={{ marginBottom: 14 }}>
+          {paymentRep.paidInvoiceCount > 0 && paymentRep.averageDaysToPayment != null
+            ? `This developer has paid ${paymentRep.paidInvoiceCount} invoice${paymentRep.paidInvoiceCount === 1 ? '' : 's'} on Divini, averaging ${paymentRep.averageDaysToPayment} day${paymentRep.averageDaysToPayment === 1 ? '' : 's'} from invoice submission to payment.`
+            : 'This developer has no paid-invoice history on Divini yet.'}
+        </div>
       )}
 
       {/* Vendor: submit bid */}
