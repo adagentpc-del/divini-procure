@@ -12,9 +12,11 @@
  *
  * Endpoints:
  *   GET  /divini-score/:companyId              (member of company, or admin)
+ *   GET  /divini-score/:companyId/history?asOf= (member of company, or admin - Procurement Graph G-03)
  *   GET  /war-room?projectId=                  (member of the project's company)
  *   GET  /war-room?companyId=                  (member of company)
  *   GET  /relationship/graph?companyId=        (member of company, or admin)
+ *   GET  /related-packages/:packageId          (developer of the package's project, or admin - G-02b)
  *   POST /admin/relationship-edges/rebuild     (admin)
  *   GET  /admin/divini-scores                  (admin)
  *
@@ -23,15 +25,19 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { getAuth, requireUser, requireAdmin } from "../auth.js";
 import { ForbiddenError, NotFoundError } from "../db.js";
+import { ValidationError } from "../lib/errors.js";
 import { q1 } from "../pool.js";
 import {
   diviniScore,
+  diviniScoreAsOf,
   listScores,
   buildRelationshipEdges,
   relationshipGraph,
+  relatedPackages,
   warRoom,
   portfolioWarRoom,
 } from "../lib/procure-moat.js";
+import { packageContext, isMemberOfCompany } from "../lib/financial-auth.js";
 
 // Async handler wrapper that funnels errors to the error middleware.
 const h =
@@ -139,6 +145,47 @@ router.get(
     const entityKind = req.query.entityKind ? String(req.query.entityKind) : undefined;
     const limit = req.query.limit ? Number(req.query.limit) : 100;
     res.json({ scores: await listScores(entityKind, limit) });
+  }),
+);
+
+// ---------------------------------------------------------------------------
+// GET /divini-score/:companyId/history?asOf=YYYY-MM-DD  (Procurement Graph G-03)
+// ---------------------------------------------------------------------------
+router.get(
+  "/divini-score/:companyId/history",
+  requireUser,
+  h(async (req, res) => {
+    const companyId = req.params.companyId;
+    await assertMember(req, companyId);
+    const asOfRaw = req.query.asOf ? String(req.query.asOf) : "";
+    if (!asOfRaw) return res.status(400).json({ error: "asOf query param required (YYYY-MM-DD)" });
+    const asOfDate = new Date(asOfRaw);
+    if (Number.isNaN(asOfDate.getTime())) {
+      throw new ValidationError("asOf must be a valid date");
+    }
+    if (asOfDate.getTime() > Date.now()) {
+      throw new ValidationError("asOf cannot be in the future");
+    }
+    const result = await diviniScoreAsOf(companyId, asOfDate);
+    if (!result) throw new NotFoundError("company not found");
+    res.json(result);
+  }),
+);
+
+// ---------------------------------------------------------------------------
+// GET /related-packages/:packageId  (Procurement Graph G-02b)
+// ---------------------------------------------------------------------------
+router.get(
+  "/related-packages/:packageId",
+  requireUser,
+  h(async (req, res) => {
+    const auth = getAuth(req);
+    const ctx = await packageContext(req.params.packageId);
+    if (!ctx) throw new NotFoundError("package not found");
+    if (!auth.isAdmin && !(await isMemberOfCompany(auth.userId!, ctx.developer_company_id))) {
+      throw new ForbiddenError("not the developer of this package's project");
+    }
+    res.json({ related: await relatedPackages(req.params.packageId) });
   }),
 );
 
