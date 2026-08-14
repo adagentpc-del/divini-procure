@@ -25,21 +25,21 @@ payments/compliance/pricing, explicit authorization) before implementation.
 
 ## Ranked gap list (highest priority first)
 
-1. **Lien waiver management with e-sign + escrow-hold-until-payment** — GCPay, Trimble Pay, Textura, Levelset. Nearly universal among payment-focused competitors; Divini's financial spine covers payments/retainage but not the lien-waiver workflow itself. A major US construction-payments compliance gap.
-2. **Automated preliminary notice / mechanics-lien filing by jurisdiction** — Levelset. High-friction legal compliance turned into a sticky service; nobody else in this comparison set offers it.
-3. **Vendor prequalification & insurance/COI/license compliance tracking** — BuildingConnected (TradeTapp), Avetta, Vertikal RMS, Jones, Billy. Table stakes for enterprise GCs; would meaningfully deepen the Divini Score with hard compliance data rather than only transactional history.
-4. **Free/freemium subcontractor-side tier to drive network growth** — BuildingConnected, PlanHub. A GTM gap, not a feature gap: marketplace network effects depend on low-friction, no-cost vendor onboarding.
-5. **Bid leveling & side-by-side quote comparison with historical cost benchmarking** — Procore, BuildingConnected, ProcurePro. Divini has quote comparison (`quote-comparison.ts`) but not cross-project historical benchmarking - notably, this is exactly the "cost benchmarking" capability the AI/Procurement Graph freeze explicitly excludes until authorized.
-6. **Plan room with granular activity tracking** (who viewed/downloaded/bid) — PlanHub, Procore, BuildingConnected. Goes beyond document management into bid-engagement transparency for the developer.
-7. **Deep accounting/ERP integrations** (QuickBooks, Sage, Xero, Viewpoint) — Buildertrend, GCPay, ProcurePro. Commonly cited adoption blocker when a procurement/financial tool doesn't sync with a GC's existing books. **Partially closed (INV-01):** a generic invoices CSV export (`GET /reports/invoices/:buildingId.csv`, docs/accounting-export.md) shaped for import into any accounting system's own generic bill/journal importer. Deliberately NOT a certified/OAuth-connected QuickBooks or Xero integration - that needs developer credentials and a real account to test honestly, which this environment does not have. The invoice model itself (P1-10) also had no frontend at all until INV-01 added it to AwardWorkflow.tsx; before this, invoices were create/read-only via direct API calls.
-8. **AI-generated scope-of-work / RFP bundles from plans and specs** — Brickanta, Parspec, Procore AI. A live 2025-26 competitive wedge; strong structural fit for Divini's canonical data spine, but explicitly out of scope under the current AI freeze ("AI package generation" is named directly).
-9. **Early-payment / trade-credit financing for subcontractors** — Billd, Briq Cash, and the newly funded subcontractor-payments marketplace. A fintech layer competitors bundle onto payment data; a natural extension of Divini's payments/retainage spine, but a monetization/lending decision, not an engineering one - out of scope under the pricing freeze without explicit authorization.
-10. **Mobile-first field execution app** (daily logs, time clock, photos, punch lists) — Buildertrend, Procore, BuildOps. Divini is procurement/financial-centric with no field-execution mobile surface.
-11. **Open app marketplace / public API ecosystem** — Procore, Autodesk Construction Cloud, ProcurePro's integration list. Extensibility functions as a moat and reduces switching-cost objections.
+1. **Lien waiver management with e-sign + escrow-hold-until-payment** — GCPay, Trimble Pay, Textura, Levelset. Nearly universal among payment-focused competitors; Divini's financial spine covers payments/retainage but not the lien-waiver workflow itself. A major US construction-payments compliance gap. **Closed (LW-01, LW-02):** e-signature and invoice linkage, plus the signing UI.
+2. **Automated preliminary notice / mechanics-lien filing by jurisdiction** — Levelset. High-friction legal compliance turned into a sticky service; nobody else in this comparison set offers it. **Still blocked:** needs real per-jurisdiction legal filing data/rules this environment can't source or validate honestly.
+3. **Vendor prequalification & insurance/COI/license compliance tracking** — BuildingConnected (TradeTapp), Avetta, Vertikal RMS, Jones, Billy. Table stakes for enterprise GCs; would meaningfully deepen the Divini Score with hard compliance data rather than only transactional history. **Closed (VQ-01):** license tracking + compliance snapshot.
+4. **Free/freemium subcontractor-side tier to drive network growth** — BuildingConnected, PlanHub. A GTM gap, not a feature gap: marketplace network effects depend on low-friction, no-cost vendor onboarding. **Still open** — not built. Note this is arguably pricing/tiering policy, not pure engineering, so treat as freeze-adjacent pending explicit sign-off before implementation.
+5. **Bid leveling & side-by-side quote comparison with historical cost benchmarking** — Procore, BuildingConnected, ProcurePro. Divini has quote comparison (`quote-comparison.ts`) but not cross-project historical benchmarking - notably, this is exactly the "cost benchmarking" capability the AI/Procurement Graph freeze explicitly excludes until authorized. **Still frozen.**
+6. **Plan room with granular activity tracking** (who viewed/downloaded/bid) — PlanHub, Procore, BuildingConnected. Goes beyond document management into bid-engagement transparency for the developer. **Closed (PA-01, DOC-01):** who-viewed tracking, plus the document-visibility fix that unblocked download tracking for bidding vendors.
+7. **Deep accounting/ERP integrations** (QuickBooks, Sage, Xero, Viewpoint) — Buildertrend, GCPay, ProcurePro. Commonly cited adoption blocker when a procurement/financial tool doesn't sync with a GC's existing books. **Partially closed (INV-01):** a generic invoices CSV export (`GET /reports/invoices/:buildingId.csv`, docs/accounting-export.md) shaped for import into any accounting system's own generic bill/journal importer. Deliberately NOT a certified/OAuth-connected QuickBooks or Xero integration - that needs developer credentials and a real account to test honestly, which this environment does not have. The invoice model itself (P1-10) also had no frontend at all until INV-01 added it to AwardWorkflow.tsx; before this, invoices were create/read-only via direct API calls. **Still open:** the certified OAuth integrations themselves remain undone and untestable here.
+8. **AI-generated scope-of-work / RFP bundles from plans and specs** — Brickanta, Parspec, Procore AI. A live 2025-26 competitive wedge; strong structural fit for Divini's canonical data spine, but explicitly out of scope under the current AI freeze ("AI package generation" is named directly). **Still frozen.**
+9. **Early-payment / trade-credit financing for subcontractors** — Billd, Briq Cash, and the newly funded subcontractor-payments marketplace. A fintech layer competitors bundle onto payment data; a natural extension of Divini's payments/retainage spine, but a monetization/lending decision, not an engineering one - out of scope under the pricing freeze without explicit authorization. **Still frozen.**
+10. **Mobile-first field execution app** (daily logs, time clock, photos, punch lists) — Buildertrend, Procore, BuildOps. Divini is procurement/financial-centric with no field-execution mobile surface. **Still blocked:** no mobile build/release pipeline available in this environment.
+11. **Open app marketplace / public API ecosystem** — Procore, Autodesk Construction Cloud, ProcurePro's integration list. Extensibility functions as a moat and reduces switching-cost objections. **Partially closed (API-01):** developer API platform with personal-access-token keys. Still open: a public app marketplace/listing layer on top of the raw API.
 12. **"Lessons-learned" vendor knowledge base tied to past project performance** — ProcurePro. A relatively cheap, high-value enrichment of the Divini Score with qualitative post-project data. **Closed:** the existing post-completion review (REV-01) now also captures three optional facts (would rehire / on time / on budget) and a guided "what would you tell the next developer hiring this vendor for similar work" field, each review's originating package's trade category is surfaced alongside it, and a developer viewing bids sees same-category past lessons highlighted first when evaluating a vendor for a similar project. Deliberately NOT folded into the Divini Score's numeric calculation - matching lib/vendor-signals.ts's "facts only, never a score" rule already established this session; the knowledge-base value is in surfacing the actual notes, not another hidden weighting.
-13. **Bidirectional reputation: developer/GC payment-behavior transparency**, not just vendor scoring — Levelset's "payment profiles" (which GCs pay late). A differentiated trust signal Divini's two-sided marketplace could uniquely own, since it already sits on the full payment spine (`payment_authorizations`, `external_payment_records`) - this is a natural `procure-moat.ts` extension, same shape as the commitment-weighted edges just built.
-14. **Client/investor-facing transparency portal** — Buildertrend's homeowner portal (residential pattern), adaptable to a lightweight investor-visibility view of the frozen Capital Partner module - but any change there needs its own explicit authorization per the standing investor/capital freeze.
-15. **Algorithmic discovery, onboarding wizards, richer trust badges** (verified/top-rated/response-time SLAs) — Faire, Thumbtack, Upwork. Adjacent-marketplace UX patterns that would improve marketplace conversion versus a static vendor directory.
+13. **Bidirectional reputation: developer/GC payment-behavior transparency**, not just vendor scoring — Levelset's "payment profiles" (which GCs pay late). A differentiated trust signal Divini's two-sided marketplace could uniquely own, since it already sits on the full payment spine (`payment_authorizations`, `external_payment_records`) - this is a natural `procure-moat.ts` extension, same shape as the commitment-weighted edges just built. **Closed (PR-01).**
+14. **Client/investor-facing transparency portal** — Buildertrend's homeowner portal (residential pattern), adaptable to a lightweight investor-visibility view of the frozen Capital Partner module - but any change there needs its own explicit authorization per the standing investor/capital freeze. **Still frozen.**
+15. **Algorithmic discovery, onboarding wizards, richer trust badges** (verified/top-rated/response-time SLAs) — Faire, Thumbtack, Upwork. Adjacent-marketplace UX patterns that would improve marketplace conversion versus a static vendor directory. **Still open** — not built, no freeze conflict.
 
 ## How this maps onto Divini's standing freezes
 
@@ -58,11 +58,21 @@ are **not** implicitly authorized by this analysis:
 Gaps #1-4, #6-7, #10-13, and #15 are ordinary product/engineering work with
 no freeze conflict - the natural pool to prioritize from next.
 
+**Status as of this update:** #1, #3, #6, #12, #13 are closed; #7 and #11
+are partially closed (the parts needing real third-party OAuth credentials
+or a certified integration remain out of reach in this environment); #2 and
+#10 are genuinely blocked here (jurisdiction legal data, mobile build
+pipeline) rather than frozen; #5, #8, #9, #14 remain frozen. That leaves
+**#4** (freemium subcontractor tier - flagged as pricing-adjacent, wants
+sign-off) and **#15** (discovery/trust-badge UX) as the only fully open,
+non-frozen, environment-feasible items left on this list.
+
 ## Suggested next step
 
-This is a snapshot, not a roadmap. If you want to act on it, the next step
-is picking 2-3 items from the non-frozen pool (most likely #1 lien waivers,
-#3 vendor prequalification, and #13 bidirectional reputation, given they
-build directly on financial/relationship data Divini already has) for a
-proper scoping pass before any implementation - matching how the AI layer
-work was scoped before it was built.
+This is a snapshot, not a roadmap. Of the remaining pool, **#15** (richer
+trust badges / discovery UX) is the cleanest next pick: no freeze conflict,
+no external-credential blocker, and it builds on vendor-signal data
+(Divini Score, reviews, prequalification, payment reputation) that already
+exists. #4 is buildable but is really a pricing/tiering decision dressed as
+a feature - worth a explicit go-ahead before scoping, given the standing
+pricing freeze.
