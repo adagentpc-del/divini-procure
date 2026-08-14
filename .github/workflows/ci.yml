@@ -42,6 +42,21 @@ jobs:
         # (SOC 2 CC4/CC7) for the triage process.
         run: npm audit --omit=dev || true
 
+      - name: Dependency vulnerability gate (high/critical, production deps) - SPA
+        # Compliance completion pass (closes part of R-12, docs/platform-
+        # standard/release-readiness.md): unlike the report-only scan above,
+        # this DOES fail the build, but only at high/critical severity - a
+        # known-exploitable production dependency should block a release the
+        # same way a failing test does. Moderate/low findings stay
+        # report-only above; they are common, frequently have no available
+        # fix, and gating on them would make this check noisy enough to
+        # ignore. Currently clean (0 high/critical) - verified locally
+        # before adding this gate.
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Dependency vulnerability gate (high/critical, production deps) - server
+        run: npm audit --omit=dev --audit-level=high --prefix server
+
   db-schema:
     name: Validate db/apply-all.sql on a fresh database
     runs-on: ubuntu-latest
