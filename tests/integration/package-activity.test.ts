@@ -6,13 +6,9 @@
  * lib/package-activity.ts + schema-package-activity.sql.
  *
  * Document-download tracking (logDocumentDownload, wired into
- * /documents/signed-url) is intentionally NOT exercised here: the
- * documents table's own RLS (schema-rls.sql) and that endpoint's app-layer
- * check both restrict a signed URL to the uploading company or admin, so a
- * genuinely cross-company vendor download is not currently reachable
- * through the real request path - a separate, pre-existing gap, not
- * something this pass claims to have fixed. The logging code itself is
- * correct and forward-compatible with that gap being closed later.
+ * /documents/signed-url) is now exercised end to end - DOC-01 fixed the
+ * pre-existing gap that made a cross-company vendor's document access
+ * unreachable in the first place (see package-document-visibility.test.ts).
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -89,4 +85,33 @@ test("package activity: a vendor viewing the package logs a 'viewed' event visib
   // activity summary is developer-only, matching the schema's own RLS.
   const vendorAView = await vendorA.client.get(`/api/packages/${packageId}/activity`);
   assert.equal(vendorAView.status, 403, JSON.stringify(vendorAView.body));
+});
+
+test("package activity: a vendor requesting a signed download URL for a package document logs a 'document_downloaded' event", async () => {
+  const bytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34]);
+  const form = new FormData();
+  form.append("file", new Blob([bytes], { type: "application/pdf" }), "spec.pdf");
+  form.append("companyId", developerCompanyId);
+  form.append("buildingId", buildingId);
+  form.append("packageId", packageId);
+  const uploadRes = await fetch(`${server.baseUrl}/api/documents`, {
+    method: "POST",
+    headers: { Cookie: (developer.client as any).cookie as string },
+    body: form,
+  });
+  assert.equal(uploadRes.status, 201);
+  const uploadBody = await uploadRes.json();
+  const storagePath = uploadBody.storage_path as string;
+
+  const before = await developer.client.get(`/api/packages/${packageId}/activity`);
+  const beforeDownloads = before.body.totalDownloads;
+
+  const signed = await vendorA.client.get(`/api/documents/signed-url?path=${encodeURIComponent(storagePath)}`);
+  assert.equal(signed.status, 200, JSON.stringify(signed.body));
+
+  const after = await developer.client.get(`/api/packages/${packageId}/activity`);
+  assert.equal(after.body.totalDownloads, beforeDownloads + 1, JSON.stringify(after.body));
+  const vendorARow = after.body.perVendor.find((v: any) => v.viewerCompanyId === vendorACompanyId);
+  assert.ok(vendorARow, "vendor A must appear in the activity summary");
+  assert.ok(vendorARow.downloadCount >= 1);
 });
