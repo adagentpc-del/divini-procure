@@ -4841,3 +4841,9 @@ COMMIT;
 -- Phase 1 P1-13/P1-18: package financial closeout markers - see the file's
 -- own header.
 \i db/schema-package-closeout.sql
+
+-- Compliance completion pass: RLS for the 4 Divini Bid Studio satellite
+-- tables that had none at the database level (bid_payment_milestones,
+-- bid_versions, bid_templates, bid_template_line_items) - see the file's
+-- own header for how this was found and the policy source of truth.
+\i db/schema-rls-bid-studio.sql

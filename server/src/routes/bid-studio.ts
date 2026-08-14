@@ -77,7 +77,12 @@ async function authorizeViaChild(req: Request, table: "bid_line_items" | "bid_pa
 }
 
 async function loadLineItems(bidId: string): Promise<any[]> {
-  return q(`select * from bid_line_items where bid_id = $1 order by sort_order asc, created_at asc`, [bidId]);
+  // bid_line_items has no created_at column (unlike bid_payment_milestones);
+  // sort_order is the only real ordering field, matching loadMilestones()
+  // below. Ordering by a second, nonexistent column here was a genuine bug
+  // that 500'd every call - live-reproduced and fixed as part of the
+  // compliance completion pass.
+  return q(`select * from bid_line_items where bid_id = $1 order by sort_order asc`, [bidId]);
 }
 async function loadMilestones(bidId: string): Promise<any[]> {
   return q(`select * from bid_payment_milestones where bid_id = $1 order by sort_order asc`, [bidId]);
