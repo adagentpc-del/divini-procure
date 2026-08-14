@@ -26,10 +26,23 @@ import { notifyCompanyMembers } from "../lib/notify.js";
 import { enqueueJob } from "../lib/jobs.js";
 import { PROCURE_MONETIZATION_V2 } from "../config.js";
 import { llmRateLimit } from "../lib/rateLimit.js";
+import { TtlCache, hashInput } from "../lib/cache.js";
 
 // 30 LLM-powered requests per user per hour. Applied to the quote-analysis
 // endpoint which is the only one that conditionally calls llmText().
 const intelLlmLimit = llmRateLimit({ max: 30, windowMs: 60 * 60_000 });
+
+// Quote-comparison narratives are a pure function of the priced bid set for
+// a package (see summaryInput below) - every page view of the same
+// unchanged comparison would otherwise re-call the LLM for an identical
+// prompt. Cached by content hash, not packageId alone, so a genuinely new
+// bid, price revision, or status change naturally invalidates it (the hash
+// changes) without any manual invalidation bookkeeping. 30 minute TTL: long
+// enough to absorb repeat views/refreshes, short enough that a stale
+// narrative never survives long even in the (already-impossible, given the
+// hash key) case of a missed invalidation.
+const narrativeCache = new TtlCache<string>();
+const NARRATIVE_TTL_MS = 30 * 60_000;
 
 /**
  * Monetization V2 gate: when the flag is ON, only VERIFIED vendors may be
@@ -553,14 +566,27 @@ router.get(
           : null,
         savings_opportunity: savings,
       };
-      const text = await llmText(
-        "You are a procurement analyst. In 2 to 4 short sentences, summarize this bid comparison " +
-          "for a buyer. Use ONLY the numbers provided. Do not invent figures, do not give legal or " +
-          "financial advice, and do not recommend anything beyond what the data supports. Data:\n" +
-          JSON.stringify(summaryInput),
-        { timeoutMs: 15000 },
-      );
-      narrative = text.trim() ? text.trim().slice(0, 1200) : null;
+      // Only a genuine, non-empty narrative is ever cached - llmText() never
+      // throws and returns "" on any failure (timeout, provider outage,
+      // misconfiguration), and caching that "failure" would silently
+      // suppress the narrative for the full TTL even after the LLM
+      // recovers, for as long as the bid set stays unchanged. A cache miss
+      // (including a prior failure) always retries for real.
+      const cacheKey = `quote-narrative:${packageId}:${hashInput(summaryInput)}`;
+      const cached = narrativeCache.get(cacheKey);
+      if (cached !== undefined) {
+        narrative = cached;
+      } else {
+        const text = await llmText(
+          "You are a procurement analyst. In 2 to 4 short sentences, summarize this bid comparison " +
+            "for a buyer. Use ONLY the numbers provided. Do not invent figures, do not give legal or " +
+            "financial advice, and do not recommend anything beyond what the data supports. Data:\n" +
+            JSON.stringify(summaryInput),
+          { timeoutMs: 15000 },
+        );
+        narrative = text.trim() ? text.trim().slice(0, 1200) : null;
+        if (narrative) narrativeCache.set(cacheKey, narrative, NARRATIVE_TTL_MS);
+      }
     }
 
     res.json({
