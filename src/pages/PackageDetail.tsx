@@ -63,6 +63,9 @@ export default function PackageDetail() {
   // vendor-facing view of this developer's real payment timing, public and
   // aggregate-only - see lib/payment-reputation.ts
   const [paymentRep, setPaymentRep] = useState<{ paidInvoiceCount: number; averageDaysToPayment: number | null } | null>(null);
+  // plan room activity tracking (competitive gap closure): developer-only
+  // "who's engaging with this package" - see lib/package-activity.ts
+  const [activity, setActivity] = useState<{ totalViews: number; distinctViewerCompanies: number; totalDownloads: number; perVendor: Array<{ viewerCompanyId: string; viewerCompanyName: string | null; viewCount: number; downloadCount: number; lastActivityAt: string }> } | null>(null);
   // monetization V2: bid credits + verification gating (null = gate off)
   const [credits, setCredits] = useState<BidCredits | null>(null);
   const [verif, setVerif] = useState<Verification | null>(null);
@@ -115,6 +118,11 @@ export default function PackageDetail() {
             }
           }));
           setCompliance(Object.fromEntries(entries));
+        }
+        try {
+          setActivity(await apiGet(`/packages/${pk.id}/activity`));
+        } catch {
+          setActivity(null);
         }
         setPubForm({
           visibility: pk.visibility ?? 'public_marketplace',
@@ -478,6 +486,28 @@ export default function PackageDetail() {
                 )}
               </>
             )}
+          </div>
+        </>
+      )}
+
+      {/* Owner: plan room activity - who's engaging with this package */}
+      {isOwner && activity && activity.distinctViewerCompanies > 0 && (
+        <>
+          <div className="sectitle">Plan room activity</div>
+          <div className="card" style={{ padding: 0, marginBottom: 18 }}>
+            <table>
+              <thead><tr><th>Vendor</th><th>Views</th><th>Downloads</th><th>Last activity</th></tr></thead>
+              <tbody>
+                {activity.perVendor.map(v => (
+                  <tr key={v.viewerCompanyId}>
+                    <td><strong>{v.viewerCompanyName ?? v.viewerCompanyId}</strong></td>
+                    <td>{v.viewCount}</td>
+                    <td>{v.downloadCount}</td>
+                    <td>{new Date(v.lastActivityAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </>
       )}

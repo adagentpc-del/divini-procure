@@ -4857,3 +4857,7 @@ COMMIT;
 -- file's own header for why this is facts-only and not folded into the
 -- Divini Score.
 \i db/schema-vendor-prequalification.sql
+
+-- Plan room activity tracking: who viewed/downloaded, developer-facing
+-- only (competitive gap closure) - see the file's own header.
+\i db/schema-package-activity.sql

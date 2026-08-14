@@ -51,6 +51,7 @@ import {
   readPath,
   fileExists,
 } from "./storage.js";
+import { logPackageView, logDocumentDownload, getPackageActivitySummary } from "./lib/package-activity.js";
 import adminExtraRouter from "./routes/admin-extra.js";
 import publicCaptureRouter from "./routes/public-capture.js";
 import referralPartnerOnboardingRouter from "./routes/referral-partner-onboarding.js";
@@ -428,7 +429,44 @@ router.get(
   requireUser,
   h(async (req, res) => {
     const auth = getAuth(req);
-    res.json((await db.getPackage(auth.userId!, req.params.id, auth.isAdmin)) ?? null);
+    const pkg = await db.getPackage(auth.userId!, req.params.id, auth.isAdmin);
+    if (pkg) {
+      const developerCompanyId = pkg.building?.company_id as string | undefined;
+      // Plan room activity tracking (competitive gap closure): log a
+      // 'viewed' event only when a genuinely different company (a
+      // prospective vendor, not the package's own developer, and never
+      // admin) is looking at it - the developer's own repeated visits to
+      // their own package are not "vendor engagement."
+      if (developerCompanyId && auth.userId && !auth.isAdmin) {
+        const ids = await db.userCompanyIds(auth.userId);
+        const viewerCompanyId = ids.find((cid) => cid !== developerCompanyId);
+        if (viewerCompanyId) {
+          void logPackageView({ packageId: pkg.id, buildingId: pkg.building.id, developerCompanyId, viewerCompanyId });
+        }
+      }
+    }
+    res.json(pkg ?? null);
+  }),
+);
+
+// Plan room activity summary (competitive gap closure): developer-only
+// ("this is the developer's engagement intelligence, not the viewing
+// vendor's" - see schema-package-activity.sql). RLS on
+// package_activity_events independently enforces the same restriction.
+router.get(
+  "/packages/:id/activity",
+  requireUser,
+  h(async (req, res) => {
+    const auth = getAuth(req);
+    const pkg = await db.getPackage(auth.userId!, req.params.id, auth.isAdmin);
+    if (!pkg) throw new NotFoundError("package not found");
+    const developerCompanyId = pkg.building?.company_id as string | undefined;
+    if (!auth.isAdmin) {
+      if (!developerCompanyId) throw new ForbiddenError("not authorized to view this package's activity");
+      const ids = await db.userCompanyIds(auth.userId!);
+      if (!ids.includes(developerCompanyId)) throw new ForbiddenError("not authorized to view this package's activity");
+    }
+    res.json(await getPackageActivitySummary(pkg.id));
   }),
 );
 
@@ -738,6 +776,32 @@ router.get(
       const ids = await db.userCompanyIds(auth.userId);
       if (!ids.includes(doc.company_id) && !auth.isAdmin) {
         return res.status(403).json({ error: "access denied" });
+      }
+    }
+    // Plan room activity tracking (competitive gap closure): log a
+    // 'document_downloaded' event when this document belongs to a
+    // package and the downloader is a genuinely different company than
+    // the package's own developer (not the developer re-opening its own
+    // upload, and never admin).
+    if (doc.package_id && auth.userId && !auth.isAdmin) {
+      const pkgRow = await q1<{ id: string; building_id: string; company_id: string }>(
+        `select p.id, p.building_id, b.company_id
+           from packages p join buildings b on b.id = p.building_id
+          where p.id = $1`,
+        [doc.package_id],
+      );
+      if (pkgRow) {
+        const ids = await db.userCompanyIds(auth.userId);
+        const viewerCompanyId = ids.find((cid) => cid !== pkgRow.company_id);
+        if (viewerCompanyId) {
+          void logDocumentDownload({
+            packageId: pkgRow.id,
+            buildingId: pkgRow.building_id,
+            developerCompanyId: pkgRow.company_id,
+            viewerCompanyId,
+            documentId: doc.id,
+          });
+        }
       }
     }
     res.json({ signedUrl: signDownloadUrl(path) });
