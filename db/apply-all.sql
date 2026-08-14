@@ -4851,3 +4851,9 @@ COMMIT;
 -- Lien waiver e-signature + invoice linkage (competitive gap closure) -
 -- see the file's own header for the escrow-vs-payment-status distinction.
 \i db/schema-lien-waiver-signatures.sql
+
+-- Vendor prequalification: license tracking + relationship-scoped
+-- cross-company COI/license visibility (competitive gap closure) - see the
+-- file's own header for why this is facts-only and not folded into the
+-- Divini Score.
+\i db/schema-vendor-prequalification.sql

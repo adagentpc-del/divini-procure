@@ -19,6 +19,22 @@ import {
   type BidCredits, type Verification,
 } from '../lib/monetization';
 
+function ComplianceBadge({ snap }: { snap: { compliant: boolean; coi: { missingTypes: string[]; expiredRequiredTypes: string[] }; licenses: { missingTypes: string[]; expiredRequiredTypes: string[] } } | null | undefined }) {
+  if (!snap) return <span className="note">-</span>;
+  if (snap.compliant) return <span className="badge b-green">Compliant</span>;
+  const gaps = [
+    ...snap.coi.missingTypes.map(t => `missing ${t.replace(/_/g, ' ')}`),
+    ...snap.coi.expiredRequiredTypes.map(t => `expired ${t.replace(/_/g, ' ')}`),
+    ...snap.licenses.missingTypes.map(t => `missing ${t}`),
+    ...snap.licenses.expiredRequiredTypes.map(t => `expired ${t}`),
+  ];
+  return (
+    <span className="badge b-amber" title={gaps.join(', ')}>
+      {gaps.length === 1 ? gaps[0] : `${gaps.length} gaps`}
+    </span>
+  );
+}
+
 export default function PackageDetail() {
   const { id } = useParams();
   const nav = useNavigate();
@@ -40,6 +56,9 @@ export default function PackageDetail() {
   // grandfathered existing-relationship fee state (keyed by vendor_company_id)
   const [rels, setRels] = useState<Record<string, any>>({});
   const [relOpen, setRelOpen] = useState<string | null>(null);
+  // vendor prequalification (competitive gap closure): per-vendor compliance
+  // snapshot against this building's COI/license requirements, owner view only
+  const [compliance, setCompliance] = useState<Record<string, { compliant: boolean; coi: { missingTypes: string[]; expiredRequiredTypes: string[] }; licenses: { missingTypes: string[]; expiredRequiredTypes: string[] } } | null>>({});
   // monetization V2: bid credits + verification gating (null = gate off)
   const [credits, setCredits] = useState<BidCredits | null>(null);
   const [verif, setVerif] = useState<Verification | null>(null);
@@ -62,7 +81,8 @@ export default function PackageDetail() {
     const pk = await getPackage(id); setP(pk);
     setItems(await getLineItems(id));
     if (pk) {
-      setBids(await getBidsForPackage(id));
+      const loadedBids = await getBidsForPackage(id);
+      setBids(loadedBids);
       setQuestions(await getQuestions(id));
       // developer (owner) view: load grandfathered relationship/fee status per vendor
       const devCompanyId = pk.building?.company_id;
@@ -73,6 +93,25 @@ export default function PackageDetail() {
           (d.relationships ?? []).forEach((r) => { map[r.vendor_company_id] = r; });
           setRels(map);
         } catch { /* non-fatal */ }
+        // Vendor prequalification: for each distinct bidding vendor, fetch
+        // their compliance status against this building's COI/license
+        // requirements. Non-fatal per-vendor - a fetch failure just leaves
+        // that vendor without a badge rather than breaking the bid list.
+        const buildingId = pk.building?.id;
+        if (buildingId) {
+          const vendorIds = Array.from(new Set(loadedBids.map((b: any) => b.vendor_company_id)));
+          const entries = await Promise.all(vendorIds.map(async (vendorCompanyId) => {
+            try {
+              const snap = await apiGet<{ compliant: boolean; coi: { missingTypes: string[]; expiredRequiredTypes: string[] }; licenses: { missingTypes: string[]; expiredRequiredTypes: string[] } }>(
+                `/prequalification?vendorCompanyId=${vendorCompanyId}&buildingId=${buildingId}`,
+              );
+              return [vendorCompanyId, snap] as const;
+            } catch {
+              return [vendorCompanyId, null] as const;
+            }
+          }));
+          setCompliance(Object.fromEntries(entries));
+        }
         setPubForm({
           visibility: pk.visibility ?? 'public_marketplace',
           bidDueDate: pk.deadline ? String(pk.deadline).slice(0, 10) : '',
@@ -425,9 +464,9 @@ export default function PackageDetail() {
           <div className="sectitle">Bids received ({bids.length})</div>
           <div className="card" style={{ padding: 0 }}>
             <table>
-              <thead><tr><th>Vendor</th><th>Price</th><th>Timeline</th><th>Status</th><th>Fee rule</th><th></th></tr></thead>
+              <thead><tr><th>Vendor</th><th>Price</th><th>Timeline</th><th>Status</th><th>Compliance</th><th>Fee rule</th><th></th></tr></thead>
               <tbody>
-                {bids.length === 0 ? <tr><td colSpan={6} className="note" style={{ padding: 14 }}>No bids yet.</td></tr>
+                {bids.length === 0 ? <tr><td colSpan={7} className="note" style={{ padding: 14 }}>No bids yet.</td></tr>
                   : bids.map(b => {
                     const rel = rels[b.vendor_company_id];
                     return (
@@ -437,6 +476,7 @@ export default function PackageDetail() {
                           <td>${Number(b.price).toLocaleString()}</td>
                           <td>{b.days} days</td>
                           <td><span className="badge b-neutral">{b.status}</span></td>
+                          <td><ComplianceBadge snap={compliance[b.vendor_company_id]} /></td>
                           <td><FeeBadge fee={rel?.fee} relationship={rel} audience="developer" /></td>
                           <td>
                             {!rel && (
@@ -449,7 +489,7 @@ export default function PackageDetail() {
                         </tr>
                         {relOpen === b.vendor_company_id && !rel && (
                           <tr key={b.id + '-rel'}>
-                            <td colSpan={6}>
+                            <td colSpan={7}>
                               <ExistingRelationshipCheckbox
                                 developerCompanyId={p.building.company_id}
                                 vendorCompanyId={b.vendor_company_id}
