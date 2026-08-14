@@ -37,6 +37,7 @@ import { getAdminAllowedEmails } from "./config.js";
 import { PlanLimitError, enforceLimit } from "./lib/entitlement-guard.js";
 import { ForbiddenError, NotFoundError } from "./lib/errors.js";
 import { allowedBrowseVisibilities, canViewPackage } from "./lib/marketplace-visibility.js";
+import { runAsAdmin } from "./lib/requestContext.js";
 
 /**
  * Single-purpose tokens (email verification, password reset, ownership-
@@ -1094,23 +1095,37 @@ export async function setFeatureFlagAudience(key: string, audience: string) {
 // DOCUMENTS (metadata; file bytes handled by storage.ts)
 // ===========================================================================
 
-export async function getDocuments(userId: string, opts: { packageId?: string; buildingId?: string }) {
+export async function getDocuments(userId: string, opts: { packageId?: string; buildingId?: string }, isAdmin = false) {
   if (opts.packageId) {
-    // IDOR fix: verify the user is a member of the company that owns the package.
-    const pkg = await q1<{ company_id: string }>(
-      `select b.company_id
+    // Package-scoped documents (specs/drawings/CAD - the "plan room")
+    // follow the PACKAGE's own visibility, the same canViewPackage() rule
+    // GET /packages/:id already uses - not a separate "must be the owning
+    // company" restriction. That older restriction (still correct for the
+    // buildingId and no-filter branches below) silently blocked every
+    // bidding vendor from ever seeing a developer's own package
+    // documents, contradicting this file's own top-of-file documented
+    // intent ("documents: read any") and getDocumentByPath's docstring -
+    // a real, pre-existing gap, not a new design decision.
+    const pkg = await q1<{ id: string; visibility: string | null; company_id: string }>(
+      `select p.id, p.visibility, b.company_id
          from packages p
          join buildings b on b.id = p.building_id
         where p.id = $1`,
       [opts.packageId],
     );
     if (!pkg) return [];
-    const member = await q1(
-      `select 1 from company_members where user_id = $1 and company_id = $2`,
-      [userId, pkg.company_id],
+    const canView = await canViewPackage(
+      { userId, isAdmin },
+      { visibility: pkg.visibility, buildingCompanyId: pkg.company_id, id: pkg.id },
     );
-    if (!member) throw new ForbiddenError("not a member of the company that owns this package");
-    return q(`select * from documents where package_id = $1 order by created_at desc`, [opts.packageId]);
+    if (!canView) throw new ForbiddenError("not authorized to view this package's documents");
+    // documents' own RLS is intentionally conservative (owner company or
+    // admin only - the same table also holds private company-level
+    // onboarding documents like insurance/W9s, see routes/onboarding.ts),
+    // so a genuinely authorized outside vendor's own RLS context would
+    // still see zero rows here. This read runs admin-equivalent AFTER the
+    // real authorization decision immediately above, never instead of it.
+    return runAsAdmin(() => q(`select * from documents where package_id = $1 order by created_at desc`, [opts.packageId]));
   }
   if (opts.buildingId) {
     // IDOR fix: verify the user is a member of the company that owns the building.

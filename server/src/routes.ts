@@ -52,6 +52,7 @@ import {
   fileExists,
 } from "./storage.js";
 import { logPackageView, logDocumentDownload, getPackageActivitySummary } from "./lib/package-activity.js";
+import { runAsAdmin } from "./lib/requestContext.js";
 import adminExtraRouter from "./routes/admin-extra.js";
 import publicCaptureRouter from "./routes/public-capture.js";
 import referralPartnerOnboardingRouter from "./routes/referral-partner-onboarding.js";
@@ -686,7 +687,7 @@ router.get(
     const auth = getAuth(req);
     const packageId = req.query.packageId ? String(req.query.packageId) : undefined;
     const buildingId = req.query.buildingId ? String(req.query.buildingId) : undefined;
-    res.json(await db.getDocuments(auth.userId!, { packageId, buildingId }));
+    res.json(await db.getDocuments(auth.userId!, { packageId, buildingId }, auth.isAdmin));
   }),
 );
 
@@ -767,16 +768,33 @@ router.get(
     const auth = getAuth(req);
     const path = String(req.query.path || "");
     if (!path) return res.status(400).json({ error: "path required" });
-    const doc = await db.getDocumentByPath(path);
+    // documents' own RLS restricts SELECT to the owning company or admin
+    // (see schema-rls.sql) - so a genuinely authorized outside vendor's
+    // own request context would see nothing here even after the real
+    // authorization check below passes. Escalate the lookup itself; the
+    // checks that follow are the actual authorization decision.
+    const doc = await runAsAdmin(() => db.getDocumentByPath(path));
     if (!doc) throw new NotFoundError("document not found");
-    // Verify the requesting user is a member of the document's company.
-    // Without this check any authenticated user could obtain a signed URL for
-    // any document by knowing (or guessing) its storage path (IDOR).
-    if (doc.company_id && auth.userId) {
+    // Authorized if: admin, a member of the document's own company (the
+    // original "your own upload" rule, still correct for company-level
+    // documents like onboarding insurance/W9s - routes/onboarding.ts), OR
+    // the document belongs to a package the caller can legitimately view
+    // (public marketplace, qualified tier, or a real invite - the same
+    // canViewPackage() rule GET /packages/:id uses). Without that last
+    // clause, no bidding vendor could ever open a developer's own package
+    // specs/drawings - see db.ts's getDocuments() for the matching fix on
+    // the list side.
+    let authorized = auth.isAdmin;
+    if (!authorized && doc.company_id && auth.userId) {
       const ids = await db.userCompanyIds(auth.userId);
-      if (!ids.includes(doc.company_id) && !auth.isAdmin) {
-        return res.status(403).json({ error: "access denied" });
-      }
+      if (ids.includes(doc.company_id)) authorized = true;
+    }
+    if (!authorized && doc.package_id && auth.userId) {
+      const viewablePkg = await db.getPackage(auth.userId, doc.package_id, auth.isAdmin);
+      if (viewablePkg) authorized = true;
+    }
+    if (!authorized) {
+      return res.status(403).json({ error: "access denied" });
     }
     // Plan room activity tracking (competitive gap closure): log a
     // 'document_downloaded' event when this document belongs to a
