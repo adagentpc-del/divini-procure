@@ -114,7 +114,7 @@ export default function Developers() {
           </Link>
           <div className="navlinks">
             <Link className="hide" to="/">Home</Link>
-            <Link to="/pricing">Pricing</Link>
+            <Link className="hide" to="/pricing">Pricing</Link>
             <Link to="/login">Log in</Link>
             <button className="btn primary" onClick={() => nav('/register')}>Get started</button>
           </div>
