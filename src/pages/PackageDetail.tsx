@@ -5,10 +5,11 @@ import { useFeatures } from '../lib/features';
 import {
   getPackage, getLineItems, addLineItem, deleteLineItem,
   getBidsForPackage, submitPricedBid, getQuestions, askQuestion, answerQuestion,
-  getPackageFinancialSummary,
+  getPackageFinancialSummary, getVendorProfile,
 } from '../lib/db';
 import DocumentPanel from '../components/DocumentPanel';
 import FeeBadge from '../components/FeeBadge';
+import VendorBadges from '../components/VendorBadges';
 import { PackageFinancialSummaryPanel } from '../components/FinancialSummaryPanel';
 import ExistingRelationshipCheckbox from '../components/ExistingRelationshipCheckbox';
 import { apiGet, apiSend } from '../lib/api';
@@ -68,6 +69,37 @@ function ReviewBadge({ stats, currentCategory }: { stats: ReviewStats | null | u
   );
 }
 
+// Gap #15 (docs/competitive-analysis-2026-08.md): richer trust badges for
+// vendor discovery, built entirely on facts already computed elsewhere -
+// verify_status (verification.ts), review stats (reviews.ts), and invite
+// response time (lib/response-time.ts). "Top rated" is a plain, disclosed
+// threshold on the same average-stars/count ReviewBadge already shows next
+// to it, not a new weighted model.
+const TOP_RATED_MIN_STARS = 4.5;
+const TOP_RATED_MIN_REVIEWS = 3;
+function isTopRated(stats: ReviewStats | null | undefined): boolean {
+  return !!stats && stats.count >= TOP_RATED_MIN_REVIEWS && (stats.averageStars ?? 0) >= TOP_RATED_MIN_STARS;
+}
+
+function TrustCell({
+  verifyStatus, reviewStats: stats, responseTime,
+}: {
+  verifyStatus: string | null | undefined;
+  reviewStats: ReviewStats | null | undefined;
+  responseTime: { respondedInviteCount: number; averageDaysToRespond: number | null } | null | undefined;
+}) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
+      <VendorBadges verification_status={verifyStatus} topRated={isTopRated(stats)} />
+      {responseTime && responseTime.respondedInviteCount > 0 && responseTime.averageDaysToRespond !== null && (
+        <span className="note" title={`Based on ${responseTime.respondedInviteCount} past invited bid(s)`}>
+          Responds in ~{responseTime.averageDaysToRespond}d
+        </span>
+      )}
+    </div>
+  );
+}
+
 export default function PackageDetail() {
   const { id } = useParams();
   const nav = useNavigate();
@@ -93,6 +125,10 @@ export default function PackageDetail() {
   // vendor prequalification (competitive gap closure): per-vendor compliance
   // snapshot against this building's COI/license requirements, owner view only
   const [compliance, setCompliance] = useState<Record<string, { compliant: boolean; coi: { missingTypes: string[]; expiredRequiredTypes: string[] }; licenses: { missingTypes: string[]; expiredRequiredTypes: string[] } } | null>>({});
+  // trust badges (competitive gap #15): per-vendor verify_status and invite
+  // response time, owner view only, alongside compliance/reviewStats above.
+  const [vendorVerify, setVendorVerify] = useState<Record<string, string | null>>({});
+  const [vendorResponseTime, setVendorResponseTime] = useState<Record<string, { respondedInviteCount: number; averageDaysToRespond: number | null } | null>>({});
   // bidirectional payment-behavior reputation (competitive gap closure):
   // vendor-facing view of this developer's real payment timing, public and
   // aggregate-only - see lib/payment-reputation.ts
@@ -181,6 +217,31 @@ export default function PackageDetail() {
             if (own) mine[vendorCompanyId] = own;
           }
           setMyReviews(mine);
+
+          // Trust badges (competitive gap #15): per-vendor verify_status
+          // (for the "Verified" badge) and invite response time. Both
+          // non-fatal per-vendor, same tolerate-absence pattern as above.
+          const verifyEntries = await Promise.all(vendorIds.map(async (vendorCompanyId) => {
+            try {
+              const vp = await getVendorProfile(vendorCompanyId);
+              return [vendorCompanyId, vp?.verify_status ?? null] as const;
+            } catch {
+              return [vendorCompanyId, null] as const;
+            }
+          }));
+          setVendorVerify(Object.fromEntries(verifyEntries));
+
+          const responseTimeEntries = await Promise.all(vendorIds.map(async (vendorCompanyId) => {
+            try {
+              const rt = await apiGet<{ respondedInviteCount: number; averageDaysToRespond: number | null }>(
+                `/vendor-response-time/${vendorCompanyId}`,
+              );
+              return [vendorCompanyId, rt] as const;
+            } catch {
+              return [vendorCompanyId, null] as const;
+            }
+          }));
+          setVendorResponseTime(Object.fromEntries(responseTimeEntries));
         }
         try {
           setActivity(await apiGet(`/packages/${pk.id}/activity`));
@@ -620,9 +681,9 @@ export default function PackageDetail() {
           <div className="sectitle">Bids received ({bids.length})</div>
           <div className="card" style={{ padding: 0 }}>
             <table>
-              <thead><tr><th>Vendor</th><th>Price</th><th>Timeline</th><th>Status</th><th>Compliance</th><th>Reviews</th><th>Fee rule</th><th></th></tr></thead>
+              <thead><tr><th>Vendor</th><th>Price</th><th>Timeline</th><th>Status</th><th>Trust</th><th>Compliance</th><th>Reviews</th><th>Fee rule</th><th></th></tr></thead>
               <tbody>
-                {bids.length === 0 ? <tr><td colSpan={8} className="note" style={{ padding: 14 }}>No bids yet.</td></tr>
+                {bids.length === 0 ? <tr><td colSpan={9} className="note" style={{ padding: 14 }}>No bids yet.</td></tr>
                   : bids.map(b => {
                     const rel = rels[b.vendor_company_id];
                     const myReview = myReviews[b.vendor_company_id];
@@ -633,6 +694,7 @@ export default function PackageDetail() {
                           <td>${Number(b.price).toLocaleString()}</td>
                           <td>{b.days} days</td>
                           <td><span className="badge b-neutral">{b.status}</span></td>
+                          <td><TrustCell verifyStatus={vendorVerify[b.vendor_company_id]} reviewStats={reviewStats[b.vendor_company_id]} responseTime={vendorResponseTime[b.vendor_company_id]} /></td>
                           <td><ComplianceBadge snap={compliance[b.vendor_company_id]} /></td>
                           <td><ReviewBadge stats={reviewStats[b.vendor_company_id]} currentCategory={p.category} /></td>
                           <td><FeeBadge fee={rel?.fee} relationship={rel} audience="developer" /></td>
@@ -662,7 +724,7 @@ export default function PackageDetail() {
                         </tr>
                         {relOpen === b.vendor_company_id && !rel && (
                           <tr key={b.id + '-rel'}>
-                            <td colSpan={8}>
+                            <td colSpan={9}>
                               <ExistingRelationshipCheckbox
                                 developerCompanyId={p.building.company_id}
                                 vendorCompanyId={b.vendor_company_id}
@@ -675,7 +737,7 @@ export default function PackageDetail() {
                         )}
                         {reviewOpen === b.vendor_company_id && b.awarded && (
                           <tr key={b.id + '-review'}>
-                            <td colSpan={8}>
+                            <td colSpan={9}>
                               <div className="card" style={{ background: 'var(--ivory)' }}>
                                 <div className="note" style={{ marginBottom: 8, fontWeight: 600 }}>
                                   {myReview ? 'Edit your review of' : 'Rate'} {b.vendor?.name ?? 'this vendor'}

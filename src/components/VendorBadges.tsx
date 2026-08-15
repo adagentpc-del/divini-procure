@@ -10,6 +10,11 @@
  *   verifiedPlus -> premium verification (bonding, financials, references,
  *                   background) for a higher-trust badge
  *   featured     -> advertising upgrade for top placement
+ *   topRated     -> derived, factual threshold on existing review data
+ *                   (avg stars and review count) - not a new scoring model,
+ *                   just a direct readout of numbers already shown by
+ *                   ReviewBadge elsewhere. See gap #15,
+ *                   docs/competitive-analysis-2026-08.md.
  *
  * The props are intentionally loose so a card can spread whatever vendor object
  * it has. Accepts a few common field name spellings the backend may use.
@@ -20,6 +25,7 @@ export type VendorBadgeFlags = {
   verifiedPlus?: boolean | null;
   verified_plus?: boolean | null;
   featured?: boolean | null;
+  topRated?: boolean | null;
   // tolerate a status string ("verified", "verified_plus") as well
   verification_status?: string | null;
 };
@@ -36,8 +42,9 @@ export default function VendorBadges(props: VendorBadgeFlags & { className?: str
     truthy(props.verifiedPlus) || truthy(props.verified_plus) || status === 'verified_plus' || status === 'verified+';
   const isVerified = truthy(props.verified) || status === 'verified' || status === 'approved' || isVerifiedPlus;
   const isFeatured = truthy(props.featured);
+  const isTopRated = truthy(props.topRated);
 
-  if (!isVerified && !isVerifiedPlus && !isFeatured) return null;
+  if (!isVerified && !isVerifiedPlus && !isFeatured && !isTopRated) return null;
 
   return (
     <span
@@ -65,6 +72,11 @@ export default function VendorBadges(props: VendorBadgeFlags & { className?: str
           style={{ background: 'var(--champagne)', color: 'var(--emerald-deep)' }}
         >
           ★ Featured
+        </span>
+      )}
+      {isTopRated && (
+        <span className="badge b-good" title="High average rating with a strong rehire rate">
+          ★ Top rated
         </span>
       )}
     </span>
