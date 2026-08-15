@@ -373,7 +373,7 @@ export default function Pricing() {
         <div className="wrap">
           <div>Divini Procure. The verified construction procurement marketplace.</div>
           <div style={{ marginTop: 8 }}>
-            <Link to="/">Home</Link> · <Link to="/terms">Terms</Link> · <Link to="/privacy">Privacy</Link>
+            <Link to="/">Home</Link> · <Link to="/developers">Developers</Link> · <Link to="/terms">Terms</Link> · <Link to="/privacy">Privacy</Link>
           </div>
         </div>
       </footer>

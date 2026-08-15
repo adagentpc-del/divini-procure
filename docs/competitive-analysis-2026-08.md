@@ -35,7 +35,7 @@ payments/compliance/pricing, explicit authorization) before implementation.
 8. **AI-generated scope-of-work / RFP bundles from plans and specs** — Brickanta, Parspec, Procore AI. A live 2025-26 competitive wedge; strong structural fit for Divini's canonical data spine, but explicitly out of scope under the current AI freeze ("AI package generation" is named directly). **Still frozen.**
 9. **Early-payment / trade-credit financing for subcontractors** — Billd, Briq Cash, and the newly funded subcontractor-payments marketplace. A fintech layer competitors bundle onto payment data; a natural extension of Divini's payments/retainage spine, but a monetization/lending decision, not an engineering one - out of scope under the pricing freeze without explicit authorization. **Still frozen.**
 10. **Mobile-first field execution app** (daily logs, time clock, photos, punch lists) — Buildertrend, Procore, BuildOps. Divini is procurement/financial-centric with no field-execution mobile surface. **Still blocked:** no mobile build/release pipeline available in this environment.
-11. **Open app marketplace / public API ecosystem** — Procore, Autodesk Construction Cloud, ProcurePro's integration list. Extensibility functions as a moat and reduces switching-cost objections. **Partially closed (API-01):** developer API platform with personal-access-token keys. Still open: a public app marketplace/listing layer on top of the raw API.
+11. **Open app marketplace / public API ecosystem** — Procore, Autodesk Construction Cloud, ProcurePro's integration list. Extensibility functions as a moat and reduces switching-cost objections. **Closed as far as this environment honestly can (API-01 + DEV-01):** developer API platform with personal-access-token keys, real rate limits, and a key-management UI - but that UI (`/api-keys`) was gated behind login and the marketing site never mentioned an API existed, so the "reduces switching-cost objections" value (a prospect sees real extensibility before committing) wasn't actually landing. DEV-01 adds a public, pre-signup `/developers` page (linked from `Landing.tsx` and `Pricing.tsx`) documenting the real platform: auth model, scopes, rate limits, and the same representative endpoint table `docs/api-platform.md` maintains. Deliberately does NOT fabricate a third-party app directory, OAuth-on-behalf-of-another-company, a listing/review process, or webhooks - none of those exist (no real developer ecosystem to list in this environment), and the page says so explicitly rather than implying otherwise. A genuine "other companies list their integrations here" marketplace remains out of reach without a real third-party developer base.
 12. **"Lessons-learned" vendor knowledge base tied to past project performance** — ProcurePro. A relatively cheap, high-value enrichment of the Divini Score with qualitative post-project data. **Closed:** the existing post-completion review (REV-01) now also captures three optional facts (would rehire / on time / on budget) and a guided "what would you tell the next developer hiring this vendor for similar work" field, each review's originating package's trade category is surfaced alongside it, and a developer viewing bids sees same-category past lessons highlighted first when evaluating a vendor for a similar project. Deliberately NOT folded into the Divini Score's numeric calculation - matching lib/vendor-signals.ts's "facts only, never a score" rule already established this session; the knowledge-base value is in surfacing the actual notes, not another hidden weighting.
 13. **Bidirectional reputation: developer/GC payment-behavior transparency**, not just vendor scoring — Levelset's "payment profiles" (which GCs pay late). A differentiated trust signal Divini's two-sided marketplace could uniquely own, since it already sits on the full payment spine (`payment_authorizations`, `external_payment_records`) - this is a natural `procure-moat.ts` extension, same shape as the commitment-weighted edges just built. **Closed (PR-01).**
 14. **Client/investor-facing transparency portal** — Buildertrend's homeowner portal (residential pattern), adaptable to a lightweight investor-visibility view of the frozen Capital Partner module - but any change there needs its own explicit authorization per the standing investor/capital freeze. **Still frozen.**
@@ -58,15 +58,14 @@ are **not** implicitly authorized by this analysis:
 Gaps #1-4, #6-7, #10-13, and #15 are ordinary product/engineering work with
 no freeze conflict - the natural pool to prioritize from next.
 
-**Status as of this update:** #1, #3, #4, #6, #12, #13, #15 are closed; #7
-and #11 are partially closed (the parts needing real third-party OAuth
-credentials or a certified integration remain out of reach in this
-environment); #2 and #10 are genuinely blocked here (jurisdiction legal
-data, mobile build pipeline) rather than frozen; #5, #8, #9, #14 remain
-frozen. Every gap in the non-frozen pool that this environment can actually
-build has now shipped - what's left (#2, #7, #10, #11's remaining half) is
-blocked on real-world resources this environment doesn't have, not on
-further scoping.
+**Status as of this update:** #1, #3, #4, #6, #11, #12, #13, #15 are
+closed; #7 is partially closed (the certified OAuth integration itself
+remains out of reach in this environment); #2 and #10 are genuinely
+blocked here (jurisdiction legal data, mobile build pipeline) rather than
+frozen; #5, #8, #9, #14 remain frozen. Every gap in the non-frozen pool
+that this environment can actually build has now shipped - what's left
+(#2, #7's remaining half, #10) is blocked on real-world resources this
+environment doesn't have, not on further scoping.
 
 ## Suggested next step
 

@@ -7,6 +7,7 @@
  * Zero em dashes by convention.
  */
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { apiGet, apiSend } from '../lib/api';
 
 interface ApiKey {
@@ -90,7 +91,10 @@ export default function ApiKeys() {
       <div className="page-head">
         <div>
           <h1>API Keys</h1>
-          <div className="sub">Programmatic access to your Divini Procure account. A key acts exactly as you would - same visibility, same permissions - so scope it to read-only unless an integration genuinely needs to write.</div>
+          <div className="sub">
+            Programmatic access to your Divini Procure account. A key acts exactly as you would - same visibility, same permissions - so scope it to read-only unless an integration genuinely needs to write.
+            {' '}See the <Link to="/developers" target="_blank" rel="noreferrer">developer platform overview</Link> for endpoints, scopes, and rate limits.
+          </div>
         </div>
         <button className="btn primary" onClick={() => setShowForm(!showForm)}>
           {showForm ? 'Cancel' : '+ Create Key'}
