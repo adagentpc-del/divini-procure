@@ -13,6 +13,7 @@
 import { useEffect, useState } from 'react';
 import { useFeatures } from '../lib/features';
 import { apiGet, apiSend } from '../lib/api';
+import { signedUrl } from '../lib/db';
 
 type Credential = {
   id: string;
@@ -29,6 +30,11 @@ type Credential = {
   reviewed_at?: string;
   review_notes?: string;
   vendor_verify_status?: string;
+  // Self-serve upload (Profile.tsx -> POST /me/verification/documents):
+  // the file lives on disk under the standard documents pipeline, keyed by
+  // file_key (a documents.storage_path), not a directly-linkable doc_url.
+  file_key?: string;
+  file_name?: string;
 };
 
 type Investor = {
@@ -128,6 +134,16 @@ export default function AdminVerification() {
 
   if (!isAdmin) return <div className="card">Admins only.</div>;
 
+  // Self-serve uploads have no directly-linkable doc_url - the file lives
+  // under the standard documents pipeline, so viewing it needs a freshly
+  // signed URL (same helper DocumentPanel.tsx uses), fetched on click rather
+  // than stored, since a stored URL would go stale.
+  async function viewFile(fileKey: string) {
+    const url = await signedUrl(fileKey);
+    if (url) window.open(url, '_blank', 'noopener,noreferrer');
+    else setErr('Could not generate a view link for this document.');
+  }
+
   async function reviewCredential(id: string, decision: 'verified' | 'rejected' | 'needs_info') {
     setBusy(true);
     setErr('');
@@ -220,7 +236,13 @@ export default function AdminVerification() {
                 <td>{c.company_name ?? c.company_id ?? '-'}</td>
                 <td>{(c.type ?? '').replace(/_/g, ' ')}</td>
                 <td>{c.registry ?? '-'}</td>
-                <td>{c.doc_url ? <a href={c.doc_url} target="_blank" rel="noreferrer">view</a> : '-'}</td>
+                <td>
+                  {c.doc_url
+                    ? <a href={c.doc_url} target="_blank" rel="noreferrer">view</a>
+                    : c.file_key
+                      ? <a style={{ cursor: 'pointer' }} onClick={() => viewFile(c.file_key!)}>{c.file_name ?? 'view'}</a>
+                      : '-'}
+                </td>
                 <td><span className={`badge ${badge(CRED_BADGE, c.status)}`}>{(c.status ?? '').replace(/_/g, ' ')}</span></td>
                 <td><span className={`badge ${badge(CRED_BADGE, c.vendor_verify_status)}`}>{c.vendor_verify_status ?? '-'}</span></td>
                 <td style={{ minWidth: 280 }}>

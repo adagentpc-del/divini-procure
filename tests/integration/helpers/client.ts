@@ -63,6 +63,27 @@ export class TestClient {
   patch<T = any>(path: string, body?: unknown) {
     return this.request<T>("PATCH", path, body);
   }
+  /** multipart/form-data POST (file uploads) - no Content-Type header, so
+   * fetch sets the multipart boundary itself, same as the browser client's
+   * apiUpload (src/lib/api.ts). */
+  async postForm<T = any>(path: string, form: FormData): Promise<ApiResponse<T>> {
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      method: "POST",
+      headers: this.cookie ? { Cookie: this.cookie } : undefined,
+      body: form,
+    });
+    this.captureCookie(res);
+    const text = await res.text();
+    let parsed: any = undefined;
+    if (text) {
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        parsed = text;
+      }
+    }
+    return { status: res.status, body: parsed as T, headers: res.headers };
+  }
   delete<T = any>(path: string, body?: unknown) {
     return this.request<T>("DELETE", path, body);
   }

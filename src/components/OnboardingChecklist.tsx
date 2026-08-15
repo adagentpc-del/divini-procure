@@ -76,7 +76,7 @@ const VENDOR_STEPS: Step[] = [
     id: 'upload_credentials',
     label: 'Upload credentials & insurance',
     detail: 'Buyers look for licenses, certifications, and insurance docs.',
-    href: '/app/settings/documents',
+    href: '/profile',
     cta: 'Upload documents',
   },
   {

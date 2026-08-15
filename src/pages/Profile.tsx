@@ -1,10 +1,15 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
-import { getVendorProfile, updateCompany, deleteMyAccount, exportMyData, transferOwnership, signOutAllDevices } from '../lib/db';
+import { getVendorProfile, updateCompany, deleteMyAccount, exportMyData, transferOwnership, signOutAllDevices, uploadDocument } from '../lib/db';
 import { useToast } from '../lib/toast';
 import { apiGet } from '../lib/api';
 import { type Entitlement, type LimitCheck, money } from '../lib/tiers';
+import {
+  getVerification, listVerificationDocuments, submitVerificationDocument,
+  REQUIRED_CREDENTIAL_TYPES, CREDENTIAL_TYPE_LABELS,
+  type Verification, type VerificationDocument, type RequiredCredentialType,
+} from '../lib/monetization';
 
 export default function Profile() {
   const { toast } = useToast();
@@ -17,6 +22,14 @@ export default function Profile() {
   const [vprofile, setVprofile] = useState<any>(null);
   const [entitlement, setEntitlement] = useState<Entitlement | null>(null);
   const [seatLimit, setSeatLimit] = useState<LimitCheck | null>(null);
+  // Self-serve verification document upload (competitive gap #4: the free,
+  // mandatory verification gate had no working self-serve way to satisfy
+  // it - see lib/monetization.ts's submitVerificationDocument).
+  const [verif, setVerif] = useState<Verification | null>(null);
+  const [verifDocs, setVerifDocs] = useState<VerificationDocument[]>([]);
+  const [uploadBusy, setUploadBusy] = useState<Record<string, boolean>>({});
+  const [uploadErr, setUploadErr] = useState<Record<string, string>>({});
+  const [expiryDraft, setExpiryDraft] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
   const [dbusy, setDbusy] = useState(false);
@@ -35,11 +48,40 @@ export default function Profile() {
     if (!company) return;
     setName(company.name ?? ''); setContact(company.contact_name ?? '');
     setPhone(company.phone ?? ''); setCity(company.city ?? '');
-    if (company.kind === 'vendor') getVendorProfile(company.id).then(setVprofile);
+    if (company.kind === 'vendor') {
+      getVendorProfile(company.id).then(setVprofile);
+      loadVerification();
+    }
     apiGet<{ entitlement: Entitlement; limits: Record<string, LimitCheck> }>(`/subscriptions/mine?companyId=${company.id}`)
       .then((d) => { setEntitlement(d.entitlement); setSeatLimit(d.limits.seat_limit ?? null); })
       .catch(() => {});
   }, [company]);
+
+  async function loadVerification() {
+    if (!company) return;
+    const [v, docs] = await Promise.all([getVerification(company.id), listVerificationDocuments(company.id)]);
+    setVerif(v);
+    setVerifDocs(docs);
+  }
+
+  async function uploadCredential(credentialType: RequiredCredentialType, file: File) {
+    if (!company) return;
+    setUploadBusy(b => ({ ...b, [credentialType]: true }));
+    setUploadErr(e => ({ ...e, [credentialType]: '' }));
+    try {
+      const doc = await uploadDocument(file, { companyId: company.id });
+      const expiresAt = expiryDraft[credentialType] || undefined;
+      await submitVerificationDocument({
+        companyId: company.id, credentialType, fileKey: doc.storage_path, fileName: doc.name, expiresAt,
+      });
+      toast('Document uploaded. It is now pending review.', 'success');
+      await loadVerification();
+    } catch (e: any) {
+      setUploadErr(errs => ({ ...errs, [credentialType]: e?.message ?? 'Upload failed.' }));
+    } finally {
+      setUploadBusy(b => ({ ...b, [credentialType]: false }));
+    }
+  }
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
@@ -173,6 +215,69 @@ export default function Profile() {
               <h3 style={{ fontSize: 18, marginBottom: 10 }}>Trust &amp; services</h3>
               <div className="note">Trust score: <strong>{vprofile.trust}</strong> · Status: <span className="badge b-amber">{vprofile.verify_status}</span></div>
               <div style={{ marginTop: 10 }}>{(vprofile.services ?? []).map((s: string) => <span key={s} className="chip on">{s}</span>)}</div>
+            </div>
+          )}
+
+          {isVendor && (
+            <div className="card">
+              <h3 style={{ fontSize: 18, marginBottom: 4 }}>Verification</h3>
+              <div className="note" style={{ marginBottom: 12 }}>
+                Free and required to bid, be matched to a developer, or message one. Upload each document below;
+                a Divini team member reviews it.
+              </div>
+              {REQUIRED_CREDENTIAL_TYPES.map((type) => {
+                const docsOfType = verifDocs
+                  .filter(d => d.credential_type === type)
+                  .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+                const latest = docsOfType[0] ?? null;
+                const isMissing = verif?.missing?.includes(type) ?? !latest;
+                const isExpiring = verif?.expiring?.some(e => e.credentialType === type) ?? false;
+                const badge =
+                  latest?.doc_status === 'approved' && !isExpiring ? { cls: 'b-green', label: 'Approved' } :
+                  latest?.doc_status === 'approved' && isExpiring ? { cls: 'b-amber', label: 'Expiring soon' } :
+                  latest?.doc_status === 'rejected' ? { cls: 'b-red', label: 'Rejected' } :
+                  latest?.doc_status === 'pending' ? { cls: 'b-amber', label: 'Pending review' } :
+                  { cls: 'b-neutral', label: 'Not uploaded' };
+                return (
+                  <div key={type} style={{ padding: '10px 0', borderTop: '1px solid var(--line)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+                      <div>
+                        <div style={{ fontWeight: 600, fontSize: 14 }}>{CREDENTIAL_TYPE_LABELS[type]}</div>
+                        {latest?.file_name && <div className="note">{latest.file_name}</div>}
+                        {latest?.doc_status === 'rejected' && latest.review_notes && (
+                          <div className="note" style={{ color: 'var(--red, #a3382f)' }}>Reason: {latest.review_notes}</div>
+                        )}
+                      </div>
+                      <span className={`badge ${badge.cls}`}>{badge.label}</span>
+                    </div>
+                    {(isMissing || latest?.doc_status === 'rejected' || isExpiring) && (
+                      <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <input
+                          type="date"
+                          value={expiryDraft[type] ?? ''}
+                          onChange={e => setExpiryDraft(d => ({ ...d, [type]: e.target.value }))}
+                          title="Expiry date (optional)"
+                          style={{ width: 150 }}
+                        />
+                        <label className="btn" style={{ cursor: 'pointer', margin: 0 }}>
+                          {uploadBusy[type] ? 'Uploading…' : 'Upload'}
+                          <input
+                            type="file"
+                            style={{ display: 'none' }}
+                            disabled={!!uploadBusy[type]}
+                            onChange={e => {
+                              const file = e.target.files?.[0];
+                              e.target.value = '';
+                              if (file) uploadCredential(type, file);
+                            }}
+                          />
+                        </label>
+                      </div>
+                    )}
+                    {uploadErr[type] && <div className="err" style={{ marginTop: 6 }}>{uploadErr[type]}</div>}
+                  </div>
+                );
+              })}
             </div>
           )}
           <div className="card">
