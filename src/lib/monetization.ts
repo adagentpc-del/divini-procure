@@ -116,10 +116,10 @@ export async function getVerification(companyId: string): Promise<Verification |
   }
 }
 
-/** Read the signed-in vendor's own uploaded verification documents (all types/statuses). */
-export async function listVerificationDocuments(): Promise<VerificationDocument[]> {
+/** Read the signed-in vendor's own uploaded verification documents (all types/statuses) for one company. */
+export async function listVerificationDocuments(companyId: string): Promise<VerificationDocument[]> {
   try {
-    const d = await apiGet<{ documents?: VerificationDocument[] }>('/me/verification/documents');
+    const d = await apiGet<{ documents?: VerificationDocument[] }>(`/me/verification/documents?companyId=${encodeURIComponent(companyId)}`);
     return Array.isArray(d?.documents) ? d.documents : [];
   } catch {
     return [];
@@ -132,6 +132,7 @@ export async function listVerificationDocuments(): Promise<VerificationDocument[
  * credential. fileKey is the document's storage_path.
  */
 export async function submitVerificationDocument(opts: {
+  companyId: string;
   credentialType: RequiredCredentialType;
   fileKey: string;
   fileName?: string;

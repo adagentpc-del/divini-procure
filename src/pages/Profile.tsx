@@ -59,7 +59,7 @@ export default function Profile() {
 
   async function loadVerification() {
     if (!company) return;
-    const [v, docs] = await Promise.all([getVerification(company.id), listVerificationDocuments()]);
+    const [v, docs] = await Promise.all([getVerification(company.id), listVerificationDocuments(company.id)]);
     setVerif(v);
     setVerifDocs(docs);
   }
@@ -72,7 +72,7 @@ export default function Profile() {
       const doc = await uploadDocument(file, { companyId: company.id });
       const expiresAt = expiryDraft[credentialType] || undefined;
       await submitVerificationDocument({
-        credentialType, fileKey: doc.storage_path, fileName: doc.name, expiresAt,
+        companyId: company.id, credentialType, fileKey: doc.storage_path, fileName: doc.name, expiresAt,
       });
       toast('Document uploaded. It is now pending review.', 'success');
       await loadVerification();

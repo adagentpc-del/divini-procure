@@ -47,6 +47,7 @@ test("verification documents: a vendor can upload a license, register it, and se
   assert.ok(doc.storage_path.startsWith(`${vendorCompanyId}/`), doc.storage_path);
 
   const res = await vendor.client.post("/api/me/verification/documents", {
+    companyId: vendorCompanyId,
     credentialType: "license",
     fileKey: doc.storage_path,
     fileName: doc.name,
@@ -56,7 +57,7 @@ test("verification documents: a vendor can upload a license, register it, and se
   assert.equal(res.body.credential.doc_status, "pending");
   assert.equal(res.body.credential.file_key, doc.storage_path);
 
-  const listed = await vendor.client.get("/api/me/verification/documents");
+  const listed = await vendor.client.get(`/api/me/verification/documents?companyId=${vendorCompanyId}`);
   assert.equal(listed.status, 200, JSON.stringify(listed.body));
   const rows = listed.body.documents as any[];
   assert.ok(rows.some((r) => r.credential_type === "license" && r.doc_status === "pending"), JSON.stringify(rows));
@@ -73,6 +74,7 @@ test("verification documents: a fileKey outside the caller's own company directo
   const foreignDoc = await uploadRawDocument(otherVendor.client, otherVendorCompanyId, "borrowed.pdf");
 
   const res = await vendor.client.post("/api/me/verification/documents", {
+    companyId: vendorCompanyId,
     credentialType: "gl_insurance",
     fileKey: foreignDoc.storage_path,
     fileName: foreignDoc.name,
@@ -82,6 +84,7 @@ test("verification documents: a fileKey outside the caller's own company directo
 
 test("verification documents: an invalid credentialType is a 400", async () => {
   const res = await vendor.client.post("/api/me/verification/documents", {
+    companyId: vendorCompanyId,
     credentialType: "not_a_real_type",
     fileKey: `${vendorCompanyId}/misc/whatever.pdf`,
   });
@@ -90,7 +93,28 @@ test("verification documents: an invalid credentialType is a 400", async () => {
 
 test("verification documents: a missing fileKey is a 400", async () => {
   const res = await vendor.client.post("/api/me/verification/documents", {
+    companyId: vendorCompanyId,
     credentialType: "license",
   });
   assert.equal(res.status, 400, JSON.stringify(res.body));
+});
+
+test("verification documents: a missing companyId is a 400", async () => {
+  const res = await vendor.client.post("/api/me/verification/documents", {
+    credentialType: "license",
+    fileKey: `${vendorCompanyId}/misc/whatever.pdf`,
+  });
+  assert.equal(res.status, 400, JSON.stringify(res.body));
+});
+
+test("verification documents: a non-member cannot POST or GET another company's documents", async () => {
+  const postRes = await otherVendor.client.post("/api/me/verification/documents", {
+    companyId: vendorCompanyId,
+    credentialType: "license",
+    fileKey: `${vendorCompanyId}/misc/whatever.pdf`,
+  });
+  assert.equal(postRes.status, 403, JSON.stringify(postRes.body));
+
+  const getRes = await otherVendor.client.get(`/api/me/verification/documents?companyId=${vendorCompanyId}`);
+  assert.equal(getRes.status, 403, JSON.stringify(getRes.body));
 });

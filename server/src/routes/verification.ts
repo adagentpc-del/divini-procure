@@ -301,6 +301,7 @@ router.get(
           vc.id, vc.company_id, vc.type, vc.doc_url, vc.registry, vc.result,
           vc.confidence, vc.ok, vc.status, vc.scanned_at, vc.created_at,
           vc.reviewed_by, vc.reviewed_at, vc.review_notes,
+          vc.file_key, vc.file_name,
           c.name as company_name,
           vp.verify_status as vendor_verify_status
         from vendor_credentials vc
@@ -552,6 +553,7 @@ router.post(
   h(async (req, res) => {
     const auth = getAuth(req);
     const body = (req.body ?? {}) as {
+      companyId?: string;
       credentialType?: string;
       fileKey?: string;
       fileName?: string;
@@ -560,6 +562,7 @@ router.post(
 
     const credentialType = body.credentialType ? String(body.credentialType) : "";
     const fileKey = body.fileKey ? String(body.fileKey) : "";
+    const companyId = body.companyId ? String(body.companyId) : "";
 
     if (!credentialType || !(VALID_CREDENTIAL_TYPES as readonly string[]).includes(credentialType)) {
       res.status(400).json({ error: `credentialType must be one of: ${VALID_CREDENTIAL_TYPES.join(", ")}` });
@@ -569,13 +572,21 @@ router.post(
       res.status(400).json({ error: "fileKey is required" });
       return;
     }
-
-    const companyIds = await userCompanyIds(auth.userId!);
-    if (companyIds.length === 0) {
-      res.status(403).json({ error: "user has no associated company" });
+    if (!companyId) {
+      res.status(400).json({ error: "companyId is required" });
       return;
     }
-    const companyId = companyIds[0];
+
+    // Explicit companyId + membership check (not just "the caller's first
+    // company membership") - a user can belong to more than one company, and
+    // userCompanyIds() has no defined ordering, so guessing which one they
+    // meant risks attaching (or on GET, exposing) the wrong company's
+    // credentials. Same pattern GET /me/verification already uses.
+    const companyIds = await userCompanyIds(auth.userId!);
+    if (!auth.isAdmin && !companyIds.includes(companyId)) {
+      res.status(403).json({ error: "not a member of this company" });
+      return;
+    }
 
     // Ownership check: fileKey must start with the caller's own companyId
     // directory so a vendor cannot register another company's storage path as
@@ -608,19 +619,26 @@ router.post(
   }),
 );
 
-// GET /api/me/verification/documents -- the caller's own uploaded credentials
-// (all types, all statuses), so the self-serve UI can show what's already on
-// file - including a rejected doc's review_notes, so a vendor knows why and
-// can re-upload - not just the missing/expiring summary from GET
-// /me/verification above.
+// GET /api/me/verification/documents?companyId= -- the caller's own uploaded
+// credentials for the given company (all types, all statuses), so the
+// self-serve UI can show what's already on file - including a rejected
+// doc's review_notes, so a vendor knows why and can re-upload - not just the
+// missing/expiring summary from GET /me/verification above. companyId is
+// required and membership-checked (not "the caller's first company") for
+// the same reason as the POST handler above.
 router.get(
   "/me/verification/documents",
   requireUser,
   h(async (req, res) => {
     const auth = getAuth(req);
+    const companyId = req.query.companyId ? String(req.query.companyId) : "";
+    if (!companyId) {
+      res.status(400).json({ error: "companyId is required" });
+      return;
+    }
     const companyIds = await userCompanyIds(auth.userId!);
-    if (companyIds.length === 0) {
-      res.json({ documents: [] });
+    if (!auth.isAdmin && !companyIds.includes(companyId)) {
+      res.status(403).json({ error: "not a member of this company" });
       return;
     }
     const rows = await q(
@@ -629,7 +647,7 @@ router.get(
          from vendor_credentials
         where company_id = $1
         order by created_at desc`,
-      [companyIds[0]],
+      [companyId],
     );
     res.json({ documents: rows });
   }),
