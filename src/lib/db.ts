@@ -137,7 +137,7 @@ export async function uploadDocument(file: File, opts: { companyId: string; user
   form.append('companyId', opts.companyId);
   if (opts.buildingId) form.append('buildingId', opts.buildingId);
   if (opts.packageId) form.append('packageId', opts.packageId);
-  return apiUpload('/documents', form);
+  return apiUpload<{ id: string; name: string; storage_path: string }>('/documents', form);
 }
 export async function signedUrl(path: string) {
   try {

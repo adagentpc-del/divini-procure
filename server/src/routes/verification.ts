@@ -590,8 +590,14 @@ router.post(
     const expiresAt = body.expiresAt ? String(body.expiresAt) : null;
 
     const row = await q1(
-      `INSERT INTO vendor_credentials (company_id, credential_type, file_key, file_name, doc_status, expires_at)
-       VALUES ($1, $2, $3, $4, 'pending', $5::timestamptz)
+      // "type" is the original (pre-V2) column - not null, no default - and
+      // still what the admin credential-review list (section A above)
+      // displays. credentialType satisfies both it and the newer, gate-
+      // validated credential_type column; this insert never populated
+      // "type" at all before, which violated its not-null constraint on
+      // every real call.
+      `INSERT INTO vendor_credentials (company_id, type, credential_type, file_key, file_name, doc_status, expires_at)
+       VALUES ($1, $2, $2, $3, $4, 'pending', $5::timestamptz)
        RETURNING *`,
       [companyId, credentialType, fileKey, fileName, expiresAt],
     );
@@ -599,6 +605,33 @@ router.post(
     const verifyStatus = await recomputeVendorVerifyStatus(companyId);
 
     res.status(201).json({ credential: row, verifyStatus });
+  }),
+);
+
+// GET /api/me/verification/documents -- the caller's own uploaded credentials
+// (all types, all statuses), so the self-serve UI can show what's already on
+// file - including a rejected doc's review_notes, so a vendor knows why and
+// can re-upload - not just the missing/expiring summary from GET
+// /me/verification above.
+router.get(
+  "/me/verification/documents",
+  requireUser,
+  h(async (req, res) => {
+    const auth = getAuth(req);
+    const companyIds = await userCompanyIds(auth.userId!);
+    if (companyIds.length === 0) {
+      res.json({ documents: [] });
+      return;
+    }
+    const rows = await q(
+      `select id, credential_type, file_key, file_name, doc_status, expires_at,
+              review_notes, reviewed_at, created_at
+         from vendor_credentials
+        where company_id = $1
+        order by created_at desc`,
+      [companyIds[0]],
+    );
+    res.json({ documents: rows });
   }),
 );
 

@@ -28,7 +28,7 @@ payments/compliance/pricing, explicit authorization) before implementation.
 1. **Lien waiver management with e-sign + escrow-hold-until-payment** — GCPay, Trimble Pay, Textura, Levelset. Nearly universal among payment-focused competitors; Divini's financial spine covers payments/retainage but not the lien-waiver workflow itself. A major US construction-payments compliance gap. **Closed (LW-01, LW-02):** e-signature and invoice linkage, plus the signing UI.
 2. **Automated preliminary notice / mechanics-lien filing by jurisdiction** — Levelset. High-friction legal compliance turned into a sticky service; nobody else in this comparison set offers it. **Still blocked:** needs real per-jurisdiction legal filing data/rules this environment can't source or validate honestly.
 3. **Vendor prequalification & insurance/COI/license compliance tracking** — BuildingConnected (TradeTapp), Avetta, Vertikal RMS, Jones, Billy. Table stakes for enterprise GCs; would meaningfully deepen the Divini Score with hard compliance data rather than only transactional history. **Closed (VQ-01):** license tracking + compliance snapshot.
-4. **Free/freemium subcontractor-side tier to drive network growth** — BuildingConnected, PlanHub. A GTM gap, not a feature gap: marketplace network effects depend on low-friction, no-cost vendor onboarding. **Still open** — not built. Note this is arguably pricing/tiering policy, not pure engineering, so treat as freeze-adjacent pending explicit sign-off before implementation.
+4. **Free/freemium subcontractor-side tier to drive network growth** — BuildingConnected, PlanHub. A GTM gap, not a feature gap: marketplace network effects depend on low-friction, no-cost vendor onboarding. **Closed (VD-01), pricing/tiering itself untouched:** investigation found the free tier already exists and is already marketed accurately (`Pricing.tsx`/`Landing.tsx` already say "free to join," account creation has no payment gate, 5 free bids/quarter). The actual gap was that the "free, mandatory" verification step (`lib/verificationGate.ts`) had no working self-serve path: `POST /me/verification/documents` existed but referenced `vendor_credentials.file_key`/`file_name`/`type` columns that were never added to the schema (or, for `type`, never populated) - a genuine bug that 500'd on every real call, with no frontend ever wired to it and a dead `/app/settings/documents` link in the onboarding checklist pointing nowhere. Fixed: added the missing columns (`db/schema-verification.sql`), fixed the insert, added a self-serve `GET /me/verification/documents` listing endpoint, and built the actual upload UI (`Profile.tsx`) plus fixed the dead checklist link. No pricing numbers, tier definitions, or billing logic touched - this makes the existing free tier's mandatory gate actually reachable, which is what "low-friction, no-cost onboarding" requires in practice.
 5. **Bid leveling & side-by-side quote comparison with historical cost benchmarking** — Procore, BuildingConnected, ProcurePro. Divini has quote comparison (`quote-comparison.ts`) but not cross-project historical benchmarking - notably, this is exactly the "cost benchmarking" capability the AI/Procurement Graph freeze explicitly excludes until authorized. **Still frozen.**
 6. **Plan room with granular activity tracking** (who viewed/downloaded/bid) — PlanHub, Procore, BuildingConnected. Goes beyond document management into bid-engagement transparency for the developer. **Closed (PA-01, DOC-01):** who-viewed tracking, plus the document-visibility fix that unblocked download tracking for bidding vendors.
 7. **Deep accounting/ERP integrations** (QuickBooks, Sage, Xero, Viewpoint) — Buildertrend, GCPay, ProcurePro. Commonly cited adoption blocker when a procurement/financial tool doesn't sync with a GC's existing books. **Partially closed (INV-01):** a generic invoices CSV export (`GET /reports/invoices/:buildingId.csv`, docs/accounting-export.md) shaped for import into any accounting system's own generic bill/journal importer. Deliberately NOT a certified/OAuth-connected QuickBooks or Xero integration - that needs developer credentials and a real account to test honestly, which this environment does not have. The invoice model itself (P1-10) also had no frontend at all until INV-01 added it to AwardWorkflow.tsx; before this, invoices were create/read-only via direct API calls. **Still open:** the certified OAuth integrations themselves remain undone and untestable here.
@@ -58,20 +58,22 @@ are **not** implicitly authorized by this analysis:
 Gaps #1-4, #6-7, #10-13, and #15 are ordinary product/engineering work with
 no freeze conflict - the natural pool to prioritize from next.
 
-**Status as of this update:** #1, #3, #6, #12, #13, #15 are closed; #7 and
-#11 are partially closed (the parts needing real third-party OAuth
+**Status as of this update:** #1, #3, #4, #6, #12, #13, #15 are closed; #7
+and #11 are partially closed (the parts needing real third-party OAuth
 credentials or a certified integration remain out of reach in this
 environment); #2 and #10 are genuinely blocked here (jurisdiction legal
 data, mobile build pipeline) rather than frozen; #5, #8, #9, #14 remain
-frozen. That leaves **#4** (freemium subcontractor tier - flagged as
-pricing-adjacent, wants sign-off) as the only fully open, non-frozen,
-environment-feasible item left on this list; everything else buildable
-without a freeze conflict has shipped.
+frozen. Every gap in the non-frozen pool that this environment can actually
+build has now shipped - what's left (#2, #7, #10, #11's remaining half) is
+blocked on real-world resources this environment doesn't have, not on
+further scoping.
 
 ## Suggested next step
 
-This is a snapshot, not a roadmap. The one remaining open, non-frozen gap
-is **#4** (freemium subcontractor tier), and it is buildable - but it is
-really a pricing/tiering decision dressed as a feature, so it warrants
-explicit go-ahead before scoping given the standing pricing freeze, rather
-than being started on this analysis's authority alone.
+This is a snapshot, not a roadmap. With the non-frozen, environment-feasible
+pool exhausted, the natural next moves are either: revisit a frozen item if
+the user lifts a specific freeze (AI/Procurement Graph work already has a
+scoped foundation per `docs/ai-layer-design.md`; pricing/investor freezes
+have no such groundwork), or treat this analysis as done and look for
+value elsewhere (hardening, cleanup, or a fresh competitive scan later as
+the market moves).

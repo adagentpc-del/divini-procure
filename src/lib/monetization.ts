@@ -32,7 +32,32 @@ export type Verification = {
   // credential types still missing for a complete submission
   missing: string[];
   // credential types that are present but expiring soon
-  expiring: string[];
+  expiring: { credentialType: string; expiresAt: string | null }[];
+};
+
+// The three credential types the V2 verification gate requires (mirrors
+// server/src/lib/verificationGate.ts's REQUIRED_CREDENTIAL_TYPES). Kept as a
+// small constant here rather than fetched, since it changes only alongside a
+// backend code change to the gate itself.
+export const REQUIRED_CREDENTIAL_TYPES = ['license', 'gl_insurance', 'trade_cert'] as const;
+export type RequiredCredentialType = (typeof REQUIRED_CREDENTIAL_TYPES)[number];
+
+export const CREDENTIAL_TYPE_LABELS: Record<RequiredCredentialType, string> = {
+  license: 'Trade or business license',
+  gl_insurance: 'General liability insurance',
+  trade_cert: 'Trade certification',
+};
+
+export type VerificationDocument = {
+  id: string;
+  credential_type: string;
+  file_key: string | null;
+  file_name: string | null;
+  doc_status: 'pending' | 'approved' | 'rejected' | 'expired' | string;
+  expires_at: string | null;
+  review_notes: string | null;
+  reviewed_at: string | null;
+  created_at: string;
 };
 
 export type FeaturedListing = {
@@ -89,6 +114,30 @@ export async function getVerification(companyId: string): Promise<Verification |
   } catch {
     return null;
   }
+}
+
+/** Read the signed-in vendor's own uploaded verification documents (all types/statuses). */
+export async function listVerificationDocuments(): Promise<VerificationDocument[]> {
+  try {
+    const d = await apiGet<{ documents?: VerificationDocument[] }>('/me/verification/documents');
+    return Array.isArray(d?.documents) ? d.documents : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Attach an already-uploaded document (see uploadDocument in lib/db.ts - this
+ * reuses the standard documents pipeline, no new storage) as a verification
+ * credential. fileKey is the document's storage_path.
+ */
+export async function submitVerificationDocument(opts: {
+  credentialType: RequiredCredentialType;
+  fileKey: string;
+  fileName?: string;
+  expiresAt?: string;
+}): Promise<{ credential: VerificationDocument; verifyStatus: string | null }> {
+  return apiSend('POST', '/me/verification/documents', opts);
 }
 
 /** Read the current featured listings (marketplace promotion). */

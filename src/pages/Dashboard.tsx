@@ -228,7 +228,7 @@ function VendorMonetizationTiles({ companyId }: { companyId: string }) {
           </div>
           <div className="d">
             {expiringSoon
-              ? <span style={{ color: 'var(--amber)', fontWeight: 600 }}>Expiring soon: {verif!.expiring.join(', ')}</span>
+              ? <span style={{ color: 'var(--amber)', fontWeight: 600 }}>Expiring soon: {verif!.expiring.map(e => e.credentialType).join(', ')}</span>
               : verif?.missing?.length
                 ? `Needed: ${verif.missing.join(', ')}`
                 : 'Required to bid and contact developers'}

@@ -2763,6 +2763,13 @@ alter table if exists vendor_credentials add column if not exists reviewed_by te
 alter table if exists vendor_credentials add column if not exists reviewed_at timestamptz;
 alter table if exists vendor_credentials add column if not exists review_notes text;
 
+-- Self-serve document upload columns (additive, idempotent). See
+-- db/schema-verification.sql for the full explanation - previously
+-- referenced by POST /api/me/verification/documents with no matching
+-- column ever added, a genuine bug (gap #4 fix).
+alter table if exists vendor_credentials add column if not exists file_key text;
+alter table if exists vendor_credentials add column if not exists file_name text;
+
 -- Append-only audit log for every admin verification action.
 create table if not exists verification_audit (
   id uuid primary key default gen_random_uuid(),
