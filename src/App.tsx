@@ -16,6 +16,7 @@ const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 const Privacy = lazy(() => import('./pages/Privacy'));
 const Terms = lazy(() => import('./pages/Terms'));
 const Pricing = lazy(() => import('./pages/Pricing'));
+const Developers = lazy(() => import('./pages/Developers'));
 const PaymentPolicy = lazy(() => import('./pages/PaymentPolicy'));
 const NonCircumvention = lazy(() => import('./pages/NonCircumvention'));
 const Cookies = lazy(() => import('./pages/Cookies'));
@@ -145,6 +146,7 @@ function Routed() {
         <Route path="/privacy" element={<Privacy />} />
         <Route path="/terms" element={<Terms />} />
         <Route path="/pricing" element={<Pricing />} />
+        <Route path="/developers" element={<Developers />} />
         <Route path="/payment-policy" element={<PaymentPolicy />} />
         <Route path="/non-circumvention" element={<NonCircumvention />} />
         <Route path="/cookies" element={<Cookies />} />

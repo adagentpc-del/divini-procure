@@ -198,6 +198,7 @@ export default function Landing() {
             <a className="hidelink" href="#tools" onClick={(e) => { e.preventDefault(); document.getElementById('tools')?.scrollIntoView({behavior:'smooth'}); }}>Tools</a>
             <Link to="/opportunities">Browse deals</Link>
             <Link to="/pricing">Pricing</Link>
+            <Link className="hidelink" to="/developers">Developers</Link>
             <LanguageSwitcher />
             <Link to="/login">Log in</Link>
             <button className="btn primary" onClick={go}>Get started</button>
