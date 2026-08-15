@@ -57,6 +57,8 @@ tr:last-child td{border-bottom:none}
 .b-amber{background:#fbf2dc;color:#8a6d1a}
 .b-red{background:#fbe9e7;color:#a3382f}
 .b-neutral{background:#eee9df;color:#6b6358}
+.b-good{background:#e7f3ec;color:#1f7a4d}
+.b-warn{background:#fbf2dc;color:#8a6d1a}
 
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;border:1px solid var(--line);background:#fff;color:var(--emerald-deep);font-family:Inter;font-size:13.5px;font-weight:600;padding:10px 16px;border-radius:10px;cursor:pointer;transition:.15s}
 .btn:hover{border-color:var(--emerald);background:var(--ivory)}

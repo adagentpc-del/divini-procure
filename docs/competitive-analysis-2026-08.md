@@ -39,7 +39,7 @@ payments/compliance/pricing, explicit authorization) before implementation.
 12. **"Lessons-learned" vendor knowledge base tied to past project performance** — ProcurePro. A relatively cheap, high-value enrichment of the Divini Score with qualitative post-project data. **Closed:** the existing post-completion review (REV-01) now also captures three optional facts (would rehire / on time / on budget) and a guided "what would you tell the next developer hiring this vendor for similar work" field, each review's originating package's trade category is surfaced alongside it, and a developer viewing bids sees same-category past lessons highlighted first when evaluating a vendor for a similar project. Deliberately NOT folded into the Divini Score's numeric calculation - matching lib/vendor-signals.ts's "facts only, never a score" rule already established this session; the knowledge-base value is in surfacing the actual notes, not another hidden weighting.
 13. **Bidirectional reputation: developer/GC payment-behavior transparency**, not just vendor scoring — Levelset's "payment profiles" (which GCs pay late). A differentiated trust signal Divini's two-sided marketplace could uniquely own, since it already sits on the full payment spine (`payment_authorizations`, `external_payment_records`) - this is a natural `procure-moat.ts` extension, same shape as the commitment-weighted edges just built. **Closed (PR-01).**
 14. **Client/investor-facing transparency portal** — Buildertrend's homeowner portal (residential pattern), adaptable to a lightweight investor-visibility view of the frozen Capital Partner module - but any change there needs its own explicit authorization per the standing investor/capital freeze. **Still frozen.**
-15. **Algorithmic discovery, onboarding wizards, richer trust badges** (verified/top-rated/response-time SLAs) — Faire, Thumbtack, Upwork. Adjacent-marketplace UX patterns that would improve marketplace conversion versus a static vendor directory. **Still open** — not built, no freeze conflict.
+15. **Algorithmic discovery, onboarding wizards, richer trust badges** (verified/top-rated/response-time SLAs) — Faire, Thumbtack, Upwork. Adjacent-marketplace UX patterns that would improve marketplace conversion versus a static vendor directory. **Closed (VB-01):** a "Trust" column on the developer's bid-comparison table (the actual vendor-discovery surface in this codebase - there is no separate vendor directory/browse page) now shows real, wired badges instead of the dormant `VendorBadges` mockup component: a Verified badge sourced from `vendor_profiles.verify_status = 'approved'` (matching `marketplace-visibility.ts`'s own definition of "the public verified badge"), a Top-rated badge as a disclosed, fixed threshold on the same average-stars/review-count data `ReviewBadge` already shows (>=4.5 stars, >=3 reviews - not a new weighted model), and a plain "Responds in ~Xd" fact computed from the gap between a Procurement-Intelligence invite (`bid_invites.created_at`) and that vendor's first bid on the same package (`lib/response-time.ts`, deliberately public/aggregate like `payment-reputation.ts`). Deliberately NOT folded into the Divini Score - same "facts only, never a score" rule.
 
 ## How this maps onto Divini's standing freezes
 
@@ -58,21 +58,20 @@ are **not** implicitly authorized by this analysis:
 Gaps #1-4, #6-7, #10-13, and #15 are ordinary product/engineering work with
 no freeze conflict - the natural pool to prioritize from next.
 
-**Status as of this update:** #1, #3, #6, #12, #13 are closed; #7 and #11
-are partially closed (the parts needing real third-party OAuth credentials
-or a certified integration remain out of reach in this environment); #2 and
-#10 are genuinely blocked here (jurisdiction legal data, mobile build
-pipeline) rather than frozen; #5, #8, #9, #14 remain frozen. That leaves
-**#4** (freemium subcontractor tier - flagged as pricing-adjacent, wants
-sign-off) and **#15** (discovery/trust-badge UX) as the only fully open,
-non-frozen, environment-feasible items left on this list.
+**Status as of this update:** #1, #3, #6, #12, #13, #15 are closed; #7 and
+#11 are partially closed (the parts needing real third-party OAuth
+credentials or a certified integration remain out of reach in this
+environment); #2 and #10 are genuinely blocked here (jurisdiction legal
+data, mobile build pipeline) rather than frozen; #5, #8, #9, #14 remain
+frozen. That leaves **#4** (freemium subcontractor tier - flagged as
+pricing-adjacent, wants sign-off) as the only fully open, non-frozen,
+environment-feasible item left on this list; everything else buildable
+without a freeze conflict has shipped.
 
 ## Suggested next step
 
-This is a snapshot, not a roadmap. Of the remaining pool, **#15** (richer
-trust badges / discovery UX) is the cleanest next pick: no freeze conflict,
-no external-credential blocker, and it builds on vendor-signal data
-(Divini Score, reviews, prequalification, payment reputation) that already
-exists. #4 is buildable but is really a pricing/tiering decision dressed as
-a feature - worth a explicit go-ahead before scoping, given the standing
-pricing freeze.
+This is a snapshot, not a roadmap. The one remaining open, non-frozen gap
+is **#4** (freemium subcontractor tier), and it is buildable - but it is
+really a pricing/tiering decision dressed as a feature, so it warrants
+explicit go-ahead before scoping given the standing pricing freeze, rather
+than being started on this analysis's authority alone.
