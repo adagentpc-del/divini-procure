@@ -34,7 +34,7 @@ payments/compliance/pricing, explicit authorization) before implementation.
 7. **Deep accounting/ERP integrations** (QuickBooks, Sage, Xero, Viewpoint) — Buildertrend, GCPay, ProcurePro. Commonly cited adoption blocker when a procurement/financial tool doesn't sync with a GC's existing books. **Partially closed (INV-01):** a generic invoices CSV export (`GET /reports/invoices/:buildingId.csv`, docs/accounting-export.md) shaped for import into any accounting system's own generic bill/journal importer. Deliberately NOT a certified/OAuth-connected QuickBooks or Xero integration - that needs developer credentials and a real account to test honestly, which this environment does not have. The invoice model itself (P1-10) also had no frontend at all until INV-01 added it to AwardWorkflow.tsx; before this, invoices were create/read-only via direct API calls. **Still open:** the certified OAuth integrations themselves remain undone and untestable here.
 8. **AI-generated scope-of-work / RFP bundles from plans and specs** — Brickanta, Parspec, Procore AI. A live 2025-26 competitive wedge; strong structural fit for Divini's canonical data spine, but explicitly out of scope under the current AI freeze ("AI package generation" is named directly). **Still frozen.**
 9. **Early-payment / trade-credit financing for subcontractors** — Billd, Briq Cash, and the newly funded subcontractor-payments marketplace. A fintech layer competitors bundle onto payment data; a natural extension of Divini's payments/retainage spine, but a monetization/lending decision, not an engineering one - out of scope under the pricing freeze without explicit authorization. **Still frozen.**
-10. **Mobile-first field execution app** (daily logs, time clock, photos, punch lists) — Buildertrend, Procore, BuildOps. Divini is procurement/financial-centric with no field-execution mobile surface. **Still blocked:** no mobile build/release pipeline available in this environment.
+10. **Mobile-first field execution app** (daily logs, time clock, photos, punch lists) — Buildertrend, Procore, BuildOps. Divini is procurement/financial-centric with no field-execution mobile surface. **Closed as far as this environment honestly can (FL-01):** photos (`ProgressPhotos.tsx`) and punch lists (`DeliveryTracking.tsx`) already existed; FL-01 adds the two missing pieces - daily logs and a time clock (`FieldLog.tsx`, `server/src/routes/field-log.ts`, `db/schema-field-log.sql`) - as mobile-responsive web pages inside the existing app, verified in-browser at phone width. A real installable native app remains out of reach - Capacitor is wired up (`capacitor.config.ts`) but no native project is scaffolded and this environment has no Xcode/Android SDK to build or test one. Scoped to a building where the vendor holds an ACTIVE award (stricter than progress_photos' "any bid" rule); vendor-write / developer-read-only, and RLS keeps two different vendors working at the same building (under different packages) from ever seeing each other's field log - unlike progress_photos' deliberately shared visibility, tested explicitly.
 11. **Open app marketplace / public API ecosystem** — Procore, Autodesk Construction Cloud, ProcurePro's integration list. Extensibility functions as a moat and reduces switching-cost objections. **Closed as far as this environment honestly can (API-01 + DEV-01):** developer API platform with personal-access-token keys, real rate limits, and a key-management UI - but that UI (`/api-keys`) was gated behind login and the marketing site never mentioned an API existed, so the "reduces switching-cost objections" value (a prospect sees real extensibility before committing) wasn't actually landing. DEV-01 adds a public, pre-signup `/developers` page (linked from `Landing.tsx` and `Pricing.tsx`) documenting the real platform: auth model, scopes, rate limits, and the same representative endpoint table `docs/api-platform.md` maintains. Deliberately does NOT fabricate a third-party app directory, OAuth-on-behalf-of-another-company, a listing/review process, or webhooks - none of those exist (no real developer ecosystem to list in this environment), and the page says so explicitly rather than implying otherwise. A genuine "other companies list their integrations here" marketplace remains out of reach without a real third-party developer base.
 12. **"Lessons-learned" vendor knowledge base tied to past project performance** — ProcurePro. A relatively cheap, high-value enrichment of the Divini Score with qualitative post-project data. **Closed:** the existing post-completion review (REV-01) now also captures three optional facts (would rehire / on time / on budget) and a guided "what would you tell the next developer hiring this vendor for similar work" field, each review's originating package's trade category is surfaced alongside it, and a developer viewing bids sees same-category past lessons highlighted first when evaluating a vendor for a similar project. Deliberately NOT folded into the Divini Score's numeric calculation - matching lib/vendor-signals.ts's "facts only, never a score" rule already established this session; the knowledge-base value is in surfacing the actual notes, not another hidden weighting.
 13. **Bidirectional reputation: developer/GC payment-behavior transparency**, not just vendor scoring — Levelset's "payment profiles" (which GCs pay late). A differentiated trust signal Divini's two-sided marketplace could uniquely own, since it already sits on the full payment spine (`payment_authorizations`, `external_payment_records`) - this is a natural `procure-moat.ts` extension, same shape as the commitment-weighted edges just built. **Closed (PR-01).**
@@ -58,21 +58,24 @@ are **not** implicitly authorized by this analysis:
 Gaps #1-4, #6-7, #10-13, and #15 are ordinary product/engineering work with
 no freeze conflict - the natural pool to prioritize from next.
 
-**Status as of this update:** #1, #3, #4, #6, #11, #12, #13, #15 are
-closed; #7 is partially closed (the certified OAuth integration itself
-remains out of reach in this environment); #2 and #10 are genuinely
-blocked here (jurisdiction legal data, mobile build pipeline) rather than
-frozen; #5, #8, #9, #14 remain frozen. Every gap in the non-frozen pool
-that this environment can actually build has now shipped - what's left
-(#2, #7's remaining half, #10) is blocked on real-world resources this
-environment doesn't have, not on further scoping.
+**Status as of this update:** #1, #3, #4, #6, #10, #11, #12, #13, #15 are
+closed (#10 as far as this environment honestly can - see its own entry
+above for the native-app caveat); #7 is partially closed (the certified
+OAuth integration itself remains out of reach here); #2 is a deliberate
+skip, not a scoping gap - it would require either real, verified per-
+state legal data (a compliance/liability decision, not an engineering
+one) or fabricating legal content, and the call was made to do neither
+without that real input; #5, #8, #9, #14 remain frozen, with no freeze
+lifted this pass. Every gap this environment can honestly build without
+fabricating data or crossing a freeze has now shipped.
 
 ## Suggested next step
 
-This is a snapshot, not a roadmap. With the non-frozen, environment-feasible
-pool exhausted, the natural next moves are either: revisit a frozen item if
-the user lifts a specific freeze (AI/Procurement Graph work already has a
-scoped foundation per `docs/ai-layer-design.md`; pricing/investor freezes
-have no such groundwork), or treat this analysis as done and look for
-value elsewhere (hardening, cleanup, or a fresh competitive scan later as
-the market moves).
+This is a snapshot, not a roadmap. What remains is either genuinely
+external (real per-jurisdiction lien-notice data for #2, real third-party
+OAuth developer credentials for #7's remaining half, real native mobile
+build tooling for #10's remaining half) or behind a freeze the user has
+not lifted (#5/#8 AI, #9 pricing, #14 investor - each would need its own
+explicit go-ahead, same as #4 needed). Otherwise, treat this analysis as
+done and look for value elsewhere (hardening, cleanup, or a fresh
+competitive scan later as the market moves).

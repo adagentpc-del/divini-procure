@@ -374,6 +374,17 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [entitlement, setEntitlement] = useState<Entitlement | null>(null);
   const [limits, setLimits] = useState<Record<string, LimitCheck> | null>(null);
+  // Field Log (competitive gap #10): surfaced only when the vendor actually
+  // has an active-award job site, so vendors who haven't won work yet don't
+  // see a dead-end card.
+  const [activeSites, setActiveSites] = useState<{ id: string; name: string; location: string | null }[]>([]);
+
+  useEffect(() => {
+    if (!company || company.kind !== 'vendor') return;
+    apiGet<{ sites: { id: string; name: string; location: string | null }[] }>(`/field-log/my-sites?companyId=${company.id}`)
+      .then((d) => setActiveSites(d.sites ?? []))
+      .catch(() => setActiveSites([]));
+  }, [company]);
 
   useEffect(() => {
     if (!company) return;
@@ -453,6 +464,20 @@ export default function Dashboard() {
           <div className="d">{entitlement ? planPrice(entitlement.price_cents) : ''}</div>
         </div>
       </div>
+
+      {isVendor && activeSites.length > 0 && (
+        <div className="card" style={{ cursor: 'pointer' }} onClick={() => nav('/field-log')}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <div style={{ fontWeight: 700, marginBottom: 4 }}>
+                {activeSites.length === 1 ? `Active job site: ${activeSites[0].name}` : `${activeSites.length} active job sites`}
+              </div>
+              <div className="note">Clock in and log today's work</div>
+            </div>
+            <button className="btn primary" onClick={(e) => { e.stopPropagation(); nav('/field-log'); }}>Open Field Log</button>
+          </div>
+        </div>
+      )}
 
       {limits && (
         <>

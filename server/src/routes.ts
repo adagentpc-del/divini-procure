@@ -130,6 +130,7 @@ import prequalificationRouter from "./routes/prequalification.js";
 import paymentReputationRouter from "./routes/payment-reputation.js";
 import responseTimeRouter from "./routes/response-time.js";
 import apiKeysRouter from "./routes/api-keys.js";
+import fieldLogRouter from "./routes/field-log.js";
 // ---- Monetization V2 (flag-gated): bid credits + verification gate -----------
 import { PROCURE_MONETIZATION_V2 } from "./config.js";
 import { getBidCredits, consumeBidCredit } from "./lib/bidCredits.js";
@@ -258,6 +259,7 @@ router.use(prequalificationRouter);
 router.use(paymentReputationRouter);
 router.use(responseTimeRouter);
 router.use(apiKeysRouter);
+router.use(fieldLogRouter);
 
 // ---- health ----------------------------------------------------------------
 router.get("/healthz", async (_req, res) => {
