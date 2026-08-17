@@ -63,6 +63,17 @@ export default function ScopeBuilder() {
   const [exclusionDraft, setExclusionDraft] = useState('');
   const [criteriaDraft, setCriteriaDraft] = useState('');
 
+  // AI-draft (competitive gap #8: AI-generated scope-of-work from plans).
+  // Suggested exclusions/acceptance criteria stay in this local, unsaved
+  // list - never merged into detail.instance.exclusions/acceptance_criteria
+  // directly, so a suggestion only becomes real scope content when the
+  // user explicitly adds it (same one-at-a-time Add button already used
+  // for a manually-typed exclusion/criterion).
+  const [aiDrafting, setAiDrafting] = useState(false);
+  const [aiNote, setAiNote] = useState('');
+  const [aiSuggestedExclusions, setAiSuggestedExclusions] = useState<string[]>([]);
+  const [aiSuggestedCriteria, setAiSuggestedCriteria] = useState<string[]>([]);
+
   async function loadList() {
     if (!companyId) return;
     setErr('');
@@ -114,6 +125,7 @@ export default function ScopeBuilder() {
       setNewTitle(''); setNewCategory(''); setNewTemplateId(''); setNewPackageId('');
       setShowNew(false);
       setOk('Scope created.');
+      setAiNote(''); setAiSuggestedExclusions([]); setAiSuggestedCriteria([]);
       await loadList();
       await loadDetail(created.instance.id);
     } catch (e: any) {
@@ -158,6 +170,46 @@ export default function ScopeBuilder() {
     }
   }
 
+  async function aiDraft() {
+    if (!detail) return;
+    setAiDrafting(true); setAiNote(''); setErr('');
+    try {
+      const d = await apiSend<{
+        draft: {
+          siteConditions?: string; accessRestrictions?: string; deliveryRequirements?: string;
+          installRequirements?: string; exclusions?: string[]; acceptanceCriteria?: string[];
+        } | null;
+        reason?: string;
+        disclaimer?: string;
+      }>('POST', `/scope/instances/${detail.instance.id}/ai-draft`, {});
+      if (!d.draft) {
+        setAiNote(d.reason || 'No AI draft available.');
+        return;
+      }
+      // Only pre-fill fields that are currently EMPTY - never overwrite
+      // something the user already typed. Still unsaved: the user reviews
+      // in the textarea and clicks the existing Save button below, same
+      // as any manual edit.
+      setDetail({
+        ...detail,
+        instance: {
+          ...detail.instance,
+          site_conditions: detail.instance.site_conditions || d.draft.siteConditions || detail.instance.site_conditions,
+          access_restrictions: detail.instance.access_restrictions || d.draft.accessRestrictions || detail.instance.access_restrictions,
+          delivery_requirements: detail.instance.delivery_requirements || d.draft.deliveryRequirements || detail.instance.delivery_requirements,
+          install_requirements: detail.instance.install_requirements || d.draft.installRequirements || detail.instance.install_requirements,
+        },
+      });
+      setAiSuggestedExclusions(d.draft.exclusions ?? []);
+      setAiSuggestedCriteria(d.draft.acceptanceCriteria ?? []);
+      setAiNote(d.disclaimer || 'AI-drafted from your uploaded plans - review before saving.');
+    } catch (e: any) {
+      setAiNote(e.message ?? 'Could not draft from plans.');
+    } finally {
+      setAiDrafting(false);
+    }
+  }
+
   async function addExclusion() {
     if (!detail || !exclusionDraft.trim()) return;
     setBusy(true); setErr('');
@@ -182,6 +234,38 @@ export default function ScopeBuilder() {
         acceptanceCriteria: [...detail.instance.acceptance_criteria, criteriaDraft.trim()],
       });
       setCriteriaDraft('');
+      await loadDetail(detail.instance.id);
+    } catch (e: any) {
+      setErr(e.message ?? 'Could not add acceptance criteria.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function acceptSuggestedExclusion(text: string) {
+    if (!detail) return;
+    setBusy(true); setErr('');
+    try {
+      await apiSend('PATCH', `/scope/instances/${detail.instance.id}`, {
+        exclusions: [...detail.instance.exclusions, text],
+      });
+      setAiSuggestedExclusions((list) => list.filter((x) => x !== text));
+      await loadDetail(detail.instance.id);
+    } catch (e: any) {
+      setErr(e.message ?? 'Could not add exclusion.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function acceptSuggestedCriterion(text: string) {
+    if (!detail) return;
+    setBusy(true); setErr('');
+    try {
+      await apiSend('PATCH', `/scope/instances/${detail.instance.id}`, {
+        acceptanceCriteria: [...detail.instance.acceptance_criteria, text],
+      });
+      setAiSuggestedCriteria((list) => list.filter((x) => x !== text));
       await loadDetail(detail.instance.id);
     } catch (e: any) {
       setErr(e.message ?? 'Could not add acceptance criteria.');
@@ -250,7 +334,7 @@ export default function ScopeBuilder() {
                 <td className="note">{i.category}</td>
                 <td><span className={`badge ${i.status === 'published' ? 'b-green' : i.status === 'archived' ? 'b-neutral' : 'b-amber'}`}>{i.status}</span></td>
                 <td className="note">{i.current_version || '-'}</td>
-                <td><button className="btn" onClick={() => void loadDetail(i.id)}>{selectedId === i.id ? 'Selected' : 'Open'}</button></td>
+                <td><button className="btn" onClick={() => { setAiNote(''); setAiSuggestedExclusions([]); setAiSuggestedCriteria([]); void loadDetail(i.id); }}>{selectedId === i.id ? 'Selected' : 'Open'}</button></td>
               </tr>
             ))}
           </tbody>
@@ -310,7 +394,13 @@ export default function ScopeBuilder() {
           )}
 
           <div className="card" style={{ marginBottom: 14 }}>
-            <div className="note" style={{ fontWeight: 700, marginBottom: 8 }}>Site, access, delivery &amp; install</div>
+            <div className="page-head" style={{ marginTop: 0, marginBottom: 8, alignItems: 'center' }}>
+              <div className="note" style={{ fontWeight: 700 }}>Site, access, delivery &amp; install</div>
+              <button className="btn" disabled={aiDrafting || busy} onClick={aiDraft}>
+                {aiDrafting ? 'Drafting from plans…' : 'AI-draft from uploaded plans'}
+              </button>
+            </div>
+            {aiNote && <div className="note" style={{ marginBottom: 8, fontStyle: 'italic' }}>{aiNote}</div>}
             <div className="two">
               <div className="field"><label>Site conditions</label>
                 <textarea rows={2} value={detail.instance.site_conditions ?? ''} onChange={(e) => setDetail({ ...detail, instance: { ...detail.instance, site_conditions: e.target.value } })} /></div>
@@ -336,6 +426,17 @@ export default function ScopeBuilder() {
                 <input value={exclusionDraft} onChange={(e) => setExclusionDraft(e.target.value)} placeholder="e.g. Permits by developer" style={{ flex: 1 }} />
                 <button className="btn" disabled={busy || !exclusionDraft.trim()} onClick={addExclusion}>Add</button>
               </div>
+              {aiSuggestedExclusions.length > 0 && (
+                <div style={{ marginTop: 10, borderTop: '1px solid var(--border, #e5e0d8)', paddingTop: 8 }}>
+                  <div className="note" style={{ fontStyle: 'italic', marginBottom: 4 }}>AI-suggested, from your plans:</div>
+                  {aiSuggestedExclusions.map((ex, idx) => (
+                    <div key={idx} style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4 }}>
+                      <span className="note" style={{ flex: 1 }}>{ex}</span>
+                      <button className="btn" disabled={busy} onClick={() => acceptSuggestedExclusion(ex)}>Add</button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="card">
               <div className="note" style={{ fontWeight: 700, marginBottom: 8 }}>Acceptance criteria</div>
@@ -346,6 +447,17 @@ export default function ScopeBuilder() {
                 <input value={criteriaDraft} onChange={(e) => setCriteriaDraft(e.target.value)} placeholder="e.g. Passes final inspection" style={{ flex: 1 }} />
                 <button className="btn" disabled={busy || !criteriaDraft.trim()} onClick={addCriteria}>Add</button>
               </div>
+              {aiSuggestedCriteria.length > 0 && (
+                <div style={{ marginTop: 10, borderTop: '1px solid var(--border, #e5e0d8)', paddingTop: 8 }}>
+                  <div className="note" style={{ fontStyle: 'italic', marginBottom: 4 }}>AI-suggested, from your plans:</div>
+                  {aiSuggestedCriteria.map((ac, idx) => (
+                    <div key={idx} style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4 }}>
+                      <span className="note" style={{ flex: 1 }}>{ac}</span>
+                      <button className="btn" disabled={busy} onClick={() => acceptSuggestedCriterion(ac)}>Add</button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 
