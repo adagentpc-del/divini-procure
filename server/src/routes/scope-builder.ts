@@ -27,6 +27,9 @@ import { getAuth, requireUser } from "../auth.js";
 import { ForbiddenError, NotFoundError } from "../db.js";
 import { q, q1 } from "../pool.js";
 import { scoreScopeCompleteness } from "../lib/scope-completeness.js";
+import { llmEnabled, llmJson } from "../lib/llm.js";
+import { sanitizeForLlm } from "../lib/extract.js";
+import { llmRateLimit } from "../lib/rateLimit.js";
 
 const h =
   (fn: (req: Request, res: Response) => Promise<unknown>) =>
@@ -37,6 +40,23 @@ const router = Router();
 
 const FIELD_TYPES = new Set(["text", "number", "quantity", "date", "boolean", "select", "multiselect"]);
 const INSTANCE_STATUSES = new Set(["draft", "published", "archived"]);
+
+// Fresh competitive scan (2026-08-17), gap #8: AI-generated scope-of-work
+// draft from plans/specs. The AI freeze was explicitly opened for this by
+// the user - shares the analyze route's rate limit and disclaimer shape
+// (blueprint.ts) since it is the same class of feature: optional, capped,
+// user-triggered, never auto-saved.
+const aiDraftLimit = llmRateLimit({ max: 30, windowMs: 60 * 60_000 });
+const AI_DRAFT_DISCLAIMER =
+  "AI-drafted from your uploaded plans and specs. Review and edit before saving - nothing here is saved automatically.";
+// Real content only - filename/extension classification (extraction_method
+// 'none') and a failed extraction attempt carry no grounded text to draft
+// from.
+const GROUNDED_EXTRACTION_METHODS = ["pdf_text_layer", "ocr", "dxf_entities"];
+// Keep the combined prompt body bounded regardless of how many/how large
+// the linked documents are - this is a cost/latency cap, not a security
+// control (sanitizeForLlm below is the security control).
+const MAX_DOCUMENT_CHARS_TOTAL = 15000;
 
 async function isMemberOfCompany(userId: string, companyId: string | null): Promise<boolean> {
   if (!companyId) return false;
@@ -344,6 +364,130 @@ router.patch(
       [inst.id, JSON.stringify(changed), auth.userId],
     );
     res.json({ instance: row });
+  }),
+);
+
+/**
+ * Draft the standard narrative fields from real, extracted document text -
+ * grounded, not from file bytes it cannot see, same trust boundary every
+ * other AI touch point in this codebase already enforces. Returns the
+ * draft only; NEVER writes to scope_instances. The caller (ScopeBuilder.tsx)
+ * pre-fills the already-editable form with it and the user explicitly
+ * saves via the existing PATCH /instances/:id, unchanged.
+ */
+async function draftScopeFromDocuments(
+  docs: { name: string; extracted_text: string }[],
+): Promise<{
+  siteConditions?: string;
+  accessRestrictions?: string;
+  deliveryRequirements?: string;
+  installRequirements?: string;
+  exclusions?: string[];
+  acceptanceCriteria?: string[];
+} | null> {
+  if (!llmEnabled() || docs.length === 0) return null;
+
+  let budget = MAX_DOCUMENT_CHARS_TOTAL;
+  const perDocBudget = Math.floor(MAX_DOCUMENT_CHARS_TOTAL / docs.length);
+  const sourceText = docs
+    .map((d) => {
+      const take = Math.min(perDocBudget, budget);
+      budget -= take;
+      return `--- ${sanitizeForLlm(d.name).slice(0, 200)} ---\n${sanitizeForLlm(d.extracted_text).slice(0, take)}`;
+    })
+    .join("\n\n");
+
+  const system =
+    "You draft PRELIMINARY, EDITABLE scope-of-work narrative fields for a construction bid package, for a " +
+    "human to review and edit before anything is saved. You are given real text extracted from the project's " +
+    "own uploaded plans/specs - use ONLY what is explicitly stated in that text. You must NEVER invent " +
+    "quantities, dimensions, materials, brand names, code requirements, or any specific fact not clearly " +
+    "present in the source text. If a field cannot be grounded in the source text, omit it entirely rather " +
+    "than guessing or writing a generic placeholder. Reply with JSON only.";
+  const prompt =
+    `Source document text (extracted from this package's own uploaded plans/specs):\n\n${sourceText}\n\n` +
+    "Return JSON with any of these keys you can ground in the source text above (omit any you cannot): " +
+    '{"siteConditions": string, "accessRestrictions": string, "deliveryRequirements": string, ' +
+    '"installRequirements": string, "exclusions": string[], "acceptanceCriteria": string[]}. ' +
+    "siteConditions: existing conditions at the site relevant to this trade, if stated. accessRestrictions: " +
+    "any stated access/scheduling constraints. deliveryRequirements: stated material delivery requirements. " +
+    "installRequirements: stated installation requirements or sequencing. exclusions: specific items the " +
+    "source text explicitly excludes from this scope. acceptanceCriteria: specific, explicitly stated " +
+    "completion/acceptance criteria. Keep each string field under 500 characters.";
+
+  const out = await llmJson<{
+    siteConditions?: unknown;
+    accessRestrictions?: unknown;
+    deliveryRequirements?: unknown;
+    installRequirements?: unknown;
+    exclusions?: unknown;
+    acceptanceCriteria?: unknown;
+  }>(prompt, { system, timeoutMs: 25000 });
+  if (!out) return null;
+
+  const draft: Awaited<ReturnType<typeof draftScopeFromDocuments>> = {};
+  const str = (v: unknown): string | undefined => (typeof v === "string" && v.trim() ? v.trim().slice(0, 500) : undefined);
+  const strArr = (v: unknown): string[] | undefined =>
+    Array.isArray(v)
+      ? v.filter((x): x is string => typeof x === "string" && x.trim().length > 0).map((x) => x.trim().slice(0, 300)).slice(0, 20)
+      : undefined;
+  const siteConditions = str(out.siteConditions);
+  const accessRestrictions = str(out.accessRestrictions);
+  const deliveryRequirements = str(out.deliveryRequirements);
+  const installRequirements = str(out.installRequirements);
+  const exclusions = strArr(out.exclusions);
+  const acceptanceCriteria = strArr(out.acceptanceCriteria);
+  if (siteConditions) draft!.siteConditions = siteConditions;
+  if (accessRestrictions) draft!.accessRestrictions = accessRestrictions;
+  if (deliveryRequirements) draft!.deliveryRequirements = deliveryRequirements;
+  if (installRequirements) draft!.installRequirements = installRequirements;
+  if (exclusions?.length) draft!.exclusions = exclusions;
+  if (acceptanceCriteria?.length) draft!.acceptanceCriteria = acceptanceCriteria;
+  return Object.keys(draft!).length > 0 ? draft : null;
+}
+
+// ---- POST /scope/instances/:id/ai-draft ----------------------------------------
+router.post(
+  "/instances/:id/ai-draft",
+  requireUser,
+  aiDraftLimit,
+  h(async (req, res) => {
+    const inst = await authorizeInstance(req, req.params.id);
+    if (!inst.package_id) {
+      return res.json({ draft: null, reason: "This scope isn't linked to a bid package yet - link a package first." });
+    }
+    if (!llmEnabled()) {
+      return res.json({ draft: null, reason: "AI drafting is not configured in this environment." });
+    }
+
+    // Documents linked either directly (documents.package_id) or via a
+    // building-level upload later tagged to this package
+    // (blueprint_document_package_links) - Divini Blueprint's own model
+    // for "a source drawing set often applies to more than one package".
+    const docs = await q<{ name: string; extracted_text: string }>(
+      `select distinct d.name, d.extracted_text
+         from documents d
+        where (
+          d.package_id = $1
+          or d.id in (select document_id from blueprint_document_package_links where package_id = $1)
+        )
+          and d.extraction_method = any($2)
+          and d.extracted_text is not null
+          and length(trim(d.extracted_text)) > 0`,
+      [inst.package_id, GROUNDED_EXTRACTION_METHODS],
+    );
+    if (docs.length === 0) {
+      return res.json({
+        draft: null,
+        reason: "No analyzable document content found for this package's linked plans/specs - upload plans and run content extraction (Divini Blueprint) first.",
+      });
+    }
+
+    const draft = await draftScopeFromDocuments(docs);
+    if (!draft) {
+      return res.json({ draft: null, reason: "Could not draft grounded content from the linked documents - try again, or fill in manually." });
+    }
+    res.json({ draft, disclaimer: AI_DRAFT_DISCLAIMER, sourceDocumentCount: docs.length });
   }),
 );
 
