@@ -45,6 +45,21 @@ test.after(async () => {
   await server.close();
 });
 
+/** logPackageView/logDocumentDownload are fire-and-forget ('void', never
+ * awaited by the route - see routes.ts's own comment on why) so their
+ * write can still be in flight when the very next request reads it back.
+ * Under this suite's full-run concurrency (--test-concurrency=6 sharing
+ * one Postgres), that race is real, not theoretical - poll briefly rather
+ * than assuming the write has already landed. */
+async function waitForTotalViews(getActivity: () => Promise<{ body: { totalViews: number } }>, expected: number) {
+  for (let i = 0; i < 20; i++) {
+    const res = await getActivity();
+    if (res.body.totalViews >= expected) return res;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  return getActivity();
+}
+
 test("package activity: only the developer (not a vendor, not an outsider) can read the activity summary", async () => {
   const devView = await developer.client.get(`/api/packages/${packageId}/activity`);
   assert.equal(devView.status, 200, JSON.stringify(devView.body));
@@ -66,7 +81,7 @@ test("package activity: a vendor viewing the package logs a 'viewed' event visib
   await vendorA.client.get(`/api/packages/${packageId}`);
   await vendorA.client.get(`/api/packages/${packageId}`);
 
-  const afterOne = await developer.client.get(`/api/packages/${packageId}/activity`);
+  const afterOne = await waitForTotalViews(() => developer.client.get(`/api/packages/${packageId}/activity`), 2);
   assert.equal(afterOne.status, 200, JSON.stringify(afterOne.body));
   assert.equal(afterOne.body.totalViews, 2);
   assert.equal(afterOne.body.distinctViewerCompanies, 1);
@@ -77,7 +92,7 @@ test("package activity: a vendor viewing the package logs a 'viewed' event visib
   // Vendor B views once too - a second distinct viewer company.
   await vendorB.client.get(`/api/packages/${packageId}`);
 
-  const afterTwo = await developer.client.get(`/api/packages/${packageId}/activity`);
+  const afterTwo = await waitForTotalViews(() => developer.client.get(`/api/packages/${packageId}/activity`), 3);
   assert.equal(afterTwo.body.totalViews, 3);
   assert.equal(afterTwo.body.distinctViewerCompanies, 2);
 
@@ -109,9 +124,46 @@ test("package activity: a vendor requesting a signed download URL for a package 
   const signed = await vendorA.client.get(`/api/documents/signed-url?path=${encodeURIComponent(storagePath)}`);
   assert.equal(signed.status, 200, JSON.stringify(signed.body));
 
-  const after = await developer.client.get(`/api/packages/${packageId}/activity`);
+  const after = await (async () => {
+    for (let i = 0; i < 20; i++) {
+      const res = await developer.client.get(`/api/packages/${packageId}/activity`);
+      if (res.body.totalDownloads >= beforeDownloads + 1) return res;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    return developer.client.get(`/api/packages/${packageId}/activity`);
+  })();
   assert.equal(after.body.totalDownloads, beforeDownloads + 1, JSON.stringify(after.body));
   const vendorARow = after.body.perVendor.find((v: any) => v.viewerCompanyId === vendorACompanyId);
   assert.ok(vendorARow, "vendor A must appear in the activity summary");
   assert.ok(vendorARow.downloadCount >= 1);
+});
+
+test("package activity: a user who belongs to BOTH the developer's company AND an unrelated second company is still an internal viewer, not a logged 'viewed' event", async () => {
+  // A user can be a member of more than one company (company_members).
+  // Add the developer's own user as a second member of an unrelated
+  // company directly (there is no self-serve "join another company"
+  // endpoint to exercise here), same technique field-log.test.ts uses for
+  // its coworker scenario.
+  const { runWithRequestContext } = await import("../../server/dist/lib/requestContext.js");
+  const pool = await import("../../server/dist/pool.js");
+  const otherCompany = await createCompany(vendorB.client, "vendor", "PA Unrelated Second Co (dev's other hat)");
+  const devUserId = (await pool.q<{ id: string }>(`select id from users where email = $1`, [developer.email]))[0]?.id;
+  await runWithRequestContext({ userId: null, isAdmin: true, email: null }, () =>
+    pool.q(`insert into company_members (company_id, user_id, role, seat) values ($1, $2, 'member', 2)`, [
+      otherCompany.id,
+      devUserId,
+    ]),
+  );
+
+  const before = await developer.client.get(`/api/packages/${packageId}/activity`);
+  const beforeViews = before.body.totalViews;
+
+  // The developer views its OWN package - even though it's also a member
+  // of `otherCompany`, this must not be logged as that company "viewing"
+  // the package (the bug: picking the first id !== developerCompanyId
+  // would have picked otherCompany.id here and logged a false event).
+  await developer.client.get(`/api/packages/${packageId}`);
+
+  const after = await developer.client.get(`/api/packages/${packageId}/activity`);
+  assert.equal(after.body.totalViews, beforeViews, "a dual-membership internal view must not be logged as vendor engagement");
 });

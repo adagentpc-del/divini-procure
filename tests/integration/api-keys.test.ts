@@ -127,3 +127,25 @@ test("api keys: an unknown or malformed bearer token is simply unauthenticated, 
   const res = await rawFetch("/me", { headers: { Authorization: "Bearer dvp_live_totally_made_up_key_00000000000000" } });
   assert.equal(res.status, 401);
 });
+
+test("api keys: using a key sets last_used_at (touchApiKeyLastUsed must not silently no-op under RLS)", async () => {
+  const create = await dev.client.post("/api/api-keys", { name: "Touch test", scopes: ["read"] });
+  const rawKey = create.body.apiKey.rawKey as string;
+  const keyId = create.body.apiKey.id as string;
+
+  const listBefore = await dev.client.get("/api/api-keys");
+  const before = listBefore.body.apiKeys.find((k: any) => k.id === keyId);
+  assert.equal(before.last_used_at, null);
+
+  const me = await rawFetch("/me", { headers: { Authorization: `Bearer ${rawKey}` } });
+  assert.equal(me.status, 200, JSON.stringify(me.body));
+
+  // touchApiKeyLastUsed is fire-and-forget (never awaited by auth
+  // middleware) - give its best-effort write a moment to land rather than
+  // racing it.
+  await new Promise((r) => setTimeout(r, 200));
+
+  const listAfter = await dev.client.get("/api/api-keys");
+  const after = listAfter.body.apiKeys.find((k: any) => k.id === keyId);
+  assert.ok(after.last_used_at, "last_used_at must be set after the key authenticates a request");
+});
