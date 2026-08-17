@@ -14,7 +14,7 @@ import { getBuildings, getPackages } from '../lib/db';
  * adapts by company.kind, same shape as DeliveryTracking.tsx's dual-role UI.
  */
 
-type Site = { id: string; name: string; location: string | null };
+type Site = { id: string; name: string; location: string | null; has_active_award?: boolean };
 type PackageRow = { id: string; category?: string | null; name?: string | null };
 type Rfi = {
   id: string; building_id: string; package_id: string | null;
@@ -34,6 +34,14 @@ const statusCls = (s: string) => STATUS_CLS[s] ?? 'badge b-neutral';
 
 function fmtDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+/** For a date-ONLY string (e.g. due_date, "2026-08-17"), not a timestamp -
+ * new Date('2026-08-17') parses as midnight UTC, which toLocaleDateString
+ * then renders as the PREVIOUS day for anyone west of UTC. Forcing a local
+ * midnight via 'T00:00:00' avoids that shift, same fix as FieldLog.tsx's
+ * own fmtDate for log_date. */
+function fmtDateOnly(d: string): string {
+  return new Date(d + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 export default function RfiPage() {
@@ -65,7 +73,7 @@ export default function RfiPage() {
     if (!company) return;
     setBuildingsLoading(true);
     const load = isVendor
-      ? apiGet<{ sites: Site[] }>(`/field-log/my-sites?companyId=${encodeURIComponent(company.id)}`).then((d) => d.sites ?? [])
+      ? apiGet<{ sites: Site[] }>(`/rfis/my-sites?companyId=${encodeURIComponent(company.id)}`).then((d) => d.sites ?? [])
       : getBuildings(company.id).then((bs: any) => bs ?? []);
     load
       .then((bs) => {
@@ -143,6 +151,12 @@ export default function RfiPage() {
   }
 
   if (!company) return null;
+  // Reading/closing a vendor's own RFIs stays available at a site after its
+  // award there is cancelled (mirrors the server's assertCanReadRfis), but
+  // raising a NEW one still requires an active award - creation is
+  // rejected server-side either way, this only controls whether the form
+  // is offered at all.
+  const selectedSiteHasActiveAward = !isVendor || buildings.find((b) => b.id === buildingId)?.has_active_award !== false;
 
   return (
     <div>
@@ -155,7 +169,7 @@ export default function RfiPage() {
               : 'Questions raised by your vendors, tracked to a close.'}
           </div>
         </div>
-        {isVendor && buildingId && (
+        {isVendor && buildingId && selectedSiteHasActiveAward && (
           <button className="btn primary" onClick={() => setShowAskForm(!showAskForm)}>
             {showAskForm ? 'Cancel' : '+ New RFI'}
           </button>
@@ -185,7 +199,11 @@ export default function RfiPage() {
 
       {err && <div className="err">{err}</div>}
 
-      {buildingId && showAskForm && (
+      {isVendor && buildingId && !selectedSiteHasActiveAward && (
+        <div className="note">Your award at this project has ended - you can still view and close your past RFIs below, but not raise a new one.</div>
+      )}
+
+      {buildingId && showAskForm && selectedSiteHasActiveAward && (
         <div className="card">
           <form onSubmit={submitAsk}>
             <div className="field">
@@ -231,7 +249,7 @@ export default function RfiPage() {
                   <strong>{r.rfi_number ? `${r.rfi_number} - ` : ''}{r.subject}</strong>
                   <div className="note">
                     Asked {fmtDate(r.created_at)}{r.asked_by_email ? ` by ${r.asked_by_email}` : ''}
-                    {r.due_date ? ` · due ${fmtDate(r.due_date)}` : ''}
+                    {r.due_date ? ` · due ${fmtDateOnly(r.due_date)}` : ''}
                   </div>
                 </div>
                 <span className={statusCls(r.status)}>{r.status}</span>

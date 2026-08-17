@@ -95,6 +95,37 @@ async function assertVendorCanRaiseRfiAt(req: Request, buildingId: string, vendo
   if (!active) throw new ForbiddenError("no active award for this vendor at this building");
 }
 
+// GET /rfis/my-sites?companyId= -- buildings where this vendor company holds
+// (or has ever held) an award, for the site picker. Deliberately NOT
+// active-award-only like field-log's /my-sites: assertCanReadRfis grants a
+// vendor read access to its own historical RFIs at a building even after
+// its award there is cancelled, so the picker must keep that building
+// selectable or those RFIs become unreachable. has_active_award tells the
+// UI whether to also offer "ask a new question" for that site (creation
+// still requires an active award, enforced server-side either way).
+router.get(
+  "/rfis/my-sites",
+  requireUser,
+  h(async (req, res) => {
+    const auth = getAuth(req);
+    const companyId = String(req.query.companyId || "");
+    if (!companyId) return res.status(400).json({ error: "companyId required" });
+    if (!auth.isAdmin && !(await isMember(auth.userId!, companyId))) {
+      throw new ForbiddenError("not a member of this company");
+    }
+    const sites = await q(
+      `select b.id, b.name, b.location, bool_or(a.status = 'active') as has_active_award
+         from awards a
+         join buildings b on b.id = a.building_id
+        where a.vendor_company_id = $1
+        group by b.id, b.name, b.location
+        order by b.name`,
+      [companyId],
+    );
+    res.json({ sites });
+  }),
+);
+
 // GET /rfis?buildingId=
 router.get(
   "/rfis",
@@ -148,6 +179,22 @@ router.post(
 
     const packageId = body.packageId ? String(body.packageId) : null;
     const dueDate = body.dueDate ? String(body.dueDate) : null;
+
+    if (packageId) {
+      // Without this, a caller could tag an RFI to a package outside this
+      // building (or awarded to a different vendor entirely), producing a
+      // misleading cross-project/cross-vendor record - the UI only offers
+      // packages at the selected building, but the API must not trust that.
+      const validPackage = await q1(
+        `select 1 from packages p
+           join awards a on a.package_id = p.id
+          where p.id = $1 and p.building_id = $2 and a.vendor_company_id = $3`,
+        [packageId, buildingId, vendorCompanyId],
+      );
+      if (!validPackage) {
+        return res.status(400).json({ error: "packageId must be a package at this building awarded to this vendor" });
+      }
+    }
 
     const building = await q1<{ company_id: string }>(`select company_id from buildings where id = $1`, [buildingId]);
     const developerCompanyId = building?.company_id ?? null;

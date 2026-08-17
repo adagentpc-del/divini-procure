@@ -21,14 +21,23 @@ let vendorBCompanyId: string;
 let outsider: { client: TestClient; email: string };
 let outsiderCompanyId: string;
 let buildingId: string;
+let vendorAPackageId: string;
+let vendorBPackageId: string;
+let vendorAAwardId: string;
 
-async function awardVendorAt(vendor: TestClient, vendorCompanyId: string, category: string): Promise<void> {
+async function awardVendorAt(
+  vendor: TestClient,
+  vendorCompanyId: string,
+  category: string,
+): Promise<{ packageId: string; awardId: string }> {
   const pkg = await developer.client.post(`/api/buildings/${buildingId}/packages`, { category });
   const packageId = pkg.body.id ?? pkg.body.package?.id;
   const bid = await vendor.post(`/api/packages/${packageId}/bids`, { vendorCompanyId, price: 15000, days: 10 });
   const bidId = bid.body.id ?? bid.body.bid?.id;
   const award = await developer.client.post("/api/award/confirm", { bidId });
   assert.equal(award.status, 201, JSON.stringify(award.body));
+  const awardId = award.body.award?.id ?? award.body.id;
+  return { packageId, awardId };
 }
 
 test.before(async () => {
@@ -49,8 +58,11 @@ test.before(async () => {
   assert.equal(building.status, 201, JSON.stringify(building.body));
   buildingId = (building.body.building ?? building.body).id;
 
-  await awardVendorAt(vendorA.client, vendorACompanyId, "RFI Electrical");
-  await awardVendorAt(vendorB.client, vendorBCompanyId, "RFI Plumbing");
+  const awardA = await awardVendorAt(vendorA.client, vendorACompanyId, "RFI Electrical");
+  vendorAPackageId = awardA.packageId;
+  vendorAAwardId = awardA.awardId;
+  const awardB = await awardVendorAt(vendorB.client, vendorBCompanyId, "RFI Plumbing");
+  vendorBPackageId = awardB.packageId;
 });
 
 test.after(async () => {
@@ -157,4 +169,43 @@ test("rfi: the developer can close an RFI directly without answering it", async 
   assert.equal(close.status, 200, JSON.stringify(close.body));
   assert.equal(close.body.rfi.status, "closed");
   assert.equal(close.body.rfi.answer, null);
+});
+
+test("rfi: a vendor cannot tag its RFI to a package it was not awarded (Codex finding)", async () => {
+  // vendorAPackageId is fine (vendor A's own package); vendorBPackageId
+  // belongs to a different vendor entirely - the route must reject it even
+  // though the UI would never normally offer it.
+  const valid = await vendorA.client.post("/api/rfis", {
+    buildingId, vendorCompanyId: vendorACompanyId, packageId: vendorAPackageId,
+    subject: "Own-package RFI", question: "Fine to tag my own awarded package.",
+  });
+  assert.equal(valid.status, 201, JSON.stringify(valid.body));
+  assert.equal(valid.body.rfi.package_id, vendorAPackageId);
+
+  const crossVendor = await vendorA.client.post("/api/rfis", {
+    buildingId, vendorCompanyId: vendorACompanyId, packageId: vendorBPackageId,
+    subject: "Cross-vendor package RFI", question: "Should be rejected.",
+  });
+  assert.equal(crossVendor.status, 400, JSON.stringify(crossVendor.body));
+});
+
+test("rfi: my-sites keeps a site with a cancelled award (for reading/closing history) but flags it as not active (Codex finding)", async () => {
+  const cancel = await developer.client.post(`/api/award/${vendorAAwardId}/cancel`, {});
+  assert.equal(cancel.status, 200, JSON.stringify(cancel.body));
+
+  const sites = await vendorA.client.get(`/api/rfis/my-sites?companyId=${vendorACompanyId}`);
+  assert.equal(sites.status, 200, JSON.stringify(sites.body));
+  const site = sites.body.sites.find((s: any) => s.id === buildingId);
+  assert.ok(site, "cancelled-award site should still appear in my-sites");
+  assert.equal(site.has_active_award, false);
+
+  // Reading/closing still works after cancellation...
+  const read = await vendorA.client.get(`/api/rfis?buildingId=${buildingId}`);
+  assert.equal(read.status, 200, JSON.stringify(read.body));
+
+  // ...but raising a NEW one is correctly rejected server-side.
+  const raise = await vendorA.client.post("/api/rfis", {
+    buildingId, vendorCompanyId: vendorACompanyId, subject: "Too late", question: "Award already cancelled.",
+  });
+  assert.equal(raise.status, 403, JSON.stringify(raise.body));
 });
