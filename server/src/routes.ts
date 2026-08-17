@@ -450,9 +450,18 @@ router.get(
       // their own package are not "vendor engagement."
       if (developerCompanyId && auth.userId && !auth.isAdmin) {
         const ids = await db.userCompanyIds(auth.userId);
-        const viewerCompanyId = ids.find((cid) => cid !== developerCompanyId);
-        if (viewerCompanyId) {
-          void logPackageView({ packageId: pkg.id, buildingId: pkg.building.id, developerCompanyId, viewerCompanyId });
+        // A user can belong to more than one company (company_members).
+        // Membership in the developer's OWN company - not merely "some ID
+        // in the list differs from developerCompanyId" - is what makes
+        // this an internal view: someone who is a member of both the
+        // developer's company and an unrelated second company is still
+        // viewing internally, not as a genuinely different, prospective
+        // vendor company.
+        if (!ids.includes(developerCompanyId)) {
+          const viewerCompanyId = ids[0];
+          if (viewerCompanyId) {
+            void logPackageView({ packageId: pkg.id, buildingId: pkg.building.id, developerCompanyId, viewerCompanyId });
+          }
         }
       }
     }
@@ -820,7 +829,10 @@ router.get(
       );
       if (pkgRow) {
         const ids = await db.userCompanyIds(auth.userId);
-        const viewerCompanyId = ids.find((cid) => cid !== pkgRow.company_id);
+        // Same fix as the plan-room 'viewed' logging above: membership in
+        // the developer's own company - not merely "some other ID exists
+        // in the list" - is what makes this an internal download.
+        const viewerCompanyId = ids.includes(pkgRow.company_id) ? undefined : ids[0];
         if (viewerCompanyId) {
           void logDocumentDownload({
             packageId: pkgRow.id,

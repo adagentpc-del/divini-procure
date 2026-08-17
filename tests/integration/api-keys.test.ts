@@ -127,3 +127,29 @@ test("api keys: an unknown or malformed bearer token is simply unauthenticated, 
   const res = await rawFetch("/me", { headers: { Authorization: "Bearer dvp_live_totally_made_up_key_00000000000000" } });
   assert.equal(res.status, 401);
 });
+
+test("api keys: using a key sets last_used_at (touchApiKeyLastUsed must not silently no-op under RLS)", async () => {
+  const create = await dev.client.post("/api/api-keys", { name: "Touch test", scopes: ["read"] });
+  const rawKey = create.body.apiKey.rawKey as string;
+  const keyId = create.body.apiKey.id as string;
+
+  const listBefore = await dev.client.get("/api/api-keys");
+  const before = listBefore.body.apiKeys.find((k: any) => k.id === keyId);
+  assert.equal(before.last_used_at, null);
+
+  const me = await rawFetch("/me", { headers: { Authorization: `Bearer ${rawKey}` } });
+  assert.equal(me.status, 200, JSON.stringify(me.body));
+
+  // touchApiKeyLastUsed is fire-and-forget (never awaited by auth
+  // middleware) - poll with a bounded timeout rather than a fixed sleep,
+  // which could still be too short under a busy shared DB/connection pool
+  // (same reasoning as package-activity.test.ts's waitForTotalViews).
+  let after: { last_used_at: string | null } | undefined;
+  for (let i = 0; i < 20; i++) {
+    const listAfter = await dev.client.get("/api/api-keys");
+    after = listAfter.body.apiKeys.find((k: any) => k.id === keyId);
+    if (after?.last_used_at) break;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  assert.ok(after?.last_used_at, "last_used_at must be set after the key authenticates a request");
+});

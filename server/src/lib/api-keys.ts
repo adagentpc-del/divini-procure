@@ -92,14 +92,22 @@ export async function verifyApiKey(rawKey: string): Promise<ApiKeyAuthResult | n
  * Best-effort last-used timestamp. Never awaited by the auth middleware -
  * a slow or failing write here must not add latency or risk to every
  * authenticated request.
+ *
+ * Uses q(), not a raw pool.query() - api_keys has `force row level
+ * security` (db/schema-api-keys.sql), and a bare pool.query() never calls
+ * setRlsContext(), so app.user_id/app.is_admin are unset and the policy
+ * (own company or admin) matches nothing: the UPDATE silently affects zero
+ * rows every time, forever leaving last_used_at NULL. This call also fires
+ * from auth.ts's verifyApiKeyBearer() BEFORE runWithRequestContext() wraps
+ * the rest of the request (see requestContext.ts), so even q() sees no
+ * request context here - which pool.ts already treats as admin-equivalent,
+ * the same fallback background jobs rely on. That's correct for this call:
+ * it is, in effect, a detached background write, not a user-scoped one.
  */
 export function touchApiKeyLastUsed(apiKeyId: string): void {
-  const client = pool;
-  client
-    .query(`update api_keys set last_used_at = now() where id = $1`, [apiKeyId])
-    .catch(() => {
-      // best-effort only
-    });
+  q(`update api_keys set last_used_at = now() where id = $1`, [apiKeyId]).catch(() => {
+    // best-effort only
+  });
 }
 
 export interface CreatedApiKey {
