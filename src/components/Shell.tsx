@@ -90,6 +90,7 @@ const VENDOR_SECTIONS: Section[] = [
     ['/blueprint','Blueprint Addenda','⌂'],
     ['/bids',    'My Bids',    '◧'],
     ['/my-invites','Invitations','✉'],
+    ['/field-log','Field Log', '▤'],
   ]},
   { label: 'Intelligence', items: [
     ['/coo',          'AI COO',      '✦'],

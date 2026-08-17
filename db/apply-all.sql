@@ -4886,3 +4886,8 @@ COMMIT;
 -- header for why this is safe (a key never exceeds its creator's own
 -- permissions).
 \i db/schema-api-keys.sql
+
+-- Field Log: daily logs + a time clock for field crews (competitive gap
+-- closure) - see the file's own header for why this is vendor-write /
+-- developer-read-only and scoped to an active award, not just a bid.
+\i db/schema-field-log.sql

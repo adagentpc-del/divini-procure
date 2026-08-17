@@ -107,6 +107,7 @@ const InvestorWatchlist = lazy(() => import('./pages/InvestorWatchlist'));
 const ProgressPhotos = lazy(() => import('./pages/ProgressPhotos'));
 const AdminSplitTerms = lazy(() => import('./pages/AdminSplitTerms'));
 const AdminVerification = lazy(() => import('./pages/AdminVerification'));
+const FieldLog = lazy(() => import('./pages/FieldLog'));
 
 function Gate({ children }: { children: JSX.Element }) {
   const { session, company, isAdmin, loading } = useAuth();
@@ -194,6 +195,7 @@ function Routed() {
         <Route path="/award" element={<Gate><AwardWorkflow /></Gate>} />
         <Route path="/change-orders" element={<Gate><ChangeOrders /></Gate>} />
         <Route path="/coi-tracker" element={<Gate><COITracker /></Gate>} />
+        <Route path="/field-log" element={<Gate><FieldLog /></Gate>} />
         <Route path="/retainage" element={<Gate><RetainageDashboard /></Gate>} />
         <Route path="/lender-portal" element={<Gate><LenderPortal /></Gate>} />
         <Route path="/lender-view/:token" element={<DrawRequestView />} />
