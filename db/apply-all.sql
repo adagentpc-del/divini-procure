@@ -4897,3 +4897,9 @@ COMMIT;
 -- unlike field-log, and how the field-level write contract differs from
 -- the row-level RLS boundary.
 \i db/schema-rfi.sql
+
+-- Project closeout: final punch list + warranty tracking (fresh
+-- competitive scan, 2026-08-17) - see the file's own header for how this
+-- differs from the financial closeout marker and delivery-level punch
+-- items already in this schema.
+\i db/schema-closeout.sql

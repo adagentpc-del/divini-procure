@@ -147,8 +147,29 @@ New signal since the 2026-08 baseline:
     review.
 17. **Project closeout: final punch list + warranty tracking** —
     Buildertrend (warranty tracking), Procore, BuildOps. Distinct from the
-    existing financial closeout marker and from delivery-level punch
-    items; not yet built. **Still open** - next candidate for this pass.
+    existing financial closeout marker (`financially_closed_at` -
+    P1-13/P1-18) and from delivery-level punch items
+    (`delivery_punch_items` - per-delivery material items, and notably
+    with no RLS at all, a pre-existing gap this closure did not touch).
+    Also distinct from `award_documents`' `closeout`/`warranty` doc kinds
+    (`AwardWorkflow.tsx`), which are just file attachments (a PDF labeled
+    "warranty"), not a structured, trackable workflow. **Closed
+    (CO-01):** scoped to PACKAGE (matching `change_orders`/`deliveries`'
+    own granularity - closeout happens per trade). `warranty_start_date`/
+    `warranty_months`/`warranty_terms` added directly to `packages`
+    (matching `schema-package-closeout.sql`'s own precedent of plain
+    columns over a satellite table); `closeout_punch_items` (three-state:
+    open -> resolved -> verified, so the developer confirms a vendor's
+    claimed fix rather than trusting it unverified) and `warranty_claims`
+    (open -> in_progress -> resolved/denied) as new RLS-protected tables,
+    RLS mirroring the awards/field-log/RFI three-way shape - a vendor
+    never sees another vendor's punch items or claims at the same
+    building. Bidirectional like RFI-01: the developer raises items/
+    claims and sets warranty terms; the vendor resolves items and works
+    claims; only the developer verifies a fix or denies a claim - a
+    vendor can never verify its own fix or deny its own claim, enforced
+    at the app-layer field-contract level (`server/src/routes/closeout.ts`).
+    New `src/pages/Closeout.tsx`, dual-role like `Rfi.tsx`.
 18. **Digital surety bond / subcontractor default insurance (SDI)
     facilitation** — SuretyBind (launched Dec 2025), general 2026 SDI
     uptake for GC risk transfer on CM-at-risk work. **Blocked, external:**
@@ -158,7 +179,9 @@ New signal since the 2026-08 baseline:
     data. A facilitation-only UI with no real underwriter behind it would
     misrepresent a compliance/risk product as functional; not attempted.
 
-**Status as of this update:** #16 closed (RFI-01). #17 is the next
-in-scope candidate. #18 is a deliberate skip for the same reason as #2 and
-#7's remaining half - real external credentials/data this environment does
-not have, not a scoping or engineering gap. No freeze touched.
+**Status as of this update:** #16 (RFI-01) and #17 (CO-01) closed. #18 is
+a deliberate skip for the same reason as #2 and #7's remaining half - real
+external credentials/data this environment does not have, not a scoping or
+engineering gap. No freeze touched. With #16 and #17 closed, every gap
+this fresh scan surfaced that can be honestly built without fabricating
+data or crossing a freeze has shipped.
