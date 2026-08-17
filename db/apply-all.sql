@@ -4891,3 +4891,9 @@ COMMIT;
 -- closure) - see the file's own header for why this is vendor-write /
 -- developer-read-only and scoped to an active award, not just a bid.
 \i db/schema-field-log.sql
+
+-- RFI (Request for Information) workflow (fresh competitive scan,
+-- 2026-08-17) - see the file's own header for why this is bidirectional,
+-- unlike field-log, and how the field-level write contract differs from
+-- the row-level RLS boundary.
+\i db/schema-rfi.sql
