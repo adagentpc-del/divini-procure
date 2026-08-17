@@ -109,6 +109,7 @@ const AdminSplitTerms = lazy(() => import('./pages/AdminSplitTerms'));
 const AdminVerification = lazy(() => import('./pages/AdminVerification'));
 const FieldLog = lazy(() => import('./pages/FieldLog'));
 const Rfi = lazy(() => import('./pages/Rfi'));
+const Closeout = lazy(() => import('./pages/Closeout'));
 
 function Gate({ children }: { children: JSX.Element }) {
   const { session, company, isAdmin, loading } = useAuth();
@@ -198,6 +199,7 @@ function Routed() {
         <Route path="/coi-tracker" element={<Gate><COITracker /></Gate>} />
         <Route path="/field-log" element={<Gate><FieldLog /></Gate>} />
         <Route path="/rfis" element={<Gate><Rfi /></Gate>} />
+        <Route path="/closeout" element={<Gate><Closeout /></Gate>} />
         <Route path="/retainage" element={<Gate><RetainageDashboard /></Gate>} />
         <Route path="/lender-portal" element={<Gate><LenderPortal /></Gate>} />
         <Route path="/lender-view/:token" element={<DrawRequestView />} />

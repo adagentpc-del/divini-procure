@@ -132,6 +132,7 @@ import responseTimeRouter from "./routes/response-time.js";
 import apiKeysRouter from "./routes/api-keys.js";
 import fieldLogRouter from "./routes/field-log.js";
 import rfiRouter from "./routes/rfi.js";
+import closeoutRouter from "./routes/closeout.js";
 // ---- Monetization V2 (flag-gated): bid credits + verification gate -----------
 import { PROCURE_MONETIZATION_V2 } from "./config.js";
 import { getBidCredits, consumeBidCredit } from "./lib/bidCredits.js";
@@ -262,6 +263,7 @@ router.use(responseTimeRouter);
 router.use(apiKeysRouter);
 router.use(fieldLogRouter);
 router.use(rfiRouter);
+router.use(closeoutRouter);
 
 // ---- health ----------------------------------------------------------------
 router.get("/healthz", async (_req, res) => {
