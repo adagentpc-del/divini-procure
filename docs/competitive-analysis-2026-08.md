@@ -69,7 +69,7 @@ without that real input; #5, #8, #9, #14 remain frozen, with no freeze
 lifted this pass. Every gap this environment can honestly build without
 fabricating data or crossing a freeze has now shipped.
 
-## Suggested next step
+## Suggested next step (superseded below - see the 2026-08-17 fresh scan)
 
 This is a snapshot, not a roadmap. What remains is either genuinely
 external (real per-jurisdiction lien-notice data for #2, real third-party
@@ -79,3 +79,86 @@ not lifted (#5/#8 AI, #9 pricing, #14 investor - each would need its own
 explicit go-ahead, same as #4 needed). Otherwise, treat this analysis as
 done and look for value elsewhere (hardening, cleanup, or a fresh
 competitive scan later as the market moves).
+
+## Fresh competitive scan (2026-08-17)
+
+Re-ran external market research from scratch rather than re-reading the
+snapshot above, per the user's explicit choice of "fresh scan" over
+"hardening" or "lift a freeze." Same rules as the original pass: named
+competitor demonstrating the gap, no generic "competitors typically
+offer X" claims, and the three standing freezes (pricing, AI/Procurement
+Graph, investor/Capital Partner) still apply undisturbed - nothing below
+is implicitly authorized to touch them.
+
+New signal since the 2026-08 baseline:
+
+- **Procore** shipped agentic AI coworkers in 2026 (Datagrid acquisition,
+  a "Connected Common Data Environment," a natural-language RFI-drafting
+  agent). Squarely inside the existing AI freeze (#5/#8) - reaffirms it
+  stays frozen, does not open new unfrozen scope.
+- **Siteline** (subcontractor billing/pay-app automation), **SubBase**
+  ($7M Series A, material-procurement RFQ + real-time budget drawdown +
+  AI invoice reconciliation), and a new **subcontractor payments
+  marketplace** ($25M Series A) all reinforce the existing financial-spine
+  and lien-waiver gaps already closed (#1, #7) rather than surfacing a
+  new one - Divini's purchase-order/delivery/invoice chain already covers
+  SubBase's core loop.
+- **SuretyBind** (launched Dec 2025) digitizes surety bond issuance;
+  subcontractor default insurance (SDI) is a live 2026 GC risk-transfer
+  trend. A genuinely new category, not covered by the original 15-item
+  list - see #18 below.
+- Change order management and RFI workflow both remain baseline
+  "table stakes" per every 2026 buyer's-guide surveyed (Procore, Autodesk
+  Construction Cloud, and purpose-built tools alike) - a codebase check
+  found Divini already has change orders (`ChangeOrders.tsx`,
+  `schema-change-orders.sql`) but had **no RFI concept anywhere** - not a
+  partial implementation, not a dead code path, genuinely absent. See #16.
+- A codebase check for "closeout" found `schema-package-closeout.sql`
+  covers only the FINANCIAL closeout marker (`financially_closed_at`,
+  `final_cost_cents` - P1-13/P1-18). There is no physical final-walkthrough
+  punch list or warranty-period tracking - distinct from
+  `delivery_punch_items` (schema-delivery.sql), which are per-delivery
+  material punch items, not a project-level closeout artifact. See #17.
+
+### New ranked gaps (continuing the numbering above)
+
+16. **RFI (Request for Information) tracked workflow** — Procore, Autodesk
+    Construction Cloud, and effectively every project-management-adjacent
+    competitor surveyed treat a logged, assignable, response-tracked RFI
+    queue as baseline infrastructure. Entirely absent from this codebase.
+    **Closed (RFI-01):** `rfis` table (`db/schema-rfi.sql`), bidirectional
+    workflow - a vendor holding an ACTIVE award raises a question
+    (optionally scoped to a package), the developer answers it, either
+    side can close it, lifecycle open -> answered -> closed. RLS mirrors
+    field-log's three-way shape (developer sees all vendors' RFIs at its
+    building; a vendor sees only its own - one vendor's question never
+    leaks to a different vendor at the same building under a different
+    package). Unlike field-log, this is bidirectional: the vendor may
+    close its own RFI but never answer it; only the developer (or admin)
+    writes the answer - enforced at the app-layer field-contract level
+    (`server/src/routes/rfi.ts`), matching `change-orders.ts`'s
+    EDITABLE_FIELDS convention, since RLS alone only draws the row
+    boundary, not the per-field one. Sequential per-building numbering
+    (`RFI-1`, `RFI-2`, ...) uses a dedicated `rfi_counters` table rather
+    than `count(*)` specifically because a plain count at insert time runs
+    under the inserting vendor's own RLS-scoped view of `rfis` and would
+    collide across different vendors' first RFI at the same building -
+    caught by this session's own integration test before it ever reached
+    review.
+17. **Project closeout: final punch list + warranty tracking** —
+    Buildertrend (warranty tracking), Procore, BuildOps. Distinct from the
+    existing financial closeout marker and from delivery-level punch
+    items; not yet built. **Still open** - next candidate for this pass.
+18. **Digital surety bond / subcontractor default insurance (SDI)
+    facilitation** — SuretyBind (launched Dec 2025), general 2026 SDI
+    uptake for GC risk transfer on CM-at-risk work. **Blocked, external:**
+    real bond/SDI issuance requires an underwriting partner integration
+    this environment has no credentials for - same shape as #7's
+    remaining OAuth-accounting half and #2's jurisdiction lien-notice
+    data. A facilitation-only UI with no real underwriter behind it would
+    misrepresent a compliance/risk product as functional; not attempted.
+
+**Status as of this update:** #16 closed (RFI-01). #17 is the next
+in-scope candidate. #18 is a deliberate skip for the same reason as #2 and
+#7's remaining half - real external credentials/data this environment does
+not have, not a scoping or engineering gap. No freeze touched.

@@ -38,6 +38,7 @@ const BUYER_SECTIONS: Section[] = [
     ['/project-templates', 'Templates',         '▤'],
     ['/scope-builder',     'Divini Scope Builder', '▧'],
     ['/change-orders',     'Change Orders',     '⇄'],
+    ['/rfis',              'RFIs',              '?'],
     ['/products',          'Products',          '◳'],
     ['/vendor-pricing',    'Vendor Pricing',    '$'],
     ['/relationships',     'Vendor Relations',  '⚖'],
@@ -91,6 +92,7 @@ const VENDOR_SECTIONS: Section[] = [
     ['/bids',    'My Bids',    '◧'],
     ['/my-invites','Invitations','✉'],
     ['/field-log','Field Log', '▤'],
+    ['/rfis',     'RFIs',      '?'],
   ]},
   { label: 'Intelligence', items: [
     ['/coo',          'AI COO',      '✦'],
