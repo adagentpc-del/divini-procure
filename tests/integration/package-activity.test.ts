@@ -164,6 +164,14 @@ test("package activity: a user who belongs to BOTH the developer's company AND a
   // would have picked otherCompany.id here and logged a false event).
   await developer.client.get(`/api/packages/${packageId}`);
 
+  // This is a NEGATIVE assertion (nothing should have been logged), so an
+  // immediate check is not actually a meaningful regression guard: if the
+  // fix above were reverted, the buggy code path calls the same
+  // fire-and-forget logPackageView() the rest of this file has to poll
+  // for - checking too early would just as happily observe "not landed
+  // yet" as "never happened" and pass either way. Wait through that
+  // window before asserting absence, not just presence.
+  await new Promise((r) => setTimeout(r, 500));
   const after = await developer.client.get(`/api/packages/${packageId}/activity`);
   assert.equal(after.body.totalViews, beforeViews, "a dual-membership internal view must not be logged as vendor engagement");
 });

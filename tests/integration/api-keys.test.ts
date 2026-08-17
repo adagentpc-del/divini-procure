@@ -141,11 +141,15 @@ test("api keys: using a key sets last_used_at (touchApiKeyLastUsed must not sile
   assert.equal(me.status, 200, JSON.stringify(me.body));
 
   // touchApiKeyLastUsed is fire-and-forget (never awaited by auth
-  // middleware) - give its best-effort write a moment to land rather than
-  // racing it.
-  await new Promise((r) => setTimeout(r, 200));
-
-  const listAfter = await dev.client.get("/api/api-keys");
-  const after = listAfter.body.apiKeys.find((k: any) => k.id === keyId);
-  assert.ok(after.last_used_at, "last_used_at must be set after the key authenticates a request");
+  // middleware) - poll with a bounded timeout rather than a fixed sleep,
+  // which could still be too short under a busy shared DB/connection pool
+  // (same reasoning as package-activity.test.ts's waitForTotalViews).
+  let after: { last_used_at: string | null } | undefined;
+  for (let i = 0; i < 20; i++) {
+    const listAfter = await dev.client.get("/api/api-keys");
+    after = listAfter.body.apiKeys.find((k: any) => k.id === keyId);
+    if (after?.last_used_at) break;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  assert.ok(after?.last_used_at, "last_used_at must be set after the key authenticates a request");
 });
