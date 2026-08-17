@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../lib/auth';
 import { useToast } from '../lib/toast';
 import { apiGet, apiSend } from '../lib/api';
@@ -36,6 +36,16 @@ function durationLabel(clockIn: string, clockOut: string | null): string {
   const hours = ms / 3_600_000;
   return `${hours.toFixed(1)}h`;
 }
+/** Today's date in the crew's own local timezone, not the server's - a
+ * crew logging work in the evening must not have it recorded as tomorrow
+ * just because the database session runs in a different timezone. */
+function todayLocalDate(): string {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
 
 export default function FieldLog() {
   const { company } = useAuth();
@@ -44,6 +54,12 @@ export default function FieldLog() {
   const [sites, setSites] = useState<Site[]>([]);
   const [siteId, setSiteId] = useState('');
   const [sitesLoading, setSitesLoading] = useState(true);
+  // Guards against a stale response from a previously-selected site
+  // overwriting state after the user has already switched to a different
+  // site - without this, quickly picking site A then site B could apply
+  // site A's (still in-flight) openEntry to the now-selected site B, and a
+  // "Clock out" tap would then close the wrong site's shift.
+  const requestedSiteRef = useRef('');
 
   const [openEntry, setOpenEntry] = useState<TimeEntry | null>(null);
   const [entries, setEntries] = useState<TimeEntry[]>([]);
@@ -75,21 +91,28 @@ export default function FieldLog() {
 
   async function loadSiteData() {
     if (!company || !siteId) return;
+    const requestedSite = siteId;
+    requestedSiteRef.current = requestedSite;
     setErr('');
     setLogsLoading(true);
     try {
       const [openRes, entriesRes, logsRes] = await Promise.all([
-        apiGet<{ entry: TimeEntry | null }>(`/field-log/time-entries/open?buildingId=${siteId}&vendorCompanyId=${company.id}`),
-        apiGet<{ entries: TimeEntry[] }>(`/field-log/time-entries?buildingId=${siteId}`),
-        apiGet<{ logs: DailyLog[] }>(`/field-log/daily-logs?buildingId=${siteId}`),
+        apiGet<{ entry: TimeEntry | null }>(`/field-log/time-entries/open?buildingId=${requestedSite}&vendorCompanyId=${company.id}`),
+        apiGet<{ entries: TimeEntry[] }>(`/field-log/time-entries?buildingId=${requestedSite}`),
+        apiGet<{ logs: DailyLog[] }>(`/field-log/daily-logs?buildingId=${requestedSite}`),
       ]);
+      // The user may have switched to a different site while these requests
+      // were in flight - discard a now-stale response rather than applying
+      // it to the currently-selected site.
+      if (requestedSiteRef.current !== requestedSite) return;
       setOpenEntry(openRes.entry);
       setEntries(entriesRes.entries ?? []);
       setLogs(logsRes.logs ?? []);
     } catch (e: any) {
+      if (requestedSiteRef.current !== requestedSite) return;
       setErr(e.message ?? 'Could not load this site.');
     } finally {
-      setLogsLoading(false);
+      if (requestedSiteRef.current === requestedSite) setLogsLoading(false);
     }
   }
   useEffect(() => { loadSiteData(); /* eslint-disable-next-line */ }, [siteId, company]);
@@ -134,6 +157,7 @@ export default function FieldLog() {
         crewCount: crewCount ? Number(crewCount) : undefined,
         weather: weather || undefined,
         delays: delays || undefined,
+        logDate: todayLocalDate(),
       });
       toast('Daily log saved.', 'success');
       setWorkPerformed(''); setCrewCount(''); setWeather(''); setDelays(''); setShowLogForm(false);

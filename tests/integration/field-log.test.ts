@@ -107,6 +107,42 @@ test("field log: clock in, see the open entry, reject a double clock-in, then cl
   assert.equal(dupeClockOut.status, 409, JSON.stringify(dupeClockOut.body));
 });
 
+test("field log: a coworker at the same vendor company cannot clock out someone else's shift", async () => {
+  // A vendor company can have more than one individual login
+  // (company_members). Add a second person to Vendor A's company directly
+  // (there is no self-serve "invite teammate" endpoint to exercise here),
+  // mirroring the admin-context escalation rls-high-risk.test.ts uses for
+  // direct setup.
+  const { runWithRequestContext } = await import("../../server/dist/lib/requestContext.js");
+  const pool = await import("../../server/dist/pool.js");
+  const coworker = await registerVerifiedUser(server.baseUrl, "fl-coworker");
+  await runWithRequestContext({ userId: null, isAdmin: true, email: null }, () =>
+    pool.q(`insert into company_members (company_id, user_id, role, seat) values ($1, $2, 'member', 2)`, [
+      vendorACompanyId,
+      coworker.userId,
+    ]),
+  );
+
+  const clockIn = await vendorA.client.post("/api/field-log/time-entries/clock-in", {
+    buildingId, vendorCompanyId: vendorACompanyId,
+  });
+  assert.equal(clockIn.status, 201, JSON.stringify(clockIn.body));
+  const entryId = clockIn.body.entry.id as string;
+
+  // The coworker can SEE the entry (same-company visibility)...
+  const listAsCoworker = await coworker.client.get(`/api/field-log/time-entries?buildingId=${buildingId}`);
+  assert.equal(listAsCoworker.status, 200);
+  assert.ok(listAsCoworker.body.entries.some((e: any) => e.id === entryId));
+
+  // ...but cannot clock it out on vendor A's behalf.
+  const coworkerClockOut = await coworker.client.patch(`/api/field-log/time-entries/${entryId}/clock-out`, {});
+  assert.equal(coworkerClockOut.status, 403, JSON.stringify(coworkerClockOut.body));
+
+  // Vendor A can still clock out their own shift.
+  const ownClockOut = await vendorA.client.patch(`/api/field-log/time-entries/${entryId}/clock-out`, {});
+  assert.equal(ownClockOut.status, 200, JSON.stringify(ownClockOut.body));
+});
+
 test("field log: a daily log is visible to its own vendor and the building owner, but NOT to a different vendor at the same building", async () => {
   const create = await vendorA.client.post("/api/field-log/daily-logs", {
     buildingId, vendorCompanyId: vendorACompanyId,

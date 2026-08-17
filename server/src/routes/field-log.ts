@@ -166,6 +166,13 @@ router.post(
       body.crewCount == null || !Number.isFinite(Number(body.crewCount))
         ? null
         : Math.max(0, Math.round(Number(body.crewCount)));
+    // FieldLog.tsx always sends the crew's own local date explicitly
+    // (todayLocalDate()) rather than relying on this fallback - current_date
+    // below is evaluated in the DATABASE session's timezone, which would
+    // record the wrong day for a crew logging work in the evening in a
+    // timezone west of the server. The fallback stays for any other API
+    // caller that omits logDate; it is a defensive default, not the path
+    // the UI itself relies on.
     const logDate = body.logDate ? String(body.logDate) : null;
 
     const log = await q1(
@@ -269,6 +276,13 @@ router.patch(
     if (!row) throw new NotFoundError("time entry not found");
     if (!auth.isAdmin && !(await isMember(auth.userId!, row.vendor_company_id))) {
       throw new ForbiddenError("not a member of this vendor company");
+    }
+    // A vendor company can have more than one individual login
+    // (company_members). Clocking out is a personal action - a coworker
+    // seeing an open entry in the shared building-level listing must not be
+    // able to close someone else's shift or overwrite their notes.
+    if (!auth.isAdmin && row.logged_by_email !== auth.email) {
+      throw new ForbiddenError("only the person who clocked in can clock out this entry");
     }
     if (row.clock_out) {
       return res.status(409).json({ error: "already clocked out" });
