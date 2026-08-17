@@ -29,7 +29,7 @@ payments/compliance/pricing, explicit authorization) before implementation.
 2. **Automated preliminary notice / mechanics-lien filing by jurisdiction** — Levelset. High-friction legal compliance turned into a sticky service; nobody else in this comparison set offers it. **Still blocked:** needs real per-jurisdiction legal filing data/rules this environment can't source or validate honestly.
 3. **Vendor prequalification & insurance/COI/license compliance tracking** — BuildingConnected (TradeTapp), Avetta, Vertikal RMS, Jones, Billy. Table stakes for enterprise GCs; would meaningfully deepen the Divini Score with hard compliance data rather than only transactional history. **Closed (VQ-01):** license tracking + compliance snapshot.
 4. **Free/freemium subcontractor-side tier to drive network growth** — BuildingConnected, PlanHub. A GTM gap, not a feature gap: marketplace network effects depend on low-friction, no-cost vendor onboarding. **Closed (VD-01), pricing/tiering itself untouched:** investigation found the free tier already exists and is already marketed accurately (`Pricing.tsx`/`Landing.tsx` already say "free to join," account creation has no payment gate, 5 free bids/quarter). The actual gap was that the "free, mandatory" verification step (`lib/verificationGate.ts`) had no working self-serve path: `POST /me/verification/documents` existed but referenced `vendor_credentials.file_key`/`file_name`/`type` columns that were never added to the schema (or, for `type`, never populated) - a genuine bug that 500'd on every real call, with no frontend ever wired to it and a dead `/app/settings/documents` link in the onboarding checklist pointing nowhere. Fixed: added the missing columns (`db/schema-verification.sql`), fixed the insert, added a self-serve `GET /me/verification/documents` listing endpoint, and built the actual upload UI (`Profile.tsx`) plus fixed the dead checklist link. No pricing numbers, tier definitions, or billing logic touched - this makes the existing free tier's mandatory gate actually reachable, which is what "low-friction, no-cost onboarding" requires in practice.
-5. **Bid leveling & side-by-side quote comparison with historical cost benchmarking** — Procore, BuildingConnected, ProcurePro. Divini has quote comparison (`quote-comparison.ts`) but not cross-project historical benchmarking - notably, this is exactly the "cost benchmarking" capability the AI/Procurement Graph freeze explicitly excludes until authorized. **Still frozen.**
+5. **Bid leveling & side-by-side quote comparison with historical cost benchmarking** — Procore, BuildingConnected, ProcurePro. Divini has quote comparison (`quote-comparison.ts`) but not cross-project historical benchmarking - this was named under the AI/Procurement Graph freeze, though the capability itself turned out to be purely deterministic once scoped (2026-08-17, freeze explicitly opened by the user for #5 and #8 together). **Closed (QCB-01):** `GET /quotes/compare/:packageId` now also returns a `benchmark` (sample size, avg/min/max) computed by a pure SQL aggregation over this developer's OWN past AWARDED packages in the same trade category - zero LLM involvement, matching `docs/ai-layer-design.md`'s "the LLM is never the source of a number" rule. Deliberately scoped to the current developer's own award history only, never another company's - no new cross-tenant data exposure. Prefers `final_cost_cents` when a package was financially closed out, falls back to `awarded_amount_cents` otherwise, same forecast-vs-final distinction already established (P1-13/P1-18). Each bid gets a `vs your avg` percentage in the comparison UI.
 6. **Plan room with granular activity tracking** (who viewed/downloaded/bid) — PlanHub, Procore, BuildingConnected. Goes beyond document management into bid-engagement transparency for the developer. **Closed (PA-01, DOC-01):** who-viewed tracking, plus the document-visibility fix that unblocked download tracking for bidding vendors.
 7. **Deep accounting/ERP integrations** (QuickBooks, Sage, Xero, Viewpoint) — Buildertrend, GCPay, ProcurePro. Commonly cited adoption blocker when a procurement/financial tool doesn't sync with a GC's existing books. **Partially closed (INV-01):** a generic invoices CSV export (`GET /reports/invoices/:buildingId.csv`, docs/accounting-export.md) shaped for import into any accounting system's own generic bill/journal importer. Deliberately NOT a certified/OAuth-connected QuickBooks or Xero integration - that needs developer credentials and a real account to test honestly, which this environment does not have. The invoice model itself (P1-10) also had no frontend at all until INV-01 added it to AwardWorkflow.tsx; before this, invoices were create/read-only via direct API calls. **Still open:** the certified OAuth integrations themselves remain undone and untestable here.
 8. **AI-generated scope-of-work / RFP bundles from plans and specs** — Brickanta, Parspec, Procore AI. A live 2025-26 competitive wedge; strong structural fit for Divini's canonical data spine, but explicitly out of scope under the current AI freeze ("AI package generation" is named directly). **Still frozen.**
@@ -185,3 +185,32 @@ external credentials/data this environment does not have, not a scoping or
 engineering gap. No freeze touched. With #16 and #17 closed, every gap
 this fresh scan surfaced that can be honestly built without fabricating
 data or crossing a freeze has shipped.
+
+## AI/Procurement Graph freeze opened for #5 and #8 (2026-08-17)
+
+After the fresh-scan gaps above shipped, the user explicitly opened the
+AI/Procurement Graph freeze for gaps #5 (historical cost benchmarking) and
+#8 (AI-generated scope-of-work from plans) - both, not one, after an
+initial multi-select question was clarified. The pricing/monetization
+freeze (#9) and investor/Capital Partner freeze (#14) remain untouched and
+were not part of this authorization.
+
+- **#5 closed (QCB-01)** - see its updated entry above. Turned out to
+  need no LLM at all: a pure SQL aggregation over the developer's own
+  award history satisfies "historical cost benchmarking" without crossing
+  into predictive/AI territory `docs/ai-layer-design.md` §6 explicitly
+  ruled out ("no predictive scoring or forecasting model").
+- **#8**: scoping found Divini Blueprint already has most of the needed
+  infrastructure (`ai_extraction_runs`, `blueprint_trade_suggestions`,
+  real document text extraction via `documents.extracted_text` -
+  schema-blueprint-content-extraction.sql) but two gaps: (a) the existing
+  "AI summary" step never actually reads `extracted_text` - it was
+  written before that column existed and only ever used document
+  category counts plus user-typed text (`draftAiSummaryFields()`,
+  blueprint.ts's own header comment says so directly), and (b) accepting
+  a trade suggestion creates an empty `scope_instances` row with no
+  drafted content at all - the user starts from a blank Divini Scope
+  Builder form. AI-01 (next in this pass) closes this by drafting the
+  standard scope narrative fields from real extracted document text, never
+  auto-saved - the user reviews and explicitly saves, same trust model as
+  every other AI touch point in this codebase.

@@ -26,11 +26,14 @@ type Bests = {
   most_scope_bid_id: string | null;
   top_ranked_bid_id: string | null;
 };
+type Benchmark = { sampleSize: number; avgCents: number; minCents: number; maxCents: number } | null;
 type CompareResp = {
   package: { id: string; category: string; status: string; building?: { id: string; name: string; location?: string } };
   bids: CompareBid[];
   ranking: RankRow[];
   bests: Bests;
+  benchmark: Benchmark;
+  benchmarkPctByBidId: Record<string, number | null>;
   scoring: { weights: { price: number; speed: number; scope: number }; dimensions: Record<string, string> };
 };
 type Recommendation = { id: string; package_id: string; selected_bid_id: string | null; notes: string | null; status: string } | null;
@@ -95,7 +98,7 @@ export default function QuoteComparison() {
   );
   if (!data) return <div className="note">No data.</div>;
 
-  const { package: pkg, bids, ranking, bests } = data;
+  const { package: pkg, bids, ranking, bests, benchmark, benchmarkPctByBidId } = data;
   const rankOf = (bidId: string) => ranking.find(r => r.bid_id === bidId);
   const isBest = (bidId: string, key: keyof Bests) => bests[key] === bidId;
 
@@ -152,6 +155,20 @@ export default function QuoteComparison() {
             scope 30% (more priced line items / scope notes / warranty = better). Dimension columns shown 0-100.
           </div>
 
+          {/* ---- historical cost benchmark (competitive gap closure) ---- */}
+          <div className="sectitle">Historical cost benchmark</div>
+          <div className="card" style={{ marginBottom: 16 }}>
+            {benchmark ? (
+              <div className="note">
+                Your own past awarded <strong>{pkg.category}</strong> packages ({benchmark.sampleSize} package{benchmark.sampleSize === 1 ? '' : 's'}):
+                {' '}avg <strong>{money(benchmark.avgCents)}</strong>, range {money(benchmark.minCents)} - {money(benchmark.maxCents)}.
+                {' '}Computed from your own award history only - never other companies' data.
+              </div>
+            ) : (
+              <div className="note">No historical benchmark yet - this is your first awarded {pkg.category} package, or none of your past ones in this category recorded a cost.</div>
+            )}
+          </div>
+
           {/* ---- side-by-side matrix (columns = vendors, rows = dimensions) ---- */}
           <div className="sectitle">Side-by-side</div>
           <div className="card" style={{ padding: 0 }}>
@@ -172,6 +189,23 @@ export default function QuoteComparison() {
                   <td><strong>Total price</strong></td>
                   {bids.map(b => cell(b.id, 'lowest_total_bid_id', money(b.total_cents)))}
                 </tr>
+                {benchmark && (
+                  <tr>
+                    <td><strong>vs your avg ({pkg.category})</strong></td>
+                    {bids.map(b => {
+                      const pct = benchmarkPctByBidId[b.id];
+                      return (
+                        <td key={b.id}>
+                          {pct == null ? '-' : (
+                            <span className={pct <= 0 ? 'badge b-green' : 'badge b-amber'}>
+                              {pct > 0 ? '+' : ''}{pct}%
+                            </span>
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                )}
                 <tr>
                   <td><strong>Lead time</strong></td>
                   {bids.map(b => cell(b.id, 'fastest_bid_id', b.lead_time_days != null ? `${b.lead_time_days} days` : '-'))}

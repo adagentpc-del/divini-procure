@@ -282,11 +282,67 @@ router.get(
       top_ranked_bid_id: ranking.length ? ranking[0].bid_id : null,
     };
 
+    // -------- historical cost benchmark (competitive gap closure) --------
+    // Deterministic only - a pure SQL aggregation, never an LLM estimate,
+    // matching this codebase's "the LLM is never the source of a number"
+    // rule (docs/ai-layer-design.md). Scoped to THIS developer's own past
+    // AWARDED packages in the same trade category - never other companies'
+    // bid/award data, which stays exactly as private as it already is
+    // everywhere else in this app (no new cross-tenant exposure). Prefers
+    // final_cost_cents (schema-package-closeout.sql) when a package has
+    // been financially closed out - the authoritative actual cost - and
+    // falls back to awarded_amount_cents (the committed amount) for a
+    // package still open, matching every other place in this codebase
+    // that already draws this same forecast-vs-final distinction.
+    const benchmarkRows = await q<{ cost_cents: number }>(
+      `select coalesce(p.final_cost_cents, a.awarded_amount_cents) as cost_cents
+         from awards a
+         join packages p on p.id = a.package_id
+        where a.developer_company_id = $1
+          and p.category = $2
+          and p.id != $3
+          and a.status = 'active'
+          and coalesce(p.final_cost_cents, a.awarded_amount_cents) is not null`,
+      [_bcompany, pkg.category, packageId],
+    );
+    const costs = benchmarkRows.map((r) => toNum(r.cost_cents)).filter((c) => c > 0);
+    const benchmark = costs.length
+      ? {
+          sampleSize: costs.length,
+          avgCents: Math.round(costs.reduce((s, c) => s + c, 0) / costs.length),
+          minCents: Math.min(...costs),
+          maxCents: Math.max(...costs),
+        }
+      : null;
+    // Each bid's price vs this developer's own historical average for this
+    // trade category, as a plain percentage - not a score, not a
+    // recommendation, just the same "how does this compare" fact a
+    // developer would otherwise have to compute by hand from memory.
+    // Deliberately compares b.total_cents (the base bid price), not
+    // allIn() - unlike the ranking above, this is not choosing a winner
+    // among several bids on the same package (where an unspecified
+    // freight/install must not let one vendor look artificially cheaper),
+    // it is comparing ONE bid's own known price against history, and the
+    // historical figure itself (awarded_amount_cents/final_cost_cents) is
+    // the award's core amount, not an all-in total either. Requiring
+    // fully-specified freight+install here would leave the benchmark
+    // silently blank for the common case where those optional fields are
+    // never filled in.
+    const benchmarkPctByBidId: Record<string, number | null> = {};
+    for (const b of bids) {
+      benchmarkPctByBidId[b.id] =
+        benchmark && b.total_cents > 0
+          ? Math.round(((b.total_cents - benchmark.avgCents) / benchmark.avgCents) * 1000) / 10
+          : null;
+    }
+
     res.json({
       package: packageOut,
       bids,
       ranking,
       bests,
+      benchmark,
+      benchmarkPctByBidId,
       scoring: {
         weights: { price: W_PRICE, speed: W_SPEED, scope: W_SCOPE },
         dimensions: {
