@@ -83,6 +83,19 @@ test("closeout: the developer sets warranty terms", async () => {
   assert.equal(res.body.package.warranty_set_by, developer.email);
 });
 
+test("closeout: an explicit null clears a warranty field; an omitted key leaves it alone (Codex finding)", async () => {
+  // Clear terms only - startDate/months should survive untouched.
+  const clearTerms = await developer.client.patch(`/api/packages/${packageAId}/warranty`, { terms: null });
+  assert.equal(clearTerms.status, 200, JSON.stringify(clearTerms.body));
+  assert.equal(clearTerms.body.package.warranty_terms, null);
+  assert.equal(clearTerms.body.package.warranty_months, 12, "omitted fields must not be touched");
+  assert.equal(clearTerms.body.package.warranty_start_date?.slice(0, 10), "2026-01-01");
+
+  // Restore terms for later assertions.
+  const restore = await developer.client.patch(`/api/packages/${packageAId}/warranty`, { terms: "Parts and labor" });
+  assert.equal(restore.body.package.warranty_terms, "Parts and labor");
+});
+
 test("closeout: a vendor cannot raise a punch item, and description is required", async () => {
   const asVendor = await vendorA.client.post(`/api/packages/${packageAId}/punch-items`, { description: "Nope" });
   assert.equal(asVendor.status, 403, JSON.stringify(asVendor.body));
@@ -129,14 +142,26 @@ test("closeout: a vendor cannot verify its own fix", async () => {
   assert.equal(res.status, 400, JSON.stringify(res.body));
 });
 
-test("closeout: the developer verifies the fix, then reopens it", async () => {
+test("closeout: the developer cannot verify an item directly from open (must be resolved first) (Codex finding)", async () => {
+  const create = await developer.client.post(`/api/packages/${packageAId}/punch-items`, { description: "Never resolved" });
+  assert.equal(create.status, 201, JSON.stringify(create.body));
+  const res = await developer.client.patch(`/api/closeout/punch-items/${create.body.item.id}`, { status: "verified" });
+  assert.equal(res.status, 409, JSON.stringify(res.body));
+});
+
+test("closeout: the developer verifies the fix, then reopens it - reopening clears the completion metadata (Codex finding)", async () => {
   const verify = await developer.client.patch(`/api/closeout/punch-items/${punchItemId}`, { status: "verified" });
   assert.equal(verify.status, 200, JSON.stringify(verify.body));
   assert.equal(verify.body.item.status, "verified");
   assert.equal(verify.body.item.verified_by_email, developer.email);
+  assert.ok(verify.body.item.resolved_at, "resolved_at should still be set from the earlier resolve");
 
   const reopen = await developer.client.patch(`/api/closeout/punch-items/${punchItemId}`, { status: "open" });
   assert.equal(reopen.status, 200, JSON.stringify(reopen.body));
+  assert.equal(reopen.body.item.resolved_at, null, "reopening must clear stale resolved_at");
+  assert.equal(reopen.body.item.resolved_by_email, null, "reopening must clear stale resolved_by_email");
+  assert.equal(reopen.body.item.verified_at, null, "reopening must clear stale verified_at");
+  assert.equal(reopen.body.item.verified_by_email, null, "reopening must clear stale verified_by_email");
   assert.equal(reopen.body.item.status, "open");
 });
 

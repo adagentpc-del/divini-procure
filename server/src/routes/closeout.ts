@@ -172,22 +172,43 @@ router.patch(
     const auth = getAuth(req);
     const packageId = req.params.packageId;
     await assertDeveloperOfPackage(req, packageId);
-    const body = (req.body ?? {}) as { startDate?: string; months?: number; terms?: string };
-    const startDate = body.startDate ? String(body.startDate) : null;
-    const months =
-      body.months == null || !Number.isFinite(Number(body.months)) ? null : Math.max(0, Math.round(Number(body.months)));
-    const terms = body.terms !== undefined ? String(body.terms).trim() || null : null;
+    const body = (req.body ?? {}) as { startDate?: string | null; months?: number | null; terms?: string | null };
+
+    // A field only updates when its KEY is present in the body, not merely
+    // when its value is truthy - coalesce-against-existing (the previous
+    // approach) made a field impossible to ever clear, since an empty/
+    // omitted input always became null and null coalesces back to the
+    // stored value. Presence of the key is what distinguishes "leave this
+    // field alone" from "clear it".
+    const sets: string[] = [];
+    const params: unknown[] = [packageId];
+    if ("startDate" in body) {
+      params.push(body.startDate ? String(body.startDate) : null);
+      sets.push(`warranty_start_date = $${params.length}::date`);
+    }
+    if ("months" in body) {
+      const months =
+        body.months == null || !Number.isFinite(Number(body.months)) ? null : Math.max(0, Math.round(Number(body.months)));
+      params.push(months);
+      sets.push(`warranty_months = $${params.length}`);
+    }
+    if ("terms" in body) {
+      const terms = body.terms ? String(body.terms).trim() || null : null;
+      params.push(terms);
+      sets.push(`warranty_terms = $${params.length}`);
+    }
+    if (sets.length === 0) {
+      return res.status(400).json({ error: "at least one of startDate, months, or terms is required" });
+    }
+    params.push(auth.email ?? null);
+    sets.push(`warranty_set_by = $${params.length}`);
+    sets.push(`warranty_set_at = now()`);
 
     const pkg = await q1(
-      `update packages set
-         warranty_start_date = coalesce($2::date, warranty_start_date),
-         warranty_months = coalesce($3, warranty_months),
-         warranty_terms = coalesce($4, warranty_terms),
-         warranty_set_by = $5,
-         warranty_set_at = now()
+      `update packages set ${sets.join(", ")}
        where id = $1
        returning id, warranty_start_date, warranty_months, warranty_terms, warranty_set_by, warranty_set_at`,
-      [packageId, startDate, months, terms, auth.email ?? null],
+      params,
     );
     if (!pkg) throw new NotFoundError("package not found");
     res.json({ package: pkg });
@@ -256,11 +277,20 @@ router.patch(
       if (requestedStatus && !["verified", "open"].includes(requestedStatus)) {
         return res.status(400).json({ error: "a developer may only verify or reopen a punch item" });
       }
+      // Verifying skips the vendor's resolution step entirely unless this
+      // is enforced here - without it, a direct API call could jump
+      // open -> verified and record a "confirmed fix" for work the vendor
+      // never claimed as done.
+      if (requestedStatus === "verified" && row.status !== "resolved") {
+        return res.status(409).json({ error: "only a resolved punch item can be verified" });
+      }
       const item = await q1(
         `update closeout_punch_items set
            status = coalesce($2, status),
-           verified_by_email = case when $2 = 'verified' then $3 else verified_by_email end,
-           verified_at = case when $2 = 'verified' then now() else verified_at end,
+           verified_by_email = case when $2 = 'verified' then $3 when $2 = 'open' then null else verified_by_email end,
+           verified_at = case when $2 = 'verified' then now() when $2 = 'open' then null else verified_at end,
+           resolved_by_email = case when $2 = 'open' then null else resolved_by_email end,
+           resolved_at = case when $2 = 'open' then null else resolved_at end,
            updated_at = now()
          where id = $1
          returning *`,

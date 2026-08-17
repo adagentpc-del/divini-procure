@@ -43,7 +43,12 @@ function fmtDateOnly(d: string): string {
 function warrantyEndLabel(startDate: string | null, months: number | null): string | null {
   if (!startDate || !months) return null;
   const d = new Date(startDate + 'T00:00:00');
+  const originalDay = d.getDate();
   d.setMonth(d.getMonth() + months);
+  // Date.setMonth overflows into the next month when the target month is
+  // shorter (e.g. Jan 31 + 1 month naively lands on Mar 3, not Feb 28) -
+  // clamp back to the target month's actual last day instead.
+  if (d.getDate() !== originalDay) d.setDate(0);
   const expired = d.getTime() < Date.now();
   return `${fmtDateOnly(d.toISOString().slice(0, 10))}${expired ? ' (expired)' : ''}`;
 }
@@ -134,10 +139,15 @@ export default function Closeout() {
     if (!packageId) return;
     setSavingWarranty(true); setErr('');
     try {
+      // Always send all three keys, even blank ones - the server treats a
+      // PRESENT key as "set this field" (null clears it) and an ABSENT
+      // key as "leave it alone". Sending `undefined` here would make
+      // JSON.stringify drop the key entirely, making a field impossible
+      // to ever clear once set.
       await apiSend('PATCH', `/packages/${encodeURIComponent(packageId)}/warranty`, {
-        startDate: wStart || undefined,
-        months: wMonths ? Number(wMonths) : undefined,
-        terms: wTerms || undefined,
+        startDate: wStart || null,
+        months: wMonths ? Number(wMonths) : null,
+        terms: wTerms || null,
       });
       toast('Warranty terms saved.', 'success');
       await load();
